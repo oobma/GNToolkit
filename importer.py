@@ -1102,16 +1102,33 @@ def _coerce_to_socket_type(val, sock, bl_id: str):
     return _SKIP
 
 
-def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
-                          tracker: ImportErrorTracker) -> list[tuple]:
-    """Set default_value and hide on all sockets for all nodes.
+def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dict,
+                              tracker: ImportErrorTracker, holder: dict,
+                              progress_base: float = 0.45, progress_span: float = 0.25):
+    """Set default_value and hide on all sockets for all nodes (generator).
 
-    Returns a list of ``(socket, raw_value, serialized_bl_id, ctx)``
-    tuples for deferred string defaults that must be retried after
-    wiring (when Blender has propagated the correct socket types from
-    the referenced group's interface).
+    Yields ``(fraction, message)`` progress tuples roughly every 100
+    sockets so a modal driver can repaint the UI between chunks, and
+    stores the deferred string defaults list in
+    ``holder["deferred_string_defaults"]`` for the caller.
     """
     deferred_string_defaults: list[tuple] = []
+
+    total_sockets = sum(
+        len(nd.get("inputs", [])) + len(nd.get("outputs", []))
+        for nd in data["nodes"]
+    ) or 1
+    sockets_done = 0
+    _next_yield_at = 100
+
+    def _tick():
+        nonlocal sockets_done, _next_yield_at
+        sockets_done += 1
+        if sockets_done >= _next_yield_at:
+            _next_yield_at += 100
+            frac = progress_base + progress_span * min(sockets_done / total_sockets, 1.0)
+            return (frac, f"defaults {sockets_done}/{total_sockets}")
+        return None
 
     # Input sockets that are connected in the serialized data. Their
     # default_value is functionally dead (the link overrides it at
@@ -1137,6 +1154,9 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
             continue
 
         for inp_data in node_data.get("inputs", []):
+            prog = _tick()
+            if prog:
+                yield prog
             sid = inp_data.get("identifier")
             sname = inp_data.get("name")
             serialized_sid = sid
@@ -1245,6 +1265,9 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
                           f"(id={sid}) not found — default_value kept at Blender default")
 
         for out_data in node_data.get("outputs", []):
+            prog = _tick()
+            if prog:
+                yield prog
             sid = out_data.get("identifier")
             sname = out_data.get("name")
 
@@ -1296,18 +1319,28 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
                     print(f"[DEFAULT_VALUE] Node '{node.name}': output socket '{sname}' "
                           f"(id={sid}) not found")
 
-    return deferred_string_defaults
+    holder["deferred_string_defaults"] = deferred_string_defaults
 
 
 # ---------------------------------------------------------------------------
 # Step 3 helper: Wire links
 # ---------------------------------------------------------------------------
 
-def _wire_links(ng, data: dict, node_map: dict, interface_map: dict,
-                group_interface_maps: dict | None, zone_socket_remap: dict,
-                tracker: ImportErrorTracker) -> None:
-    """Create all links between nodes in the tree."""
-    for link_data in data.get("links", []):
+def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
+                    group_interface_maps: dict | None, zone_socket_remap: dict,
+                    tracker: ImportErrorTracker, holder: dict,
+                    progress_base: float = 0.70, progress_span: float = 0.20):
+    """Create all links between nodes in the tree (generator).
+
+    Yields ``(fraction, message)`` progress tuples roughly every 50
+    links so a modal driver can repaint the UI between chunks.
+    """
+    links_list = data.get("links", [])
+    total_links = len(links_list) or 1
+    for li, link_data in enumerate(links_list):
+        if li % 50 == 0:
+            frac = progress_base + progress_span * min(li / total_links, 1.0)
+            yield (frac, f"links {li}/{total_links}")
         from_node = node_map.get(link_data["from_node"])
         to_node = node_map.get(link_data["to_node"])
 
@@ -1388,6 +1421,8 @@ def _wire_links(ng, data: dict, node_map: dict, interface_map: dict,
                 f"Socket not found: {from_node.name}.{from_name} -> {to_node.name}.{to_name}",
                 level="WARN",
             )
+
+    yield (progress_base + progress_span, f"links {total_links}/{total_links}")
 
 
 # ---------------------------------------------------------------------------
@@ -1844,6 +1879,11 @@ def import_node_tree_recursive(
 ):
     """Reconstruct a node tree from its JSON representation.
 
+    Synchronous wrapper around ``_import_node_tree_gen``: consumes the
+    generator to completion and returns the created node tree.  The
+    generator form exists so that the Batch Import modal can process a
+    group in chunks and repaint the UI between chunks.
+
     Parameters
     ----------
     data : dict
@@ -1858,10 +1898,35 @@ def import_node_tree_recursive(
         Error tracker for this import operation.  If *None*, a fresh one
         is created internally.
     """
+    holder: dict = {}
+    for _frac, _msg in _import_node_tree_gen(
+        data, json_cache, group_interface_maps, context, tracker, holder
+    ):
+        pass
+    return holder.get("tree")
+
+
+def _import_node_tree_gen(
+    data: dict,
+    json_cache: dict,
+    group_interface_maps: dict | None = None,
+    context=None,
+    tracker: ImportErrorTracker | None = None,
+    holder: dict | None = None,
+):
+    """Reconstruct a node tree from its JSON representation (generator).
+
+    Same logic as the synchronous wrapper, but yields ``(fraction, message)``
+    progress tuples at phase boundaries and every ~25 nodes so a modal
+    driver can repaint the UI between chunks.  The created tree is stored
+    in ``holder["tree"]``.
+    """
     if tracker is None:
         tracker = ImportErrorTracker()
     if group_interface_maps is None:
         group_interface_maps = {}
+    if holder is None:
+        holder = {}
 
     name = data["name"]
 
@@ -1904,6 +1969,7 @@ def import_node_tree_recursive(
 
     # --- Interface ---
     interface_map = {}
+    yield (0.05, "interface")
     _rebuild_interface(ng, data, interface_map, tracker)
 
     if group_interface_maps is not None:
@@ -1925,7 +1991,11 @@ def import_node_tree_recursive(
         if nd.get("type") in ZONE_INPUTS and nd.get("zone_paired_node")
     }
 
-    for node_data in data["nodes"]:
+    total_nodes = len(data["nodes"]) or 1
+    for ni, node_data in enumerate(data["nodes"]):
+        if ni % 25 == 0:
+            frac = 0.05 + 0.40 * min(ni / total_nodes, 1.0)
+            yield (frac, f"nodes {ni}/{total_nodes}")
         node_name = node_data.get("name")
         node_type = node_data.get("type")
         new_node = None
@@ -2003,10 +2073,16 @@ def import_node_tree_recursive(
                     new_node.node_tree = ref_tree
 
     # --- Step 2: Default values ---
-    deferred_string_defaults = _apply_default_values(data, node_map, zone_socket_remap, tracker)
+    yield (0.45, "defaults")
+    for _prog in _apply_default_values_gen(data, node_map, zone_socket_remap, tracker, holder):
+        yield _prog
+    deferred_string_defaults = holder.get("deferred_string_defaults", [])
 
     # --- Step 3: Wiring ---
-    _wire_links(ng, data, node_map, interface_map, group_interface_maps, zone_socket_remap, tracker)
+    yield (0.70, "links")
+    for _prog in _wire_links_gen(ng, data, node_map, interface_map, group_interface_maps,
+                                 zone_socket_remap, tracker, holder):
+        yield _prog
 
     # --- Step 3.5: Retry deferred string defaults ---
     # After wiring, the referenced group's interface is fully built and
@@ -2087,6 +2163,7 @@ def import_node_tree_recursive(
                 )
 
     # --- Step 4: Post-synchronisation of interface ---
+    yield (0.92, "post-sync")
     _post_sync_interface(ng, data, interface_map, tracker)
 
     # --- Step 5: Re-apply Group node default values ---
@@ -2106,4 +2183,5 @@ def import_node_tree_recursive(
     _final_menu_defaults_pass(ng, data, interface_map, tracker)
 
     print(f"[OK] Reconstruction of node '{name}' completed.")
-    return ng
+    yield (1.0, "done")
+    holder["tree"] = ng

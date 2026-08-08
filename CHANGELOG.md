@@ -72,6 +72,22 @@ write time. Mitigations applied:
   already matches the current one (some property writes, e.g. `mute`, are
   O(tree size) like socket writes on Blender 5.1+). The 795-node reference
   group imports in ~35s vs ~74s originally (isolated measurement).
+- **Chunked import (Batch Import modal)**: the importer core is now a
+  generator (`_import_node_tree_gen`) that yields progress every ~25 nodes,
+  ~100 sockets and ~50 links. The modal drives one chunk per timer tick, so
+  the UI repaints during even the heaviest groups: the progress bar resets
+  per group (0-100% of the current group), the status bar shows
+  `Group i/439: <name> — NN%`, and the OS busy cursor no longer appears.
+  ESC now cancels between chunks. `import_node_tree_recursive` remains a
+  synchronous wrapper (unchanged behavior for all other callers; verified
+  byte-identical node/link/zone totals against the pre-refactor code).
+
+### Known background-mode limitation
+
+- Batch imports run from a headless/background session lose some links in
+  groups that reference other node groups (pre-existing; identical in the
+  pre-refactor code). GUI batch imports (the normal workflow) reproduce all
+  25,437 links of the reference project exactly.
 
 Remaining known characteristic: very large node trees (hundreds of nodes)
 still import slowly because of the per-mutation tree re-validation in

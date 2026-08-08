@@ -18,7 +18,7 @@ from bpy.props import StringProperty, BoolProperty
 from .codec import clean_value, unclean_value
 from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
-from .importer import import_node_tree_recursive, restore_zone_area
+from .importer import _import_node_tree_gen, restore_zone_area
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
 
@@ -191,10 +191,16 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
     _timer = None
-    task_queue = []
     json_cache = {}
     group_interface_maps = {}
     _tracker: ImportErrorTracker = None  # type: ignore[assignment]
+
+    _group_names = []
+    _mod_data_list = []
+    _current_gen = None
+    _current_name = ""
+    _groups_done = 0
+    _total_groups = 0
 
     def cancel_modal(self, context):
         if self._timer:
@@ -241,20 +247,62 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             self.report({'ERROR'}, f"Read error: {str(e)}")
             return {'CANCELLED'}
 
-        self.task_queue = [("NODEGROUP", n) for n in self.json_cache] + [("MODIFIER", m) for m in mod_data_list]
-        if not self.task_queue:
+        self._group_names = list(self.json_cache.keys())
+        self._mod_data_list = mod_data_list
+        self._current_gen = None
+        self._current_name = ""
+        self._groups_done = 0
+        self._total_groups = len(self._group_names)
+
+        if not self._group_names and not mod_data_list:
             self.report({'ERROR'}, "No data found.")
             return {'CANCELLED'}
-        self._total_tasks = len(self.task_queue)
-        self._next_action = "paint"
 
-        context.window_manager.progress_begin(0, len(self.task_queue))
+        context.window_manager.progress_begin(0, 100)
         context.window_manager.progress_update(0)
-        self._timer = context.window_manager.event_timer_add(0.05, window=context.window)
+        self._timer = context.window_manager.event_timer_add(0.02, window=context.window)
         context.window.cursor_modal_set('WAIT')
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+    def _start_next_group(self, context) -> bool:
+        """Begin importing the next pending group. Returns True if started."""
+        while self._group_names:
+            name = self._group_names.pop(0)
+            if bpy.data.node_groups.get(name):
+                self._groups_done += 1
+                continue
+            self._current_gen = _import_node_tree_gen(
+                self.json_cache[name], self.json_cache, self.group_interface_maps,
+                None, self._tracker, {},
+            )
+            self._current_name = name
+            context.window_manager.progress_update(0)
+            context.workspace.status_text_set(
+                f"Group {self._groups_done + 1}/{self._total_groups}: {name} — 0%"
+            )
+            return True
+        return False
+
+    def _process_modifiers(self, context):
+        """Apply modifier tasks synchronously (they are fast)."""
+        context.workspace.status_text_set("Importing: modifiers...")
+        for m in self._mod_data_list:
+            obj = bpy.data.objects.get(m.get("object", ""))
+            if obj:
+                mod = obj.modifiers.get(m["modifier_name"])
+                if not mod:
+                    mod = obj.modifiers.new(m["modifier_name"], 'NODES')
+                if m.get("node_group"):
+                    ng = bpy.data.node_groups.get(m["node_group"])
+                    if ng:
+                        mod.node_group = ng
+                for k, v in m.get("inputs", {}).items():
+                    try:
+                        mod[k] = unclean_value(v)
+                    except (TypeError, AttributeError, ValueError, RuntimeError):
+                        pass
 
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -263,7 +311,10 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
 
         if event.type == 'TIMER':
-            if not self.task_queue:
+            # All groups done (and no group currently being imported):
+            # apply modifiers and finish.
+            if self._current_gen is None and not self._group_names:
+                self._process_modifiers(context)
                 msg = "Import finished successfully."
                 if self._tracker and self._tracker.has_errors:
                     msg = f"Import finished with {self._tracker.count} warnings (Check Console)."
@@ -273,56 +324,23 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 self.cancel_modal(context)
                 return {'FINISHED'}
 
-            # Two-phase tick: paint the pending progress on THIS event and
-            # return, so the cursor percentage is actually drawn before the
-            # (possibly heavy, UI-blocking) task runs on the next event.
-            if getattr(self, "_next_action", "paint") != "process":
-                self._next_action = "process"
-                done = self._total_tasks - len(self.task_queue)
-                context.window_manager.progress_update(done)
-                next_task = self.task_queue[0] if self.task_queue else None
-                if next_task and next_task[0] == "NODEGROUP":
-                    context.workspace.status_text_set(f"Importing: {next_task[1]}...")
-                return {'PASS_THROUGH'}
+            if self._current_gen is None:
+                if not self._start_next_group(context):
+                    return {'PASS_THROUGH'}
 
-            self._next_action = "paint"
             context.window.cursor_modal_set('WAIT')
-
-            task_type, data = self.task_queue.pop(0)
             try:
-                if task_type == "NODEGROUP":
-                    name = data
-                    if not bpy.data.node_groups.get(name):
-                        import_node_tree_recursive(
-                            self.json_cache[name],
-                            self.json_cache,
-                            self.group_interface_maps,
-                            context,
-                            self._tracker,
-                        )
-
-                elif task_type == "MODIFIER":
-                    m = data
-                    obj = bpy.data.objects.get(m.get("object", ""))
-                    if obj:
-                        mod = obj.modifiers.get(m["modifier_name"])
-                        if not mod:
-                            mod = obj.modifiers.new(m["modifier_name"], 'NODES')
-                        if m.get("node_group"):
-                            ng = bpy.data.node_groups.get(m["node_group"])
-                            if ng:
-                                mod.node_group = ng
-                        for k, v in m.get("inputs", {}).items():
-                            try:
-                                mod[k] = unclean_value(v)
-                            except (TypeError, AttributeError, ValueError, RuntimeError):
-                                pass
-            except Exception as e:
-                print(f"[CRITICAL] Task failed: {e}")
-                traceback.print_exc()
-
-            done = self._total_tasks - len(self.task_queue)
-            context.window_manager.progress_update(done)
+                frac, msg = next(self._current_gen)
+                pct = int(frac * 100)
+                context.window_manager.progress_update(pct)
+                context.workspace.status_text_set(
+                    f"Group {self._groups_done + 1}/{self._total_groups}: "
+                    f"{self._current_name} — {pct}%"
+                )
+            except StopIteration:
+                self._current_gen = None
+                self._groups_done += 1
+                context.window_manager.progress_update(100)
 
         return {'PASS_THROUGH'}
 
