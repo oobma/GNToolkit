@@ -19,6 +19,10 @@ file is the RNA (working cache).
   Conflict, Missing in Blend, Untracked, JSON File Missing.
 - **Sync operations**: Track (start), Commit Modified, Pull from JSON,
   Commit All, Refresh Status.
+- **JSON remotes visibility**: the Sync panel always shows where each group
+  is tracked — the active group's JSON (`Active: name → file.json`) and a
+  list of all tracked JSON files with group counts, copy-path and
+  Reveal-in-Explorer buttons, and an error icon when a file is missing.
 - **Conflict resolution**: keep the .blend or the JSON version
   with a single click.
 - **External connection preservation**: links from parent groups survive
@@ -93,6 +97,12 @@ The sync layer tracks groups between the JSON (source of truth) and the
    - **Stop Tracking**: remove tracking; the JSON file and the node tree
      are kept.
 
+The Sync panel keeps the linked files visible: the top line shows the
+active group's JSON (**Active: name → file.json**), and a **JSON remotes**
+list below the actions shows every tracked JSON file (full resolved path,
+group count, copy-path and Reveal-in-Explorer buttons; an error icon marks
+files missing from disk).
+
 Sync metadata is stored in a sidecar file next to the .blend
 (`<project>.blend.gntsync`) and saved automatically on file save.
 
@@ -148,7 +158,7 @@ links and tree properties — enough to fully reconstruct the group.
 | `hash_utils.py` | Canonical SHA-256 hashing |
 | `sync_manager.py` | State detection, batch operations, lock handling |
 | `sync_metadata.py` | Sidecar file and UUID tracking |
-| `sync_operators.py` | Sync operators (link, import, export, resolve, ...) |
+| `sync_operators.py` | Sync operators (track, commit, pull, resolve, ...) |
 | `sync_ui.py` | Sidebar panels |
 | `geometry_validator.py` | Generic geometry issue detection |
 | `operators.py` | JSON package export/import operators and main panel |
