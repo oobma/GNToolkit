@@ -1,0 +1,12 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Blender files
+*.blend
+*.blend1
+*.blend2
+
+# Addon sync sidecar files
+*.gntsync

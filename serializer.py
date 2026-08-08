@@ -179,13 +179,19 @@ def serialize_node(node):
             inp_data["default_value"] = clean_value(inp.default_value)
         data["inputs"].append(inp_data)
     for out in node.outputs:
-        data["outputs"].append({
+        out_data = {
             "name": out.name,
             "identifier": out.identifier,
             "type": out.type,
             "bl_idname": out.bl_idname,
             "hide": getattr(out, 'hide', False),
-        })
+        }
+        # Serialize default_value for output sockets (required for ShaderNodeValue, etc.)
+        if (node.bl_idname != "NodeReroute"
+                and hasattr(out, 'default_value')
+                and out.type not in _NON_SCALAR_SOCKET_TYPES):
+            out_data["default_value"] = clean_value(out.default_value)
+        data["outputs"].append(out_data)
 
     for prop in node.bl_rna.properties:
         if prop.identifier in NODE_PROPS_TO_SKIP or prop.is_readonly:
@@ -295,6 +301,18 @@ def serialize_node_tree(tree):
             for prop in item.bl_rna.properties:
                 if prop.identifier in INTERFACE_SKIP_PROPS or prop.is_readonly:
                     continue
+                # Reading 'subtype' on an Int interface socket with an
+                # invalid value triggers slow C-level RNA warnings.
+                # Use enum validation instead of getattr to avoid this.
+                if prop.identifier == 'subtype' and prop.type == 'ENUM':
+                    try:
+                        valid_ids = {e.identifier for e in prop.enum_items}
+                        current = item.get(prop.identifier)
+                        if current in valid_ids and current != 'NONE':
+                            i_data["properties"][prop.identifier] = current
+                    except:
+                        pass
+                    continue
                 try:
                     val = getattr(item, prop.identifier)
                     i_data["properties"][prop.identifier] = clean_value(val)
@@ -313,6 +331,20 @@ def serialize_node_tree(tree):
                     "default_value": clean_value(getattr(item, 'default_value', None)),
                 }
                 for opt_prop in OPTIONAL_SOCKET_PROPS:
+                    if opt_prop == 'subtype':
+                        # Reading subtype via getattr on Int sockets with
+                        # invalid values triggers RNA warnings.  Use
+                        # enum validation instead.
+                        try:
+                            rna_prop = item.bl_rna.properties.get('subtype')
+                            if rna_prop and rna_prop.type == 'ENUM':
+                                valid_ids = {e.identifier for e in rna_prop.enum_items}
+                                current = item.get('subtype')
+                                if current in valid_ids and current != 'NONE':
+                                    s_data['subtype'] = current
+                        except:
+                            pass
+                        continue
                     try:
                         val = getattr(item, opt_prop)
                         s_data[opt_prop] = clean_value(val)

@@ -35,6 +35,72 @@ _WARN = object()
 
 
 # ---------------------------------------------------------------------------
+# Socket subtype application (Blender 5.1+)
+# ---------------------------------------------------------------------------
+
+_SOCKET_SUBTYPE_MAP: dict[str, str] = {
+    "NodeSocketFloatAngle": "ANGLE",
+    "NodeSocketFloatDistance": "DISTANCE",
+    "NodeSocketFloatFactor": "FACTOR",
+    "NodeSocketFloatPercentage": "PERCENTAGE",
+    "NodeSocketFloatTime": "TIME",
+    "NodeSocketFloatTimeAbsolute": "TIME_ABSOLUTE",
+    "NodeSocketFloatTranslation": "TRANSLATION",
+    # Int subtypes: Blender 5.1 NodeTreeInterfaceSocketInt only supports
+    # NONE and FACTOR.  PERCENTAGE is NOT a valid Int subtype — setting it
+    # causes slow C-level warnings for every socket on every import.
+    "NodeSocketIntPercentage": None,
+    "NodeSocketIntFactor": "FACTOR",
+    "NodeSocketVectorAcceleration": "ACCELERATION",
+    "NodeSocketVectorDirection": "DIRECTION",
+    "NodeSocketVectorEuler": "EULER",
+    "NodeSocketVectorXYZ": "XYZ",
+    "NodeSocketVectorTranslation": "TRANSLATION",
+    "NodeSocketVectorVelocity": "VELOCITY",
+}
+
+
+def _apply_socket_subtype(interface_item, raw_socket_type: str,
+                           i_data: dict, tracker: ImportErrorTracker) -> None:
+    """Apply the correct subtype to a remapped interface socket.
+
+    Blender 5.1's interface.new_socket() does not accept subtype sockets
+    directly (e.g. NodeSocketFloatAngle).  We create them as the base type
+    (NodeSocketFloat) and then set the subtype property.
+
+    Invalid subtypes (e.g. PERCENTAGE on Int sockets) are mapped to None
+    in _SOCKET_SUBTYPE_MAP and silently skipped.
+    """
+    subtype = _SOCKET_SUBTYPE_MAP.get(raw_socket_type)
+    if subtype is None:
+        return
+
+    if not hasattr(interface_item, 'subtype'):
+        if hasattr(interface_item, 'subtype_property'):
+            try:
+                interface_item.subtype_property = subtype
+            except (TypeError, AttributeError, ValueError, RuntimeError):
+                pass
+        return
+
+    # Validate that the subtype value is accepted by this socket type's
+    # enum property to avoid slow C-level RNA warnings.
+    subtype_prop = interface_item.bl_rna.properties.get('subtype')
+    if subtype_prop is not None:
+        valid_ids = {e.identifier for e in subtype_prop.enum_items}
+        if subtype not in valid_ids:
+            return
+
+    try:
+        interface_item.subtype = subtype
+    except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+        tracker.record(
+            f"Could not set subtype '{subtype}' on interface socket "
+            f"'{i_data.get('name')}': {exc}", level="DEBUG",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Collection helpers
 # ---------------------------------------------------------------------------
 
@@ -259,6 +325,10 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
                                 f"'{i_data.get('name')}'", level="DEBUG",
                             )
 
+                    # Apply subtype for remapped float/int/vector sockets
+                    if new_item and raw_socket_type != creation_type and raw_socket_type in INTERFACE_SOCKET_TYPE_REMAP:
+                        _apply_socket_subtype(new_item, raw_socket_type, i_data, tracker)
+
                     interface_map[i_data.get("identifier", "")] = new_item.identifier
 
                     # Post-creation type verification: Blender may silently
@@ -418,8 +488,10 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
     if "subtype" in props and hasattr(new_item, 'subtype'):
         try:
             sub_val = props["subtype"]
-            # Empty string is not a valid subtype enum value — skip it
-            if sub_val:
+            # Skip empty strings and 'NONE' — 'NONE' is the default for all
+            # socket types and setting it explicitly on Int sockets causes
+            # Blender 5.1 RNA warnings (value 13 / PERCENTAGE mismatch).
+            if sub_val and sub_val != 'NONE':
                 setattr(new_item, 'subtype', sub_val)
         except:
             tracker.record(f"Could not set subtype on '{i_data.get('name')}'", level="DEBUG")
@@ -1113,6 +1185,36 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
             if sock:
                 if "hide" in out_data and hasattr(sock, "hide"):
                     sock.hide = out_data["hide"]
+                # Restore default_value for output sockets (e.g., ShaderNodeValue)
+                if "default_value" in out_data and hasattr(sock, "default_value"):
+                    bl_id = getattr(sock, 'bl_idname', '') or ''
+                    serialized_bl_id = out_data.get("bl_idname", "")
+                    type_hint = bl_id or serialized_bl_id or out_data.get("type") or "VALUE"
+                    raw_val = out_data["default_value"]
+                    ctx = f"Node '{node.name}' output '{sname}'"
+
+                    try:
+                        sock.default_value = unclean_value(raw_val, type_hint, context=ctx)
+                    except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+                        coerced = _coerce_to_socket_type(raw_val, sock, bl_id)
+                        if coerced is not _SKIP:
+                            try:
+                                sock.default_value = coerced
+                            except (TypeError, AttributeError, ValueError, RuntimeError) as exc2:
+                                tracker.record(
+                                    f"Node '{node.name}' output '{sname}': "
+                                    f"could not set default_value (primary: {exc}; "
+                                    f"secondary: {exc2})",
+                                    level="WARN",
+                                )
+                                print(f"[DEFAULT_VALUE] Node '{node.name}' output '{sname}': "
+                                      f"kept Blender default (assignment failed: {exc2})")
+                        else:
+                            tracker.record(
+                                f"Node '{node.name}' output '{sname}': "
+                                f"skipped default_value assignment ({exc})",
+                                level="DEBUG",
+                            )
             else:
                 if "default_value" in out_data:
                     tracker.record(
@@ -1702,8 +1804,9 @@ def import_node_tree_recursive(
         for node in ng.nodes:
             ng.nodes.remove(node)
         if hasattr(ng, 'interface'):
-            for item in ng.interface.items_tree:
-                ng.interface.remove(item)
+            for item in list(ng.interface.items_tree):
+                if item is not None:
+                    ng.interface.remove(item)
         else:
             ng.inputs.clear()
             ng.outputs.clear()

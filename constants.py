@@ -90,6 +90,25 @@ INTERFACE_SOCKET_TYPE_REMAP: dict[str, str] = {
     # remap is a safety net in case the explicit check is bypassed.)
     "NodeSocketVector2D": "NodeSocketVector",
     "NodeSocketVectorTranslation2D": "NodeSocketVector",
+    # Float subtypes → create as NodeSocketFloat, then set subtype via property
+    # Blender 5.1 interface.new_socket() does not accept these directly
+    "NodeSocketFloatAngle": "NodeSocketFloat",
+    "NodeSocketFloatDistance": "NodeSocketFloat",
+    "NodeSocketFloatFactor": "NodeSocketFloat",
+    "NodeSocketFloatPercentage": "NodeSocketFloat",
+    "NodeSocketFloatTime": "NodeSocketFloat",
+    "NodeSocketFloatTimeAbsolute": "NodeSocketFloat",
+    "NodeSocketFloatTranslation": "NodeSocketFloat",
+    # Int subtypes → create as NodeSocketInt, then set subtype
+    "NodeSocketIntPercentage": "NodeSocketInt",
+    "NodeSocketIntFactor": "NodeSocketInt",
+    # Vector subtypes → create as NodeSocketVector, then set subtype
+    "NodeSocketVectorAcceleration": "NodeSocketVector",
+    "NodeSocketVectorDirection": "NodeSocketVector",
+    "NodeSocketVectorEuler": "NodeSocketVector",
+    "NodeSocketVectorXYZ": "NodeSocketVector",
+    "NodeSocketVectorTranslation": "NodeSocketVector",
+    "NodeSocketVectorVelocity": "NodeSocketVector",
 }
 
 # Optional socket properties that may exist on interface items.
@@ -130,3 +149,27 @@ EXPLICITLY_HANDLED_PROPS: frozenset[str] = frozenset({
     # loop (direct setattr) and must be skipped in the generic unclean_value loop.
     "menu_expanded", "optional", "optional_label", "select",
 })
+
+# ---------------------------------------------------------------------------
+# DNA/RNA Sync — Constants
+# ---------------------------------------------------------------------------
+
+SYNC_VERSION = "0.2.0"
+
+# Node properties to exclude from canonical hash computation.
+# These are volatile/visual properties that do not affect node functionality.
+HASH_EXCLUDE_NODE_PROPS: frozenset[str] = frozenset({
+    'location',
+})
+
+# Node-tree-level properties to exclude from canonical hash computation.
+HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
+    'annotation',
+})
+
+# Sidecar file settings
+SIDECAR_EXTENSION = ".gntsync"
+SIDECAR_TEXT_BLOCK_NAME = "__gnt_sync_metadata__.json"
+
+# Lock file settings for preventing concurrent JSON writes
+LOCK_TIMEOUT_SECONDS = 5.0
