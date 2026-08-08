@@ -12,6 +12,7 @@ import bpy
 from bpy.props import StringProperty, EnumProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
+from .hash_utils import canonical_hash_from_tree
 from .sync_manager import sync_manager, SyncStatus
 from .sync_metadata import find_uuid_for_tree, get_uuid_from_tree
 
@@ -496,7 +497,6 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                         break
             if tree is None:
                 continue
-            from ADNRNAGNTOOLKIT.hash_utils import canonical_hash_from_tree
             current_hash = canonical_hash_from_tree(tree)
             stored_hash = info.get("last_blend_hash", "")
             if stored_hash and current_hash != stored_hash:
