@@ -17,6 +17,21 @@ All notable changes to this project are documented in this file.
 ### Changed
 - All 8 modules from 0.1.4 evolved in place (`__init__.py`, `constants.py`, `importer.py`, `serializer.py`).
 
+## Known issues (0.2.0)
+
+- **Importer roundtrip is not byte-identical.** Reimported node groups are
+  functionally faithful (node/link counts, socket values and connections
+  verified on a 439-group project), but interface socket identifiers may be
+  assigned in a different order than the original (e.g. `Socket_0`/`Socket_1`
+  swapped) and Reroute node widths reset to Blender's default. This can make
+  a freshly imported group briefly report BLEND_MODIFIED against its JSON;
+  the sync system self-heals by storing the new hash as the baseline. Found
+  via the headless smoke test against the real project file.
+- **Zone input nodes (Simulation/Repeat/Foreach/Closure) are not recreated in
+  headless/background mode.** `importer.run_add_zone_operator` requires a
+  Node Editor area (`bpy.ops.node.add_zone`); zone inputs are preserved when
+  importing from a GUI session.
+
 ## [0.1.4] - earlier
 
 ### Added
