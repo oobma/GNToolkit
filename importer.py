@@ -1970,6 +1970,14 @@ def import_node_tree_recursive(
                 final_val = unclean_value(prop_val, context=ctx)
                 if prop_name == 'color' and isinstance(final_val, (list, tuple)) and len(final_val) == 4:
                     final_val = list(final_val[:3])
+                # Skip the write when the current value already matches
+                # (reads are O(1); some property writes on Blender 5.1+,
+                # e.g. mute, re-validate the whole tree like socket writes).
+                try:
+                    if getattr(new_node, prop_name) == final_val:
+                        continue
+                except (TypeError, AttributeError, ValueError, RuntimeError):
+                    pass
                 setattr(new_node, prop_name, final_val)
             except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
                 # If the value is a dict (serialized data-block), try to

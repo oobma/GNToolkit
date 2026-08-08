@@ -65,7 +65,13 @@ write time. Mitigations applied:
   immediately and uses a two-phase tick so the percentage is drawn before
   each task runs — previously the cursor did not show progress until the
   UI got control back from the heavy synchronous tasks (~19% in practice).
-  Progress counts all tasks (groups + modifiers) instead of groups only.
+  Progress counts all tasks (groups + modifiers) instead of groups only,
+  and the status bar shows the name of the group being imported (visible
+  during heavy, UI-blocking groups).
+- `importer`: the generic node-property loop now skips writes whose value
+  already matches the current one (some property writes, e.g. `mute`, are
+  O(tree size) like socket writes on Blender 5.1+). The 795-node reference
+  group imports in ~35s vs ~74s originally (isolated measurement).
 
 Remaining known characteristic: very large node trees (hundreds of nodes)
 still import slowly because of the per-mutation tree re-validation in

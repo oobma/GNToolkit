@@ -280,6 +280,9 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 self._next_action = "process"
                 done = self._total_tasks - len(self.task_queue)
                 context.window_manager.progress_update(done)
+                next_task = self.task_queue[0] if self.task_queue else None
+                if next_task and next_task[0] == "NODEGROUP":
+                    context.workspace.status_text_set(f"Importing: {next_task[1]}...")
                 return {'PASS_THROUGH'}
 
             self._next_action = "paint"
