@@ -13,7 +13,6 @@ from bpy.props import StringProperty, EnumProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
-from .hash_utils import canonical_hash_from_tree
 from .sync_manager import sync_manager, SyncStatus
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
@@ -486,17 +485,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
 
     def invoke(self, context, event):
         # Check for blend_modified groups to warn user
-        tracked = sync_manager.metadata.get("tracked_groups", {})
-        blend_modified_count = 0
-        for uid, info in tracked.items():
-            blend_name = info.get("blend_name", "")
-            tree = find_tree_by_uuid(blend_name, uid)
-            if tree is None:
-                continue
-            current_hash = canonical_hash_from_tree(tree)
-            stored_hash = info.get("last_blend_hash", "")
-            if stored_hash and current_hash != stored_hash:
-                blend_modified_count += 1
+        blend_modified_count = sync_manager.count_local_changes()
 
         if blend_modified_count > 0:
             return context.window_manager.invoke_confirm(

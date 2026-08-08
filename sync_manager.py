@@ -1687,6 +1687,24 @@ class SyncManager:
             return os.path.dirname(os.path.abspath(filepath))
         return os.path.abspath(".")
 
+    def count_local_changes(self) -> int:
+        """Count tracked groups with local (.blend) changes.
+
+        Uses the status cache when populated so that repeated calls
+        (e.g. per click of the Import Modified button) do not serialize
+        every node group. When the cache is empty, computes statuses
+        once (same cost as Refresh Status) and stores them.
+
+        Returns the number of groups with BLEND_MODIFIED or CONFLICT
+        status.
+        """
+        if not self._status_cache:
+            self.check_all_statuses()
+        return sum(
+            1 for s in self._status_cache.values()
+            if s in (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT)
+        )
+
     # --- Geometry validation ------------------------------------------------
 
     def validate_geometry(self) -> dict[str, list]:
