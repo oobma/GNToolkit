@@ -27,7 +27,6 @@ from .hash_utils import (
     canonical_hash_from_json_data,
     canonical_hash_from_json_group,
     canonicalize_node_tree_data,
-    list_groups_in_json,
     get_json_mtime,
 )
 from .importer import import_node_tree_recursive
@@ -70,7 +69,6 @@ class SyncStatus(Enum):
     ORPHAN = "orphan"
     UNTRACKED = "untracked"
     JSON_MISSING = "json_missing"
-    NEW_TRACKED = "new_tracked"
 
 
 class JsonLock:
@@ -401,7 +399,7 @@ class SyncManager:
             master_data = {
                 "version": ADDON_VERSION,
                 "type": "GN_UNIFIED_PACKAGE",
-                "export_method": "SYNC_ADN",
+                "export_method": PACKAGE_EXPORT_METHOD,
                 "node_groups": {},
                 "modifiers": [],
             }
@@ -894,23 +892,6 @@ class SyncManager:
 
         return new_uuids
 
-    def get_untracked_groups(self, sync_uuid: str) -> list[str]:
-        """Return names of groups in the JSON file that aren't tracked."""
-        info = get_tracked_group(self.metadata, sync_uuid)
-        if info is None:
-            return []
-
-        json_path = resolve_json_path(info.get("json_path", ""), self._blend_dir())
-        group_names = list_groups_in_json(json_path)
-        if not group_names:
-            return []
-
-        tracked_names = {
-            ig.get("blend_name", "")
-            for ig in self.metadata.get("tracked_groups", {}).values()
-        }
-        return [name for name in group_names if name not in tracked_names and name in bpy.data.node_groups]
-
     def export_to_json(self, sync_uuid: str, force: bool = False) -> bool:
         """Export .blend group to JSON.
 
@@ -961,7 +942,7 @@ class SyncManager:
                 master_data = {
                     "version": ADDON_VERSION,
                     "type": "GN_UNIFIED_PACKAGE",
-                "export_method": "SYNC_DNA",
+                    "export_method": PACKAGE_EXPORT_METHOD,
                     "node_groups": {},
                     "modifiers": [],
                 }
@@ -1112,7 +1093,7 @@ class SyncManager:
         master_data = {
             "version": ADDON_VERSION,
             "type": "GN_UNIFIED_PACKAGE",
-            "export_method": "SYNC_ADN_BATCH",
+            "export_method": PACKAGE_EXPORT_METHOD,
             "node_groups": {},
             "modifiers": [],
         }
@@ -1320,7 +1301,7 @@ class SyncManager:
                     master_data = {
                         "version": ADDON_VERSION,
                         "type": "GN_UNIFIED_PACKAGE",
-            "export_method": "SYNC_DNA_BATCH",
+                        "export_method": PACKAGE_EXPORT_METHOD,
                         "node_groups": {},
                         "modifiers": [],
                     }

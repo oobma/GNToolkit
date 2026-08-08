@@ -8,6 +8,10 @@ gn_toolkit.constants — All constants and immutable sets for the addon.
 # metadata file, and UI labels.
 ADDON_VERSION = "0.2.0"
 
+# Marker written to unified JSON packages. Written for user inspection
+# only; importers never read it.
+PACKAGE_EXPORT_METHOD = "GN_TOOLKIT"
+
 # Node types whose socket identifiers are volatile (recycled by Blender at runtime).
 _VOLATILE_TYPES: frozenset[str] = frozenset({
     "GeometryNodeRepeatInput", "GeometryNodeRepeatOutput",

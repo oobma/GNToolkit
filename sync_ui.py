@@ -29,7 +29,6 @@ STATUS_ICONS = {
     SyncStatus.ORPHAN: 'OUTLINER_OB_GROUP_INSTANCE',
     SyncStatus.UNTRACKED: 'PLUS',
     SyncStatus.JSON_MISSING: 'FILE',
-    SyncStatus.NEW_TRACKED: 'FILE_TICK',
 }
 
 STATUS_LABELS = {
@@ -40,7 +39,6 @@ STATUS_LABELS = {
     SyncStatus.ORPHAN: "Orphan",
     SyncStatus.UNTRACKED: "Untracked",
     SyncStatus.JSON_MISSING: "JSON Missing",
-    SyncStatus.NEW_TRACKED: "New Tracked",
 }
 
 ISSUE_TYPE_ICONS = {

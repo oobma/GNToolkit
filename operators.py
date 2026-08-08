@@ -16,7 +16,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, BoolProperty
 
 from .codec import clean_value, unclean_value
-from .constants import ADDON_VERSION
+from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
@@ -83,7 +83,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 master_data = {
                     "version": ADDON_VERSION,
                     "type": "GN_UNIFIED_PACKAGE",
-                    "export_method": "BATCH",
+                    "export_method": PACKAGE_EXPORT_METHOD,
                     "node_groups": {},
                     "modifiers": [],
                 }
@@ -152,7 +152,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
         master_data = {
             "version": ADDON_VERSION,
             "type": "GN_UNIFIED_PACKAGE",
-            "export_method": "ACTIVE",
+            "export_method": PACKAGE_EXPORT_METHOD,
             "node_groups": {},
             "modifiers": [],
         }
