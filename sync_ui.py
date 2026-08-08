@@ -9,17 +9,20 @@ Two panels in the Node Editor sidebar:
 
 from __future__ import annotations
 
+import os
+
 import bpy
 
-from .importer import restore_zone_area
-from .sync_manager import sync_manager, SyncStatus
-from .sync_metadata import is_ignored
 from .geometry_validator import (
     IssueType,
     IssueSeverity,
     ValidationIssue,
     format_issue_report,
 )
+from .importer import restore_zone_area
+from .sync_manager import sync_manager, SyncStatus
+from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
+from .sync_operators import _get_active_tree
 
 
 STATUS_ICONS = {
@@ -68,6 +71,42 @@ ISSUE_SEVERITY_ICONS = {
 
 
 # ---------------------------------------------------------------------------
+# JSON remote helpers
+# ---------------------------------------------------------------------------
+
+def _json_remotes(tracked: dict) -> dict:
+    """Map each distinct resolved JSON path to the number of groups using it."""
+    remotes = {}
+    blend_dir = sync_manager._blend_dir()
+    for info in tracked.values():
+        jp = info.get("json_path", "")
+        if not jp:
+            continue
+        abs_path = resolve_json_path(jp, blend_dir)
+        remotes[abs_path] = remotes.get(abs_path, 0) + 1
+    return remotes
+
+
+def _active_tracked_json(context):
+    """Return (tree_name, json_basename, json_path) for the active tracked
+    tree, or None when there is no active tracked tree."""
+    tree = _get_active_tree(context)
+    if tree is None:
+        return None
+    uid = find_uuid_for_tree(tree, sync_manager.metadata)
+    if not uid:
+        return None
+    info = sync_manager.metadata.get("tracked_groups", {}).get(uid)
+    if not info:
+        return None
+    jp = info.get("json_path", "")
+    if not jp:
+        return None
+    abs_path = resolve_json_path(jp, sync_manager._blend_dir())
+    return tree.name, os.path.basename(abs_path), abs_path
+
+
+# ---------------------------------------------------------------------------
 # Panel 1: Batch Operations
 # ---------------------------------------------------------------------------
 
@@ -83,6 +122,16 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         layout = self.layout
         metadata = sync_manager.metadata
         tracked = metadata.get("tracked_groups", {})
+
+        if tracked:
+            active = _active_tracked_json(context)
+            if active:
+                tree_name, json_base, json_path = active
+                active_row = layout.row(align=True)
+                active_row.label(text=f"Active: {tree_name} → {json_base}", icon='NODETREE')
+                copy_op = active_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
+                copy_op.json_path = json_path
+                layout.separator()
 
         row = layout.row(align=True)
         row.operator("gn.sync_link", text="Track Group", icon='LINKED')
@@ -110,6 +159,20 @@ class GN_PT_SyncPanel(bpy.types.Panel):
 
         check_row = layout.row(align=True)
         check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
+
+        remotes = _json_remotes(tracked)
+        if remotes:
+            layout.separator()
+            layout.label(text="JSON remotes:", icon='FILE_FOLDER')
+            for abs_path, count in sorted(remotes.items()):
+                remote_row = layout.row(align=True)
+                icon = 'FILE' if os.path.isfile(abs_path) else 'ERROR'
+                remote_row.label(text=abs_path, icon=icon)
+                remote_row.label(text=f"{count} groups")
+                copy_op = remote_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
+                copy_op.json_path = abs_path
+                reveal_op = remote_row.operator("gn.sync_reveal_json_path", text="", icon='FOLDER_REDIRECT')
+                reveal_op.json_path = abs_path
 
         has_cache = bool(sync_manager._status_cache)
         if has_cache:
@@ -290,6 +353,50 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
 
         items.sort(key=lambda x: (x[3], x[2].value))
         return items
+
+
+# ---------------------------------------------------------------------------
+# JSON path utility operators
+# ---------------------------------------------------------------------------
+
+class GN_OT_CopyJSONPath(bpy.types.Operator):
+    bl_idname = "gn.sync_copy_json_path"
+    bl_label = "Copy JSON Path"
+    bl_description = "Copy the full JSON file path to the clipboard"
+    bl_options = {'REGISTER'}
+
+    json_path: bpy.props.StringProperty()
+
+    def execute(self, context):
+        if not self.json_path:
+            self.report({'ERROR'}, "No JSON path to copy")
+            return {'CANCELLED'}
+        context.window_manager.clipboard = self.json_path
+        self.report({'INFO'}, "JSON path copied to clipboard")
+        return {'FINISHED'}
+
+
+class GN_OT_RevealJSONPath(bpy.types.Operator):
+    bl_idname = "gn.sync_reveal_json_path"
+    bl_label = "Reveal JSON in Explorer"
+    bl_description = "Open the JSON file's folder in the system file explorer (Windows)"
+    bl_options = {'REGISTER'}
+
+    json_path: bpy.props.StringProperty()
+
+    def execute(self, context):
+        if not self.json_path:
+            return {'CANCELLED'}
+        folder = os.path.dirname(self.json_path)
+        if not os.path.isdir(folder):
+            self.report({'ERROR'}, f"Folder not found: {folder}")
+            return {'CANCELLED'}
+        try:
+            os.startfile(folder)
+        except (OSError, AttributeError):
+            self.report({'WARNING'}, "Could not open the system file explorer")
+            return {'CANCELLED'}
+        return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +582,8 @@ classes = (
     GN_PT_GeometryIssuesPanel,
     GN_OT_SyncResolveBlend,
     GN_OT_SyncResolveJSON,
+    GN_OT_CopyJSONPath,
+    GN_OT_RevealJSONPath,
     GN_OT_ValidateGeometry,
     GN_SyncPrefs,
 )

@@ -25,11 +25,10 @@ from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_
 def _get_active_tree(context):
     """Return the active Geometry Nodes tree from the context, or None."""
     space = getattr(context, 'space_data', None)
-    if space is None:
-        return None
-    tree = getattr(space, 'node_tree', None)
-    if tree is not None and hasattr(tree, 'type') and tree.type == 'GEOMETRY':
-        return tree
+    if space is not None:
+        tree = getattr(space, 'node_tree', None)
+        if tree is not None and hasattr(tree, 'type') and tree.type == 'GEOMETRY':
+            return tree
     # Fallback: check the active object's modifier
     obj = context.active_object
     if obj:

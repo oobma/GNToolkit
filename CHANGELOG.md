@@ -57,6 +57,13 @@ has no node/socket Python API changes at all).
   interface sockets) are snapshot and restored by name after the rebuild.
   This enables in-place refresh of a distributed .blend without the
   "import into a fresh file" ritual.
+- Sync panel now shows **JSON remotes**: the list of distinct JSON files
+  the tracked groups point at (resolved full paths), each with its group
+  count, a copy-path button, a "Reveal in Explorer" button (Windows), and
+  an error icon when the file is missing from disk. The panel header also
+  shows the active group's JSON (**Active: name → file.json**) so the
+  user always knows where a commit goes or a pull comes from. Two new
+  operators: `gn.sync_copy_json_path` and `gn.sync_reveal_json_path`.
 
 ### Changed
 - **Link All Groups** now updates the master JSON surgically, matching
