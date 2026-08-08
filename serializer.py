@@ -147,8 +147,16 @@ _NON_SCALAR_SOCKET_TYPES = frozenset({
 })
 
 
-def serialize_node(node):
-    """Serialize a single Blender node into a JSON-safe dictionary."""
+def serialize_node(node, skip_output_defaults: bool = False):
+    """Serialize a single Blender node into a JSON-safe dictionary.
+
+    When *skip_output_defaults* is True, output socket default_value is not
+    serialized. Output defaults are meaningless in Geometry Nodes (outputs
+    are always computed), and importing them costs an O(tree size) write per
+    socket on Blender 5.1+, so dropping them makes imports much faster for
+    large groups. Old JSON files that still contain output defaults import
+    unchanged.
+    """
     data = {
         "name": node.name,
         "type": node.bl_idname,
@@ -188,6 +196,7 @@ def serialize_node(node):
         }
         # Serialize default_value for output sockets (required for ShaderNodeValue, etc.)
         if (node.bl_idname != "NodeReroute"
+                and not skip_output_defaults
                 and hasattr(out, 'default_value')
                 and out.type not in _NON_SCALAR_SOCKET_TYPES):
             out_data["default_value"] = clean_value(out.default_value)
@@ -371,7 +380,7 @@ def serialize_node_tree(tree):
             })
 
     for node in tree.nodes:
-        data["nodes"].append(serialize_node(node))
+        data["nodes"].append(serialize_node(node, skip_output_defaults=tree.type == 'GEOMETRY'))
     for link in tree.links:
         data["links"].append({
             "from_node": link.from_node.name,

@@ -46,6 +46,32 @@ All notable changes to this project are documented in this file.
   (106 nodes on the reference project). `ensure_zone_area()` now converts an
   existing area temporarily (restored at the end of the import).
 
+### Performance (found via per-group profiling of a 439-group project)
+
+Blender 5.1+ re-validates the whole node tree on every RNA mutation
+(socket `default_value`, `location`, `links.new`) — measured O(tree size)
+per write. Import of a 795-node group costs tens of seconds of pure RNA
+write time. Mitigations applied:
+
+- `importer`: socket `default_value` writes are skipped for inputs that are
+  connected in the serialized data (the link overrides the default at
+  runtime) and for sockets whose current value already matches (reading is
+  O(1) in Blender 5.1). Import of the reference project: 262s → 200s
+  (~23%), pathological groups ~74s → ~52s.
+- `serializer`: output-socket `default_value` is no longer serialized for
+  GEOMETRY trees (outputs are computed, never stored). Old JSON files that
+  still contain output defaults import unchanged (backward compatible).
+- `operators` (Batch Import modal): the progress bar now paints from 0%
+  immediately and uses a two-phase tick so the percentage is drawn before
+  each task runs — previously the cursor did not show progress until the
+  UI got control back from the heavy synchronous tasks (~19% in practice).
+  Progress counts all tasks (groups + modifiers) instead of groups only.
+
+Remaining known characteristic: very large node trees (hundreds of nodes)
+still import slowly because of the per-mutation tree re-validation in
+Blender 5.1's node system; this is inherent to the API and cannot be
+avoided from Python.
+
 ## [0.1.4] - earlier
 
 ### Added

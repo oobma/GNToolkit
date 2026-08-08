@@ -1113,6 +1113,16 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
     """
     deferred_string_defaults: list[tuple] = []
 
+    # Input sockets that are connected in the serialized data. Their
+    # default_value is functionally dead (the link overrides it at
+    # runtime), and writing it is expensive: each default_value write on
+    # Blender 5.1+ re-validates the whole node tree (O(tree size)).  Skip
+    # them entirely.
+    connected_inputs = {
+        (lk.get("to_node"), lk.get("to_socket_id"))
+        for lk in data.get("links", [])
+    }
+
     for node_data in data["nodes"]:
         node_name = node_data.get("name")
         if node_name not in node_map:
@@ -1129,6 +1139,7 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
         for inp_data in node_data.get("inputs", []):
             sid = inp_data.get("identifier")
             sname = inp_data.get("name")
+            serialized_sid = sid
 
             if node.name + "_IN" in zone_socket_remap:
                 remapped = zone_socket_remap[node.name + "_IN"].get(sid)
@@ -1141,6 +1152,8 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
                 if "hide" in inp_data and hasattr(sock, "hide"):
                     sock.hide = inp_data["hide"]
                 if "default_value" in inp_data and hasattr(sock, "default_value"):
+                    if (node_name, serialized_sid) in connected_inputs:
+                        continue
                     # Use the ACTUAL socket's bl_idname as primary type hint,
                     # because the interface rebuild may have changed the socket
                     # type (e.g. NodeSocketMatrix → NodeSocketInt in Blender 5.0).
@@ -1178,6 +1191,18 @@ def _apply_default_values(data: dict, node_map: dict, zone_socket_remap: dict,
                         # which operates on interface-level Menu sockets
                         # after all wiring is complete.
                         continue
+
+                    # Skip the (expensive) write when the current value
+                    # already matches: reading is O(1) in Blender 5.1,
+                    # writing re-validates the whole tree (O(tree size)).
+                    # Convert without context to avoid console warnings on
+                    # the probe pass.
+                    try:
+                        probe_val = unclean_value(raw_val, type_hint)
+                        if probe_val == sock.default_value:
+                            continue
+                    except (TypeError, AttributeError, ValueError, RuntimeError):
+                        pass
 
                     try:
                         sock.default_value = unclean_value(raw_val, type_hint, context=ctx)
@@ -1682,6 +1707,13 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
             # the socket's ACTUAL bl_idname as ground truth.
             coerced = _coerce_to_socket_type(raw_val, sock, bl_id)
             if coerced is not _SKIP:
+                # Skip the write when the value already matches (cheap
+                # read; the write re-validates the whole tree).
+                try:
+                    if coerced == sock.default_value:
+                        continue
+                except (TypeError, AttributeError, ValueError, RuntimeError):
+                    pass
                 try:
                     sock.default_value = coerced
                 except (TypeError, AttributeError, ValueError, RuntimeError) as exc:

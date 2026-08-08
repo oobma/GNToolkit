@@ -245,8 +245,11 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         if not self.task_queue:
             self.report({'ERROR'}, "No data found.")
             return {'CANCELLED'}
+        self._total_tasks = len(self.task_queue)
+        self._next_action = "paint"
 
         context.window_manager.progress_begin(0, len(self.task_queue))
+        context.window_manager.progress_update(0)
         self._timer = context.window_manager.event_timer_add(0.05, window=context.window)
         context.window.cursor_modal_set('WAIT')
 
@@ -270,6 +273,16 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 self.cancel_modal(context)
                 return {'FINISHED'}
 
+            # Two-phase tick: paint the pending progress on THIS event and
+            # return, so the cursor percentage is actually drawn before the
+            # (possibly heavy, UI-blocking) task runs on the next event.
+            if getattr(self, "_next_action", "paint") != "process":
+                self._next_action = "process"
+                done = self._total_tasks - len(self.task_queue)
+                context.window_manager.progress_update(done)
+                return {'PASS_THROUGH'}
+
+            self._next_action = "paint"
             context.window.cursor_modal_set('WAIT')
 
             task_type, data = self.task_queue.pop(0)
@@ -305,8 +318,8 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 print(f"[CRITICAL] Task failed: {e}")
                 traceback.print_exc()
 
-            progress = len(self.json_cache) - len([t for t in self.task_queue if t[0] == 'NODEGROUP'])
-            context.window_manager.progress_update(progress)
+            done = self._total_tasks - len(self.task_queue)
+            context.window_manager.progress_update(done)
 
         return {'PASS_THROUGH'}
 
