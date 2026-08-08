@@ -34,12 +34,12 @@ STATUS_ICONS = {
 
 STATUS_LABELS = {
     SyncStatus.SYNCED: "Synced",
-    SyncStatus.BLEND_MODIFIED: "Blend Modified",
-    SyncStatus.JSON_MODIFIED: "JSON Modified",
+    SyncStatus.BLEND_MODIFIED: "Edited Locally",
+    SyncStatus.JSON_MODIFIED: "Changed in JSON",
     SyncStatus.CONFLICT: "Conflict",
-    SyncStatus.ORPHAN: "Orphan",
+    SyncStatus.ORPHAN: "Missing in Blend",
     SyncStatus.UNTRACKED: "Untracked",
-    SyncStatus.JSON_MISSING: "JSON Missing",
+    SyncStatus.JSON_MISSING: "JSON File Missing",
 }
 
 ISSUE_TYPE_ICONS = {
@@ -72,7 +72,7 @@ ISSUE_SEVERITY_ICONS = {
 # ---------------------------------------------------------------------------
 
 class GN_PT_SyncPanel(bpy.types.Panel):
-    bl_label = "DNA/RNA Sync"
+    bl_label = "Sync"
     bl_idname = "GN_PT_SyncPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
@@ -85,28 +85,28 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         tracked = metadata.get("tracked_groups", {})
 
         row = layout.row(align=True)
-        row.operator("gn.sync_link", text="Link Group", icon='LINKED')
-        row.operator("gn.sync_link_all", text="Link All", icon='FILE_TICK')
+        row.operator("gn.sync_link", text="Track Group", icon='LINKED')
+        row.operator("gn.sync_link_all", text="Track All", icon='FILE_TICK')
 
         if not tracked:
             layout.separator()
             layout.label(text="No groups tracked", icon='INFO')
             layout.separator()
-            layout.operator("gn.sync_initialize", text="Initialize Sync from JSON", icon='FILE_FOLDER')
-            layout.label(text="Link an existing JSON file and create tracking metadata")
+            layout.operator("gn.sync_initialize", text="Track from Existing JSON", icon='FILE_FOLDER')
+            layout.label(text="Reads the JSON as the source of truth — it is NOT modified")
             layout.separator()
-            layout.label(text="Or use the buttons below to create new links:")
+            layout.label(text="Or create the JSON from this .blend with the buttons above:")
             return
 
         layout.separator()
-        layout.label(text="Batch Operations:", icon='ACTION')
+        layout.label(text="Sync Actions:", icon='ACTION')
 
         batch_row = layout.row(align=True)
-        batch_row.operator("gn.sync_export_modified", text="Export Modified", icon='EXPORT')
-        batch_row.operator("gn.sync_import_modified", text="Import Modified", icon='IMPORT')
+        batch_row.operator("gn.sync_export_modified", text="Commit Modified", icon='EXPORT')
+        batch_row.operator("gn.sync_import_modified", text="Pull from JSON", icon='IMPORT')
 
         batch_row2 = layout.row(align=True)
-        batch_row2.operator("gn.sync_export_all", text="Export All", icon='EXPORT')
+        batch_row2.operator("gn.sync_export_all", text="Commit All", icon='EXPORT')
 
         check_row = layout.row(align=True)
         check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
@@ -131,15 +131,15 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             n_missing = summary.get("json_missing", 0)
 
             if n_blend:
-                summary_row.label(text=f"  Modified: {n_blend}", icon='LIGHT')
+                summary_row.label(text=f"  To commit: {n_blend}", icon='LIGHT')
             if n_json:
-                summary_row.label(text=f"  JSON↓: {n_json}", icon='FILE_REFRESH')
+                summary_row.label(text=f"  To pull: {n_json}", icon='FILE_REFRESH')
             if n_conflict:
                 summary_row.label(text=f"  Conflict: {n_conflict}", icon='ERROR')
             if n_orphan:
-                summary_row.label(text=f"  Orphan: {n_orphan}", icon='GROUP')
+                summary_row.label(text=f"  Missing: {n_orphan}", icon='GROUP')
             if n_missing:
-                summary_row.label(text=f"  Missing: {n_missing}", icon='FILE')
+                summary_row.label(text=f"  JSON file: {n_missing}", icon='FILE')
 
             if n_issues:
                 info_row = layout.row()
@@ -155,7 +155,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
 # ---------------------------------------------------------------------------
 
 class GN_PT_IssuesPanel(bpy.types.Panel):
-    bl_label = "DNA/RNA Sync Issues"
+    bl_label = "Sync Issues"
     bl_idname = "GN_PT_IssuesPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
@@ -204,13 +204,13 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
         layout.separator()
 
         filters_row1 = layout.row(align=True)
-        filters_row1.prop(prefs, "show_blend_modified", text="Blend", toggle=True, icon='LIGHT')
-        filters_row1.prop(prefs, "show_json_modified", text="JSON", toggle=True, icon='FILE_REFRESH')
+        filters_row1.prop(prefs, "show_blend_modified", text="Edited", toggle=True, icon='LIGHT')
+        filters_row1.prop(prefs, "show_json_modified", text="In JSON", toggle=True, icon='FILE_REFRESH')
         filters_row1.prop(prefs, "show_conflict", text="Conflict", toggle=True, icon='ERROR')
 
         filters_row2 = layout.row(align=True)
-        filters_row2.prop(prefs, "show_orphan", text="Orphan", toggle=True, icon='GROUP')
-        filters_row2.prop(prefs, "show_json_missing", text="Missing", toggle=True, icon='FILE')
+        filters_row2.prop(prefs, "show_orphan", text="Missing", toggle=True, icon='GROUP')
+        filters_row2.prop(prefs, "show_json_missing", text="JSON File", toggle=True, icon='FILE')
         filters_row2.prop(prefs, "show_ignored", text="Ignored", toggle=True, icon='RESTRICT_VIEW_OFF')
 
         layout.separator()
@@ -243,21 +243,21 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             if ignored:
                 actions.operator("gn.sync_unignore", text="Un-ignore", icon='RESTRICT_VIEW_OFF').sync_uuid = uid
             elif status == SyncStatus.BLEND_MODIFIED:
-                actions.operator("gn.sync_export", text="Export", icon='EXPORT').sync_uuid = uid
+                actions.operator("gn.sync_export", text="Commit", icon='EXPORT').sync_uuid = uid
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
             elif status == SyncStatus.JSON_MODIFIED:
-                actions.operator("gn.sync_import", text="Import (DNA→RNA)", icon='IMPORT').sync_uuid = uid
+                actions.operator("gn.sync_import", text="Pull", icon='IMPORT').sync_uuid = uid
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
             elif status == SyncStatus.CONFLICT:
-                actions.operator("gn.sync_resolve_json", text="Keep DNA", icon='FILE_REFRESH').sync_uuid = uid
-                actions.operator("gn.sync_resolve_blend", text="Keep RNA", icon='LIGHT').sync_uuid = uid
+                actions.operator("gn.sync_resolve_json", text="Keep JSON", icon='FILE_REFRESH').sync_uuid = uid
+                actions.operator("gn.sync_resolve_blend", text="Keep Blend", icon='LIGHT').sync_uuid = uid
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
             elif status == SyncStatus.ORPHAN:
-                actions.operator("gn.sync_import", text="Re-import", icon='IMPORT').sync_uuid = uid
-                actions.operator("gn.sync_unlink", text="Unlink", icon='X').sync_uuid = uid
+                actions.operator("gn.sync_import", text="Restore from JSON", icon='IMPORT').sync_uuid = uid
+                actions.operator("gn.sync_unlink", text="Stop Tracking", icon='X').sync_uuid = uid
             elif status == SyncStatus.JSON_MISSING:
                 actions.operator("gn.sync_export", text="Re-create JSON", icon='EXPORT').sync_uuid = uid
-                actions.operator("gn.sync_unlink", text="Unlink", icon='X').sync_uuid = uid
+                actions.operator("gn.sync_unlink", text="Stop Tracking", icon='X').sync_uuid = uid
 
         layout.separator()
         layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
@@ -298,8 +298,8 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
 
 class GN_OT_SyncResolveBlend(bpy.types.Operator):
     bl_idname = "gn.sync_resolve_blend"
-    bl_label = "Resolve: Keep RNA"
-    bl_description = "Keep the .blend (RNA) version and overwrite JSON (DNA)"
+    bl_label = "Resolve: Keep Blend"
+    bl_description = "Keep the .blend version and overwrite the JSON"
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: bpy.props.StringProperty(name="UUID")
@@ -308,14 +308,14 @@ class GN_OT_SyncResolveBlend(bpy.types.Operator):
         sync_manager.resolve_conflict(self.sync_uuid, "blend")
         sync_manager.save()
         restore_zone_area()
-        self.report({'INFO'}, "Conflict resolved — kept RNA (.blend) version")
+        self.report({'INFO'}, "Conflict resolved — kept the .blend version")
         return {'FINISHED'}
 
 
 class GN_OT_SyncResolveJSON(bpy.types.Operator):
     bl_idname = "gn.sync_resolve_json"
-    bl_label = "Resolve: Keep DNA"
-    bl_description = "Keep the JSON (DNA) version and overwrite .blend (RNA)"
+    bl_label = "Resolve: Keep JSON"
+    bl_description = "Keep the JSON version and overwrite the .blend"
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: bpy.props.StringProperty(name="UUID")
@@ -324,7 +324,7 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
         sync_manager.resolve_conflict(self.sync_uuid, "json")
         sync_manager.save()
         restore_zone_area()
-        self.report({'INFO'}, "Conflict resolved — kept DNA (JSON) version")
+        self.report({'INFO'}, "Conflict resolved — kept the JSON version")
         return {'FINISHED'}
 
 
@@ -336,19 +336,19 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
     """Persistent preferences for the issues panel."""
 
     show_blend_modified = bpy.props.BoolProperty(
-        name="Show Blend Modified", default=True,
+        name="Show Edited Locally", default=True,
     )
     show_json_modified = bpy.props.BoolProperty(
-        name="Show JSON Modified", default=True,
+        name="Show Changed in JSON", default=True,
     )
     show_conflict = bpy.props.BoolProperty(
         name="Show Conflict", default=True,
     )
     show_orphan = bpy.props.BoolProperty(
-        name="Show Orphan", default=True,
+        name="Show Missing in Blend", default=True,
     )
     show_json_missing = bpy.props.BoolProperty(
-        name="Show JSON Missing", default=True,
+        name="Show JSON File Missing", default=True,
     )
     show_ignored = bpy.props.BoolProperty(
         name="Show Ignored", default=False,

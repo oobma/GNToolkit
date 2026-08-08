@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 gn_toolkit.sync_operators — Blender operators for DNA/RNA sync actions.
 
@@ -45,13 +45,13 @@ def _get_all_geometry_trees():
 
 
 # ---------------------------------------------------------------------------
-# Operator: Link a group to JSON
+# Operator: Track a group (write JSON from blend)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link"
-    bl_label = "Link Group to JSON (DNA)"
-    bl_description = "Link the active Geometry Node group to a JSON file for DNA/RNA tracking"
+    bl_label = "Track Group"
+    bl_description = "Start tracking the active group: writes its JSON from the current .blend content (first commit)"
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -79,19 +79,19 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, f"Node group '{self.tree_name}' not found")
             return {'CANCELLED'}
 
-        # Check if already linked
+        # Check if already tracked
         existing_uuid = get_uuid_from_tree(tree)
         if existing_uuid:
             existing_info = sync_manager.get_tracked_group(existing_uuid)
             if existing_info is not None:
                 self.report({'WARNING'},
-                            f"'{tree.name}' is already linked (UUID: {existing_uuid[:8]}...)")
+                            f"'{tree.name}' is already tracked (UUID: {existing_uuid[:8]}...)")
                 return {'CANCELLED'}
 
         try:
             sync_uuid = sync_manager.link_group(tree, self.filepath)
             sync_manager.save()
-            self.report({'INFO'}, f"Linked '{tree.name}' as DNA (UUID: {sync_uuid[:8]}...)")
+            self.report({'INFO'}, f"Now tracking '{tree.name}' (UUID: {sync_uuid[:8]}...)")
         except Exception as e:
             self.report({'ERROR'}, f"Failed to link: {e}")
             return {'CANCELLED'}
@@ -101,13 +101,13 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
 
 
 # ---------------------------------------------------------------------------
-# Operator: Unlink a group from tracking
+# Operator: Stop tracking a group
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncUnlink(bpy.types.Operator):
     bl_idname = "gn.sync_unlink"
-    bl_label = "Unlink Group"
-    bl_description = "Remove DNA/RNA tracking for this node group (keeps the JSON and node tree)"
+    bl_label = "Stop Tracking"
+    bl_description = "Stop tracking this group — the JSON file and the node tree are kept"
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: StringProperty(name="UUID", description="UUID of the tracked group")
@@ -129,17 +129,17 @@ class GN_OT_SyncUnlink(bpy.types.Operator):
         blend_name = info.get("blend_name", "?")
         sync_manager.unlink_group(self.sync_uuid)
         sync_manager.save()
-        self.report({'INFO'}, f"Unlinked '{blend_name}' from DNA/RNA tracking")
+        self.report({'INFO'}, f"Stopped tracking '{blend_name}'")
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Import from JSON (DNA → RNA)
+# Operator: Pull a group from JSON
 
 class GN_OT_SyncImport(bpy.types.Operator):
     bl_idname = "gn.sync_import"
-    bl_label = "Import from JSON (DNA → RNA)"
-    bl_description = "Overwrite the .blend node group with JSON data (DNA wins)"
+    bl_label = "Pull from JSON"
+    bl_description = "Overwrite this group in the .blend with the JSON version (JSON wins)"
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: StringProperty(name="UUID", description="UUID of the tracked group")
@@ -167,19 +167,19 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
         if tracker.has_errors:
             self.report({'WARNING'},
-                        f"Import completed with {tracker.count} warnings — check console")
+                        f"Pull completed with {tracker.count} warnings — check console")
         else:
-            self.report({'INFO'}, "Import from JSON completed")
+            self.report({'INFO'}, "Pull from JSON completed")
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Export to JSON (RNA → DNA)
+# Operator: Commit a group to JSON
 
 class GN_OT_SyncExport(bpy.types.Operator):
     bl_idname = "gn.sync_export"
-    bl_label = "Export to JSON (RNA → DNA)"
-    bl_description = "Overwrite the JSON file with .blend data (RNA wins)"
+    bl_label = "Commit to JSON"
+    bl_description = "Write this group's .blend content into its JSON file (blend wins)"
     bl_options = {'REGISTER'}
 
     sync_uuid: StringProperty(name="UUID", description="UUID of the tracked group")
@@ -199,12 +199,12 @@ class GN_OT_SyncExport(bpy.types.Operator):
             # Force UI redraw so issue disappears immediately
             for area in context.screen.areas:
                 area.tag_redraw()
-            self.report({'INFO'}, "Export to JSON completed")
+            self.report({'INFO'}, "Commit to JSON completed")
             return {'FINISHED'}
         else:
             self.report({'ERROR'},
-                        "Export blocked — JSON was modified externally. "
-                        "Import first or resolve the conflict.")
+                        "Commit blocked — the JSON was modified externally. "
+                        "Pull first or resolve the conflict.")
             return {'CANCELLED'}
 
 
@@ -217,7 +217,6 @@ class GN_OT_SyncIgnore(bpy.types.Operator):
     bl_label = "Ignore Changes"
     bl_description = "Hide this issue from the list — the real status is still tracked"
     bl_options = {'REGISTER'}
-
     sync_uuid: StringProperty(name="UUID", description="UUID of the tracked group")
 
     def execute(self, context):
@@ -277,8 +276,8 @@ class GN_OT_SyncResolve(bpy.types.Operator):
         name="Keep Side",
         description="Which version to keep",
         items=[
-            ('blend', 'Keep .blend (RNA)', 'Keep the .blend version and update JSON'),
-            ('json', 'Keep JSON (DNA)', 'Keep the JSON version and update .blend'),
+            ('blend', 'Keep .blend', 'Keep the .blend version and update the JSON'),
+            ('json', 'Keep JSON', 'Keep the JSON version and update the .blend'),
         ],
     )
 
@@ -309,8 +308,8 @@ class GN_OT_SyncResolve(bpy.types.Operator):
 
 class GN_OT_SyncCheck(bpy.types.Operator):
     bl_idname = "gn.sync_check"
-    bl_label = "Check Sync Status"
-    bl_description = "Force a sync status check for all tracked groups"
+    bl_label = "Refresh Status"
+    bl_description = "Recompute the sync status of every tracked group"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -330,13 +329,13 @@ class GN_OT_SyncCheck(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
-# Operator: Link dependencies
+# Operator: Track dependencies
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncLinkDeps(bpy.types.Operator):
     bl_idname = "gn.sync_link_deps"
-    bl_label = "Link Dependencies"
-    bl_description = "Auto-link all untracked groups that share the same JSON file"
+    bl_label = "Track Dependencies"
+    bl_description = "Start tracking untracked groups that share the same JSON file"
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: StringProperty(name="UUID", description="UUID of the parent tracked group")
@@ -354,20 +353,20 @@ class GN_OT_SyncLinkDeps(bpy.types.Operator):
         sync_manager.save()
 
         if new_uuids:
-            self.report({'INFO'}, f"Linked {len(new_uuids)} dependency group(s)")
+            self.report({'INFO'}, f"Now tracking {len(new_uuids)} dependency group(s)")
         else:
             self.report({'INFO'}, "No untracked dependencies found")
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Link all groups (batch)
+# Operator: Track all groups (batch)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link_all"
-    bl_label = "Link All Groups"
-    bl_description = "Link ALL Geometry Node groups in the current .blend to a single master JSON file"
+    bl_label = "Track All"
+    bl_description = "Track every Geometry Nodes group in one master JSON, written from the current .blend (first commit)"
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -385,8 +384,8 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
             result = sync_manager.link_all_groups(self.filepath, context)
             sync_manager.save()
 
-            msg = (f"Linked {result['linked']} groups, "
-                   f"updated {result['skipped']} existing, "
+            msg = (f"Tracking {result['linked']} groups, "
+                   f"{result['skipped']} already tracked, "
                    f"{result['errors']} errors")
             context.window_manager.progress_end()
             self.report({'INFO'}, msg)
@@ -399,13 +398,13 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
 
 
 # ---------------------------------------------------------------------------
-# Operator: Export all groups (batch)
+# Operator: Commit all groups (batch)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncExportAll(bpy.types.Operator):
     bl_idname = "gn.sync_export_all"
-    bl_label = "Export All (RNA → DNA)"
-    bl_description = "Export all tracked groups to their JSON files (force overwrites)"
+    bl_label = "Commit All to JSON"
+    bl_description = "Write every tracked group's .blend content into its JSON file"
     bl_options = {'REGISTER'}
 
     force: bpy.props.BoolProperty(
@@ -417,7 +416,7 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
     def execute(self, context):
         tracked = sync_manager.metadata.get("tracked_groups", {})
         if not tracked:
-            self.report({'ERROR'}, "No groups tracked. Use 'Link All Groups' first.")
+            self.report({'ERROR'}, "No groups tracked. Use 'Track All' or 'Track from Existing JSON' first.")
             return {'CANCELLED'}
 
         context.window_manager.progress_begin(0, len(tracked))
@@ -429,31 +428,31 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
             for area in context.screen.areas:
                 area.tag_redraw()
             self.report({'INFO'},
-                        f"Exported {result['exported']} groups, "
+                        f"Committed {result['exported']} groups, "
                         f"skipped {result['skipped']}, "
                         f"errors {result['errors']}")
         except Exception as e:
             context.window_manager.progress_end()
-            self.report({'ERROR'}, f"Batch export failed: {e}")
+            self.report({'ERROR'}, f"Commit failed: {e}")
             return {'CANCELLED'}
 
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Export only modified groups (batch)
+# Operator: Commit only modified groups (batch)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncExportModified(bpy.types.Operator):
     bl_idname = "gn.sync_export_modified"
-    bl_label = "Export Modified (RNA → DNA)"
-    bl_description = "Export only groups with BLEND_MODIFIED or CONFLICT status to JSON"
+    bl_label = "Commit Modified to JSON"
+    bl_description = "Write only edited or conflicting groups into their JSON files"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
         tracked = sync_manager.metadata.get("tracked_groups", {})
         if not tracked:
-            self.report({'ERROR'}, "No groups tracked. Use 'Link All Groups' first.")
+            self.report({'ERROR'}, "No groups tracked. Use 'Track All' or 'Track from Existing JSON' first.")
             return {'CANCELLED'}
 
         context.window_manager.progress_begin(0, len(tracked))
@@ -465,25 +464,26 @@ class GN_OT_SyncExportModified(bpy.types.Operator):
             for area in context.screen.areas:
                 area.tag_redraw()
             self.report({'INFO'},
-                        f"Exported {result['exported']} groups, "
+                        f"Committed {result['exported']} groups, "
                         f"skipped {result['skipped']}, "
                         f"errors {result['errors']}")
         except Exception as e:
             context.window_manager.progress_end()
-            self.report({'ERROR'}, f"Batch export failed: {e}")
+            self.report({'ERROR'}, f"Commit failed: {e}")
             return {'CANCELLED'}
 
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Import all modified groups (batch)
+# Operator: Pull all modified groups (batch)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncImportModified(bpy.types.Operator):
     bl_idname = "gn.sync_import_modified"
-    bl_label = "Import Modified (DNA → RNA)"
-    bl_description = "Import groups with JSON_MODIFIED, BLEND_MODIFIED, or CONFLICT status. BLEND_MODIFIED changes will be overwritten."
+    bl_label = "Pull from JSON"
+    bl_description = ("Apply JSON changes to the .blend for every group that changed in the JSON; "
+                      "warns before overwriting local edits")
     bl_options = {'REGISTER', 'UNDO'}
 
     def invoke(self, context, event):
@@ -506,7 +506,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
     def execute(self, context):
         tracked = sync_manager.metadata.get("tracked_groups", {})
         if not tracked:
-            self.report({'ERROR'}, "No groups tracked. Use 'Link All Groups' first.")
+            self.report({'ERROR'}, "No groups tracked. Use 'Track All' or 'Track from Existing JSON' first.")
             return {'CANCELLED'}
 
         context.window_manager.progress_begin(0, len(tracked))
@@ -519,26 +519,27 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
             for area in context.screen.areas:
                 area.tag_redraw()
             self.report({'INFO'},
-                        f"Imported {result['imported']}, "
+                        f"Pulled {result['imported']}, "
                         f"skipped {result['skipped']}, "
                         f"errors {result['errors']}, "
-                        f"auto-linked {result['auto_linked']}")
+                        f"auto-tracked {result['auto_linked']}")
         except Exception as e:
             context.window_manager.progress_end()
-            self.report({'ERROR'}, f"Batch import failed: {e}")
+            self.report({'ERROR'}, f"Pull failed: {e}")
             return {'CANCELLED'}
 
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Initialize sync from existing JSON (no sidecar)
+# Operator: Track from existing JSON (no sidecar)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.sync_initialize"
-    bl_label = "Initialize Sync from JSON"
-    bl_description = "Link an existing JSON file and create tracking metadata for all matching groups in this .blend"
+    bl_label = "Track from Existing JSON"
+    bl_description = ("Start tracking all groups using an existing JSON as the source of truth — "
+                      "the JSON is read only and is NOT modified")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -616,7 +617,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 
         self.report(
             {'INFO'},
-            f"Initialized sync: {linked} groups linked, {skipped} skipped (already tracked or not in .blend)"
+            f"Tracking started: {linked} groups, {skipped} skipped (already tracked or not in .blend)"
         )
         return {'FINISHED'}
 

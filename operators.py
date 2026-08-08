@@ -26,8 +26,8 @@ from .sync_manager import SyncManager
 
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_batch_json"
-    bl_label = "Export Full Project"
-    bl_description = "Export all Geometry Nodes groups and Modifier setups to JSON."
+    bl_label = "Export JSON Package"
+    bl_description = "Save a full snapshot of all Geometry Nodes groups and NODES modifiers to a JSON package file"
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
@@ -103,7 +103,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                             })
                 with open(self.filepath, 'w', encoding='utf-8') as f:
                     json.dump(master_data, f, **dump_args)
-                self.report({'INFO'}, "Batch Export Completed.")
+                self.report({'INFO'}, "Package export completed.")
         except Exception as e:
             self.report({'ERROR'}, f"Export failed: {e}")
             traceback.print_exc()
@@ -117,7 +117,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
 class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_active_json"
     bl_label = "Export Active Group"
-    bl_description = "Export the currently active Geometry Node group to a standalone JSON file"
+    bl_description = "Save the active Geometry Node group plus its dependencies to a JSON package file"
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
@@ -186,8 +186,9 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
 
 class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
-    bl_label = "Import Data Package"
-    bl_description = "Import Geometry Nodes hierarchies from JSON."
+    bl_label = "Import JSON Package"
+    bl_description = ("Recreate all Geometry Nodes groups (and modifiers) from a JSON package; "
+                      "'Update existing groups' rebuilds existing ones in place")
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
@@ -347,9 +348,9 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             # apply modifiers and finish.
             if self._current_gen is None and not self._group_names:
                 self._process_modifiers(context)
-                msg = "Import finished successfully."
+                msg = "Package import finished successfully."
                 if self._tracker and self._tracker.has_errors:
-                    msg = f"Import finished with {self._tracker.count} warnings (Check Console)."
+                    msg = f"Package import finished with {self._tracker.count} warnings (Check Console)."
                     self.report({'WARNING'}, msg)
                 else:
                     self.report({'INFO'}, msg)
@@ -395,7 +396,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
 
 
 class GN_PT_MainPanel(bpy.types.Panel):
-    bl_label = f"GN Batch Toolkit v{ADDON_VERSION}"
+    bl_label = "JSON Package"
     bl_idname = "GN_PT_MainPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
@@ -403,11 +404,11 @@ class GN_PT_MainPanel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="Pipeline Tools", icon='TOOL_SETTINGS')
+        layout.label(text="Snapshot", icon='TOOL_SETTINGS')
 
         row = layout.row(align=True)
-        row.operator("gn.export_batch_json", text="Batch Export All", icon='EXPORT')
-        row.operator("gn.import_batch_json", text="Batch Import", icon='IMPORT')
+        row.operator("gn.export_batch_json", text="Export Package", icon='EXPORT')
+        row.operator("gn.import_batch_json", text="Import Package", icon='IMPORT')
 
         row2 = layout.row(align=True)
         row2.operator("gn.export_active_json", text="Export Active Group", icon='FILE_BACKUP')
