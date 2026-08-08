@@ -10,3 +10,6 @@ __pycache__/
 
 # Addon sync sidecar files
 *.gntsync
+
+# Local agent/workflow notes (kept out of the public repo)
+AGENTS.md
