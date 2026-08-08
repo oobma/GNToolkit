@@ -19,7 +19,7 @@ from enum import Enum
 
 import bpy
 
-from .constants import ADDON_VERSION, LOCK_TIMEOUT_SECONDS
+from .constants import ADDON_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
 from .hash_utils import (
     canonical_hash_from_tree,
