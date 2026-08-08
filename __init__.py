@@ -7,6 +7,15 @@ Volatile Nodes.  Now includes DNA/RNA synchronization for Geometry Nodes:
 JSON (DNA) is the source of truth, .blend (RNA) is the working cache.
 """
 
+import bpy
+
+from .constants import ADDON_VERSION
+from .operators import classes as operator_classes
+from .sync_operators import classes as sync_operator_classes
+from .sync_ui import classes as ui_classes
+from .sync_manager import sync_manager, SyncStatus
+
+
 bl_info = {
     "name": f"GN DNA/RNA Toolkit v{ADDON_VERSION}",
     "author": "oobma/ Asistente IA",
@@ -16,14 +25,6 @@ bl_info = {
     "description": "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups.",
     "category": "Node",
 }
-
-import bpy
-
-from .constants import ADDON_VERSION
-from .operators import classes as operator_classes
-from .sync_operators import classes as sync_operator_classes
-from .sync_ui import classes as ui_classes
-from .sync_manager import sync_manager, SyncStatus
 
 
 # ---------------------------------------------------------------------------
