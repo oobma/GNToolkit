@@ -9,16 +9,17 @@ file is the RNA (working cache).
 
 ## Features
 
-- **Batch export/import** of all Geometry Nodes groups and NODES modifier
-  setups to/from a single JSON package.
+- **JSON package snapshots**: export/import of all Geometry Nodes groups
+  and NODES modifier setups to/from a single JSON package, with in-place
+  update of existing groups on import.
 - **Export active group** with its full dependency chain.
-- **DNA/RNA sync**: link any node group to a JSON file and track changes
-  on both sides with canonical hashing.
-- **Status detection** per group: Synced, Blend Modified, JSON Modified,
-  Conflict, Orphan, Untracked, JSON Missing.
-- **Batch operations**: Link All, Export Modified, Import Modified,
-  Export All.
-- **Conflict resolution**: keep the .blend (RNA) or the JSON (DNA) version
+- **DNA/RNA sync**: track any node group against a JSON file and detect
+  changes on both sides with canonical hashing.
+- **Status detection** per group: Synced, Edited Locally, Changed in JSON,
+  Conflict, Missing in Blend, Untracked, JSON File Missing.
+- **Sync operations**: Track (start), Commit Modified, Pull from JSON,
+  Commit All, Refresh Status.
+- **Conflict resolution**: keep the .blend or the JSON version
   with a single click.
 - **External connection preservation**: links from parent groups survive
   reimports.
@@ -54,31 +55,43 @@ this addon:
 
 ## Quick Start
 
-### Batch export/import (no tracking)
+### JSON package snapshots (no tracking)
 
 1. In the Node Editor sidebar → **GN Tools**, use:
-   - **Batch Export All** — writes every Geometry Nodes group and modifier
+   - **Export Package** — writes every Geometry Nodes group and modifier
      setup to a single JSON package (or a folder structure).
    - **Export Active Group** — exports the active group plus its
      dependencies.
-   - **Batch Import** — reconstructs all groups (and modifiers) from JSON.
-     With **Update existing groups** checked, groups that already exist in
-     the file are rebuilt in place from the JSON (modifiers referencing
-     them and external links are preserved); unchecked (default), existing
-     groups are left untouched.
+   - **Import Package** — reconstructs all groups (and modifiers) from
+     JSON. With **Update existing groups** checked, groups that already
+     exist in the file are rebuilt in place from the JSON (modifiers
+     referencing them and external links are preserved); unchecked
+     (default), existing groups are left untouched.
 
-### DNA/RNA sync
+### Sync (git-style vocabulary)
 
-1. **Link All Groups** — links every Geometry Nodes group to one master
-   JSON file. Each group gets a UUID stored on the node tree. The JSON is
-   updated surgically: entries that have no counterpart in the .blend
-   (e.g. groups removed locally) are preserved.
+The sync layer tracks groups between the JSON (source of truth) and the
+.blend, using git-style actions: **Track** (start), **Commit**
+(.blend → JSON), **Pull** (JSON → .blend).
+
+1. Start tracking:
+   - **Track All** — every Geometry Nodes group is tracked against one
+     master JSON **written from the current .blend** (first commit). Each
+     group gets a UUID stored on the node tree. The JSON is updated
+     surgically: entries that have no counterpart in the .blend
+     (e.g. groups removed locally) are preserved.
+   - **Track from Existing JSON** — start tracking using an existing JSON
+     as the source of truth; the JSON is read only and **NOT modified**.
+     Use this after an **Import Package** when the JSON is already
+     authoritative. (Equivalent to `git clone`.)
 2. **Refresh Status** — computes the sync state of every tracked group.
 3. Resolve issues with the per-group buttons:
-   - **Export** (RNA → DNA): save your .blend changes into the JSON.
-   - **Import** (DNA → RNA): overwrite the .blend version with the JSON.
-   - **Keep DNA / Keep RNA**: resolve a conflict by choosing a side.
+   - **Commit** (.blend → JSON): save your .blend changes into the JSON.
+   - **Pull** (JSON → .blend): overwrite the .blend version with the JSON.
+   - **Keep JSON / Keep Blend**: resolve a conflict by choosing a side.
    - **Ignore**: hide the issue without changing any data.
+   - **Stop Tracking**: remove tracking; the JSON file and the node tree
+     are kept.
 
 Sync metadata is stored in a sidecar file next to the .blend
 (`<project>.blend.gntsync`) and saved automatically on file save.
@@ -89,9 +102,9 @@ Sync metadata is stored in a sidecar file next to the .blend
 |---|---|
 | **DNA** | The JSON file. The source of truth — readable, diffable, versionable with git. |
 | **RNA** | The .blend working cache where you edit and preview. |
-| **UUID** | A unique ID stored as a custom property on each linked node tree. |
+| **UUID** | A unique ID stored as a custom property on each tracked node tree. |
 | **Canonical hash** | A SHA-256 fingerprint of a group's content, ignoring cosmetic differences (node positions, creation order), so only real changes trigger a status change. |
-| **Sidecar** | The `.gntsync` file that records which groups are linked, their UUIDs, and their last known hashes. |
+| **Sidecar** | The `.gntsync` file that records which groups are tracked, their UUIDs, and their last known hashes. |
 
 Each status is computed by comparing the JSON hash against the stored hash
 and the .blend hash against the stored hash:
@@ -99,12 +112,12 @@ and the .blend hash against the stored hash:
 | Status | Meaning | Typical action |
 |---|---|---|
 | Synced | Both sides match | — |
-| Blend Modified | Only the .blend changed | Export |
-| JSON Modified | Only the JSON changed | Import |
-| Conflict | Both sides changed | Keep DNA or Keep RNA |
-| Orphan | The node tree no longer exists in the .blend | Re-import or Unlink |
-| Untracked | Not linked to any JSON | Link |
-| JSON Missing | The JSON file is gone | Re-create JSON or Unlink |
+| Edited Locally | Only the .blend changed | Commit |
+| Changed in JSON | Only the JSON changed | Pull |
+| Conflict | Both sides changed | Keep JSON or Keep Blend |
+| Missing in Blend | The node tree no longer exists in the .blend | Restore from JSON or Stop Tracking |
+| Untracked | Not tracked against any JSON | Track |
+| JSON File Missing | The JSON file is gone | Re-create JSON or Stop Tracking |
 
 ## JSON format
 
@@ -138,7 +151,7 @@ links and tree properties — enough to fully reconstruct the group.
 | `sync_operators.py` | Sync operators (link, import, export, resolve, ...) |
 | `sync_ui.py` | Sidebar panels |
 | `geometry_validator.py` | Generic geometry issue detection |
-| `operators.py` | Batch export/import operators and main panel |
+| `operators.py` | JSON package export/import operators and main panel |
 
 ## Contributing
 

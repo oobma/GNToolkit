@@ -63,6 +63,23 @@ has no node/socket Python API changes at all).
   `export_all`: the existing JSON is read and only entries for groups
   present in the .blend are replaced, so JSON-only groups and modifiers
   are preserved instead of being wiped by an overwrite.
+- **UI vocabulary moved to git-style terms** with clarifying tooltips on
+  every operator; DNA/RNA jargon was removed from buttons (kept in
+  tooltips and docs):
+  - Track Group / Track All / Track from Existing JSON (was Link Group /
+    Link All / Initialize Sync from JSON) — "Track All" writes the JSON
+    from the .blend (first commit); "Track from Existing JSON" reads an
+    existing JSON and never modifies it.
+  - Stop Tracking (was Unlink).
+  - Commit to JSON / Commit Modified to JSON / Commit All to JSON
+    (was Export / Export Modified / Export All).
+  - Pull from JSON / Restore from JSON (was Import / Import Modified /
+    Re-import).
+  - Keep JSON / Keep Blend (was Keep DNA / Keep RNA); status labels now
+    read Edited Locally / Changed in JSON / Missing in Blend / JSON File
+    Missing; summary shows "To commit" / "To pull".
+  - Main panel renamed "JSON Package" with a "Snapshot" section
+    (Export Package / Import Package); "Pipeline Tools" label removed.
 
 ## [0.2.0] - 2026-08-08
 
