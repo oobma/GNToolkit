@@ -2,6 +2,51 @@
 
 All notable changes to this project are documented in this file.
 
+## Technical note: zone node pairing (Simulation/Repeat/Foreach/Closure)
+
+**Why `bpy.ops.node.add_zone` is the ONLY way to create zone pairs from Python
+(verified on Blender 5.1.1, 2026-08-08 — do not re-investigate).**
+
+The zone pairing (a zone Input node's `paired_output` pointer) cannot be
+established from Python except via the operator:
+
+- `bpy.types.Node` (base class) exposes **no** `paired_*` property at all.
+- The zone Input subclasses (`GeometryNodeRepeatInput`, `...SimulationInput`,
+  `...ForeachGeometryElementInput`, `NodeClosureInput`) expose a
+  `paired_output` property that is **read-only** (`is_readonly == True`).
+- The zone Output subclasses expose **no** pairing property.
+- There is no RNA setter, no hidden attribute, and no other API surface
+  that writes the pairing pointer.
+
+The operator itself is **negligibly cheap**: measured 0.4-0.7 ms per call
+(background mode, with a `temp_override` context + pinned node tree). All
+106 zones of the reference project cost ~74 ms total. The importer's zone
+creation is therefore NOT a performance bottleneck; the dominant import cost
+is the O(tree size) re-validation that Blender 5.1 performs on every
+socket/`links.new` mutation (see the Performance section below).
+
+Consequences for the code architecture (keep these):
+
+- `run_add_zone_operator()` must pin the target tree into a Node Editor
+  space (`space.pin = True; space.node_tree = nt`) and call the operator
+  inside `bpy.context.temp_override(...)` — the operator's poll() fails
+  without it.
+- `ensure_zone_area()` / `restore_zone_area()` exist because the operator
+  requires a Node Editor area in the current screen; without them, scripted
+  imports from a layout without the Node Editor silently drop all zone
+  input nodes. Background mode has a virtual screen (Blender 5.1), so the
+  fallback also works headless.
+- The "Batch Import" button lives in the Geometry Nodes editor so
+  interactive users naturally satisfy the context requirement.
+- Creating the nodes via `nodes.new(...)` without the operator does NOT
+  pair them (`paired_output` stays null) — zones created that way are not
+  functional zones.
+
+Blender 5.2 LTS and 5.3 (alpha) do NOT change this: neither release touches
+zone creation or the socket pairing API (5.2 only changed Geometry Nodes
+modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
+has no node/socket Python API changes at all).
+
 ## [0.2.0] - 2026-08-08
 
 ### Added
