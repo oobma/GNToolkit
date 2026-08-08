@@ -13,3 +13,6 @@ __pycache__/
 
 # Local agent/workflow notes (kept out of the public repo)
 AGENTS.md
+
+# Local test assets and scripts (not part of the addon)
+tests/
