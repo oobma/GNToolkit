@@ -47,6 +47,23 @@ zone creation or the socket pairing API (5.2 only changed Geometry Nodes
 modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
 has no node/socket Python API changes at all).
 
+## [Unreleased]
+
+### Added
+- Batch Import: new **Update existing groups** option (off by default).
+  When enabled, groups that already exist in the file are rebuilt in place
+  from the JSON — the datablock is kept, so modifiers referencing the group
+  stay valid, and external links (from parent groups into the group's
+  interface sockets) are snapshot and restored by name after the rebuild.
+  This enables in-place refresh of a distributed .blend without the
+  "import into a fresh file" ritual.
+
+### Changed
+- **Link All Groups** now updates the master JSON surgically, matching
+  `export_all`: the existing JSON is read and only entries for groups
+  present in the .blend are replaced, so JSON-only groups and modifiers
+  are preserved instead of being wiped by an overwrite.
+
 ## [0.2.0] - 2026-08-08
 
 ### Added

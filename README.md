@@ -62,11 +62,17 @@ this addon:
    - **Export Active Group** — exports the active group plus its
      dependencies.
    - **Batch Import** — reconstructs all groups (and modifiers) from JSON.
+     With **Update existing groups** checked, groups that already exist in
+     the file are rebuilt in place from the JSON (modifiers referencing
+     them and external links are preserved); unchecked (default), existing
+     groups are left untouched.
 
 ### DNA/RNA sync
 
 1. **Link All Groups** — links every Geometry Nodes group to one master
-   JSON file. Each group gets a UUID stored on the node tree.
+   JSON file. Each group gets a UUID stored on the node tree. The JSON is
+   updated surgically: entries that have no counterpart in the .blend
+   (e.g. groups removed locally) are preserved.
 2. **Refresh Status** — computes the sync state of every tracked group.
 3. Resolve issues with the per-group buttons:
    - **Export** (RNA → DNA): save your .blend changes into the JSON.
