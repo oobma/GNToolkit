@@ -190,6 +190,13 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
+    apply_modifiers: BoolProperty(
+        name="Apply Modifiers",
+        description="Apply the modifiers stored in the JSON to existing objects "
+                    "with matching names (off by default: modifiers are skipped)",
+        default=False,
+    )
+
     _timer = None
     json_cache = {}
     group_interface_maps = {}
@@ -201,6 +208,9 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     _current_name = ""
     _groups_done = 0
     _total_groups = 0
+
+    def draw(self, context):
+        self.layout.prop(self, "apply_modifiers")
 
     def cancel_modal(self, context):
         if self._timer:
@@ -248,7 +258,10 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
 
         self._group_names = list(self.json_cache.keys())
-        self._mod_data_list = mod_data_list
+        # Modifiers are only applied when explicitly requested: applying them
+        # silently to existing objects with matching names is surprising
+        # (e.g. the default Cube matching a stored modifier's object name).
+        self._mod_data_list = mod_data_list if self.apply_modifiers else []
         self._current_gen = None
         self._current_name = ""
         self._groups_done = 0
@@ -278,7 +291,6 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 None, self._tracker, {},
             )
             self._current_name = name
-            context.window_manager.progress_update(0)
             context.workspace.status_text_set(
                 f"Group {self._groups_done + 1}/{self._total_groups}: {name} — 0%"
             )
@@ -331,16 +343,21 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             context.window.cursor_modal_set('WAIT')
             try:
                 frac, msg = next(self._current_gen)
-                pct = int(frac * 100)
-                context.window_manager.progress_update(pct)
+                group_pct = int(frac * 100)
+                # Monotonic overall progress: groups already done + the
+                # current group's fraction. Never resets, so the cursor
+                # percentage advances smoothly across the whole import.
+                overall_pct = int(((self._groups_done + frac) / max(self._total_groups, 1)) * 100)
+                context.window_manager.progress_update(overall_pct)
                 context.workspace.status_text_set(
                     f"Group {self._groups_done + 1}/{self._total_groups}: "
-                    f"{self._current_name} — {pct}%"
+                    f"{self._current_name} — {group_pct}% · {overall_pct}% total"
                 )
             except StopIteration:
                 self._current_gen = None
                 self._groups_done += 1
-                context.window_manager.progress_update(100)
+                overall_pct = int((self._groups_done / max(self._total_groups, 1)) * 100)
+                context.window_manager.progress_update(overall_pct)
 
         return {'PASS_THROUGH'}
 

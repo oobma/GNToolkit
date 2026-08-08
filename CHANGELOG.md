@@ -75,12 +75,18 @@ write time. Mitigations applied:
 - **Chunked import (Batch Import modal)**: the importer core is now a
   generator (`_import_node_tree_gen`) that yields progress every ~25 nodes,
   ~100 sockets and ~50 links. The modal drives one chunk per timer tick, so
-  the UI repaints during even the heaviest groups: the progress bar resets
-  per group (0-100% of the current group), the status bar shows
-  `Group i/439: <name> — NN%`, and the OS busy cursor no longer appears.
-  ESC now cancels between chunks. `import_node_tree_recursive` remains a
-  synchronous wrapper (unchanged behavior for all other callers; verified
-  byte-identical node/link/zone totals against the pre-refactor code).
+  the UI repaints during even the heaviest groups: the progress bar shows a
+  monotonic overall percentage (never resets), the status bar shows
+  `Group i/439: <name> — NN% · MM% total`, and the OS busy cursor no longer
+  appears. ESC now cancels between chunks. `import_node_tree_recursive`
+  remains a synchronous wrapper (unchanged behavior for all other callers;
+  verified byte-identical node/link/zone totals against the pre-refactor
+  code).
+- **Modifiers are opt-in on Batch Import**: applying the modifiers stored
+  in the JSON to existing objects with matching names was surprising (the
+  default Cube would silently receive a stored modifier). The operator now
+  has an "Apply Modifiers" checkbox (off by default); when off, modifiers
+  are skipped entirely.
 
 ### Known background-mode limitation
 
