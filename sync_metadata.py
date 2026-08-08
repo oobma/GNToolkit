@@ -14,7 +14,7 @@ import uuid as _uuid
 
 import bpy
 
-from .constants import SIDECAR_EXTENSION, SIDECAR_TEXT_BLOCK_NAME, SYNC_VERSION
+from .constants import SIDECAR_EXTENSION, SIDECAR_TEXT_BLOCK_NAME, ADDON_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +342,7 @@ def validate_metadata(metadata: dict, blend_dir: str) -> list[str]:
 def _empty_metadata() -> dict:
     """Return a fresh metadata dict with version info."""
     return {
-        "version": SYNC_VERSION,
+        "version": ADDON_VERSION,
         "tracked_groups": {},
     }
 

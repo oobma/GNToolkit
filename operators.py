@@ -311,7 +311,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
 
 
 class GN_PT_MainPanel(bpy.types.Panel):
-    bl_label = "GN Batch Toolkit v0.1.4"
+    bl_label = f"GN Batch Toolkit v{ADDON_VERSION}"
     bl_idname = "GN_PT_MainPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'

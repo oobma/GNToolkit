@@ -3,7 +3,10 @@
 gn_toolkit.constants — All constants and immutable sets for the addon.
 """
 
-ADDON_VERSION = "0.1.4"
+# Canonical addon version — single source of truth.
+# Reflected in bl_info (__init__.py), exported JSON files, the sidecar
+# metadata file, and UI labels.
+ADDON_VERSION = "0.2.0"
 
 # Node types whose socket identifiers are volatile (recycled by Blender at runtime).
 _VOLATILE_TYPES: frozenset[str] = frozenset({
@@ -153,8 +156,6 @@ EXPLICITLY_HANDLED_PROPS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 # DNA/RNA Sync — Constants
 # ---------------------------------------------------------------------------
-
-SYNC_VERSION = "0.2.0"
 
 # Node properties to exclude from canonical hash computation.
 # These are volatile/visual properties that do not affect node functionality.

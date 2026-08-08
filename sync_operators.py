@@ -12,6 +12,7 @@ import bpy
 from bpy.props import StringProperty, EnumProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
+from .constants import ADDON_VERSION
 from .hash_utils import canonical_hash_from_tree
 from .sync_manager import sync_manager, SyncStatus
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
@@ -581,7 +582,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         # Initialize sync manager if needed
         if not sync_manager.metadata.get("tracked_groups"):
             sync_manager.metadata = {
-                "version": "1.0.0",
+                "version": ADDON_VERSION,
                 "tracked_groups": {},
             }
 

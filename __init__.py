@@ -8,9 +8,9 @@ JSON (DNA) is the source of truth, .blend (RNA) is the working cache.
 """
 
 bl_info = {
-    "name": "GN DNA/RNA Toolkit v0.2.0",
+    "name": f"GN DNA/RNA Toolkit v{ADDON_VERSION}",
     "author": "oobma/ Asistente IA",
-    "version": (0, 2, 0),
+    "version": tuple(int(part) for part in ADDON_VERSION.split(".")),
     "blender": (4, 0, 0),
     "location": "Node Editor > Sidebar > GN Tools",
     "description": "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups.",
@@ -19,6 +19,7 @@ bl_info = {
 
 import bpy
 
+from .constants import ADDON_VERSION
 from .operators import classes as operator_classes
 from .sync_operators import classes as sync_operator_classes
 from .sync_ui import classes as ui_classes
