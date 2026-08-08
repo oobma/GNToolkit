@@ -13,6 +13,7 @@ from bpy.props import StringProperty, EnumProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
+from .importer import restore_zone_area
 from .sync_manager import read_json_tolerant, sync_manager, SyncStatus
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
@@ -159,6 +160,7 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
         tracker = sync_manager.import_from_json(self.sync_uuid, context)
         sync_manager.save()
+        restore_zone_area()
         # Force UI redraw so issue disappears immediately
         for area in context.screen.areas:
             area.tag_redraw()
@@ -291,6 +293,7 @@ class GN_OT_SyncResolve(bpy.types.Operator):
 
         sync_manager.resolve_conflict(self.sync_uuid, self.keep)
         sync_manager.save()
+        restore_zone_area()
         # Force UI redraw so issue disappears immediately
         for area in context.screen.areas:
             area.tag_redraw()
@@ -510,6 +513,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
         try:
             result = sync_manager.import_all_modified(context)
             sync_manager.save()
+            restore_zone_area()
             context.window_manager.progress_end()
             # Force UI redraw so issues disappear immediately
             for area in context.screen.areas:

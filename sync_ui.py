@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import bpy
 
+from .importer import restore_zone_area
 from .sync_manager import sync_manager, SyncStatus
 from .sync_metadata import is_ignored
 from .geometry_validator import (
@@ -306,6 +307,7 @@ class GN_OT_SyncResolveBlend(bpy.types.Operator):
     def execute(self, context):
         sync_manager.resolve_conflict(self.sync_uuid, "blend")
         sync_manager.save()
+        restore_zone_area()
         self.report({'INFO'}, "Conflict resolved — kept RNA (.blend) version")
         return {'FINISHED'}
 
@@ -321,6 +323,7 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
     def execute(self, context):
         sync_manager.resolve_conflict(self.sync_uuid, "json")
         sync_manager.save()
+        restore_zone_area()
         self.report({'INFO'}, "Conflict resolved — kept DNA (JSON) version")
         return {'FINISHED'}
 

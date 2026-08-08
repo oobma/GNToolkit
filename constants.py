@@ -31,6 +31,15 @@ ZONE_INPUTS: frozenset[str] = frozenset({
     'NodeClosureInput',
 })
 
+# Zone output node types. Zone pairs must be created together via
+# bpy.ops.node.add_zone (the only API that establishes the pairing).
+ZONE_OUTPUTS: frozenset[str] = frozenset({
+    'GeometryNodeRepeatOutput',
+    'GeometryNodeSimulationOutput',
+    'GeometryNodeForeachGeometryElementOutput',
+    'NodeClosureOutput',
+})
+
 # Node properties to skip during serialization (handled separately or volatile).
 NODE_PROPS_TO_SKIP: frozenset[str] = frozenset({
     'name', 'label', 'location', 'type', 'inputs', 'outputs', 'node_tree',

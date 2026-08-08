@@ -28,9 +28,23 @@ All notable changes to this project are documented in this file.
   the sync system self-heals by storing the new hash as the baseline. Found
   via the headless smoke test against the real project file.
 - **Zone input nodes (Simulation/Repeat/Foreach/Closure) are not recreated in
-  headless/background mode.** `importer.run_add_zone_operator` requires a
-  Node Editor area (`bpy.ops.node.add_zone`); zone inputs are preserved when
-  importing from a GUI session.
+  headless/background mode.** Zone pairs can only be created via
+  `bpy.ops.node.add_zone`, which requires a screen with areas; background
+  mode has none. In a GUI session the importer now guarantees a Node Editor
+  area (converting an existing area temporarily when the current layout has
+  none), so script-driven GUI imports create zones regardless of screen
+  layout.
+
+### Fixed (found via real-project import testing)
+
+- Zone output nodes could be duplicated when the serialized node order had an
+  output entry before its paired input (the normal creation path ran first
+  and collided with the pair created by `bpy.ops.node.add_zone`). The main
+  import loop now skips zone outputs whose paired input exists in the data.
+- Zone creation depended on the current screen having a Node Editor area;
+  imports from any other layout silently dropped all zone input nodes
+  (106 nodes on the reference project). `ensure_zone_area()` now converts an
+  existing area temporarily (restored at the end of the import).
 
 ## [0.1.4] - earlier
 

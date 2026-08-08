@@ -17,6 +17,7 @@ from .codec import unclean_value, _is_vector_type, _is_2d_vector_type, _is_color
 from .constants import (
     _VOLATILE_TYPES,
     ZONE_INPUTS,
+    ZONE_OUTPUTS,
     SOCKET_TYPE_MAP,
     OPTIONAL_SOCKET_PROPS,
     EXPLICITLY_HANDLED_PROPS,
@@ -176,6 +177,51 @@ def map_dynamic_sockets(old_data, new_node, remap_dict, node_key):
 # Zone creation via Blender operator
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Zone area helpers
+# ---------------------------------------------------------------------------
+
+_zone_area_state = {"area": None, "orig_type": None}
+
+
+def ensure_zone_area():
+    """Make sure the current screen has a Node Editor area for zone creation.
+
+    Zone pairs are only created by ``bpy.ops.node.add_zone``, which requires
+    a Node Editor area. When the current screen has none (e.g. script-driven
+    imports from a layout without the Node Editor), temporarily converts an
+    existing area. Idempotent; pair with ``restore_zone_area()``.
+
+    Returns True if an area is available (created or existing). In
+    headless/background mode there is no screen at all, so zone pairs
+    cannot be created.
+    """
+    if _zone_area_state["area"] is not None:
+        return True
+    screen = bpy.context.screen
+    if screen is None:
+        return False
+    if any(a.type == 'NODE_EDITOR' for a in screen.areas):
+        return True
+    area = next((a for a in screen.areas if a.type not in ('TOPBAR', 'STATUSBAR')), None)
+    if area is None:
+        return False
+    _zone_area_state["area"] = area
+    _zone_area_state["orig_type"] = area.type
+    area.type = 'NODE_EDITOR'
+    return True
+
+
+def restore_zone_area():
+    """Restore the area type converted by ``ensure_zone_area()``."""
+    if _zone_area_state["area"] is not None:
+        try:
+            _zone_area_state["area"].type = _zone_area_state["orig_type"]
+        except Exception:
+            pass
+        _zone_area_state["area"] = None
+
+
 def run_add_zone_operator(nt, input_type, output_type, tracker: ImportErrorTracker):
     """Create a zone pair (input+output nodes) using ``bpy.ops.node.add_zone``.
 
@@ -183,6 +229,7 @@ def run_add_zone_operator(nt, input_type, output_type, tracker: ImportErrorTrack
     pinned.  This function temporarily overrides the context, runs the
     operator, and restores the original state.
     """
+    ensure_zone_area()
     win = bpy.context.window
     area = next((a for a in bpy.context.screen.areas if a.type == 'NODE_EDITOR'), None)
     if not area:
@@ -1835,6 +1882,17 @@ def import_node_tree_recursive(
     processed_zone_nodes = set()
     zone_socket_remap = {}
 
+    # Zone outputs whose paired input exists in the data. Such outputs are
+    # created together with their input via bpy.ops.node.add_zone; creating
+    # them through the normal path first would collide with the pair that
+    # the operator creates later (duplicate nodes on groups where the
+    # output entry precedes its input in the serialized order).
+    paired_output_names = {
+        nd.get("zone_paired_node")
+        for nd in data["nodes"]
+        if nd.get("type") in ZONE_INPUTS and nd.get("zone_paired_node")
+    }
+
     for node_data in data["nodes"]:
         node_name = node_data.get("name")
         node_type = node_data.get("type")
@@ -1847,6 +1905,9 @@ def import_node_tree_recursive(
 
         elif node_name in node_map:
             new_node = node_map[node_name]
+        elif node_type in ZONE_OUTPUTS and node_name in paired_output_names:
+            # Created later by _create_zone_nodes when its input is reached.
+            continue
         else:
             try:
                 new_node = ng.nodes.new(node_type)

@@ -18,9 +18,9 @@ from bpy.props import StringProperty, BoolProperty
 from .codec import clean_value, unclean_value
 from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
+from .importer import import_node_tree_recursive, restore_zone_area
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
-from .importer import import_node_tree_recursive
 
 
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
@@ -202,6 +202,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         context.window_manager.progress_end()
         context.workspace.status_text_set(None)
         context.window.cursor_modal_restore()
+        restore_zone_area()
 
     def execute(self, context):
         self._tracker = ImportErrorTracker()
