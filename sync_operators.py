@@ -14,7 +14,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .hash_utils import canonical_hash_from_tree
 from .sync_manager import sync_manager, SyncStatus
-from .sync_metadata import find_uuid_for_tree, get_uuid_from_tree
+from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
 
 # ---------------------------------------------------------------------------
@@ -489,12 +489,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
         blend_modified_count = 0
         for uid, info in tracked.items():
             blend_name = info.get("blend_name", "")
-            tree = bpy.data.node_groups.get(blend_name)
-            if tree is None:
-                for ng in bpy.data.node_groups:
-                    if ng.get("gnt_sync_id") == uid:
-                        tree = ng
-                        break
+            tree = find_tree_by_uuid(blend_name, uid)
             if tree is None:
                 continue
             current_hash = canonical_hash_from_tree(tree)

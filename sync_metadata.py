@@ -196,6 +196,22 @@ def get_uuid_from_tree(tree) -> str | None:
     return tree.get(SYNC_UUID_PROP)
 
 
+def find_tree_by_uuid(blend_name: str, sync_uuid: str):
+    """Return the node tree by blend name, falling back to a scan by
+    sync UUID custom property. Returns None if the tree is not found.
+
+    The fallback scan is O(n) over all node groups and should be
+    avoided on hot paths; prefer passing a resolvable blend name.
+    """
+    tree = bpy.data.node_groups.get(blend_name)
+    if tree is not None:
+        return tree
+    for ng in bpy.data.node_groups:
+        if ng.get(SYNC_UUID_PROP) == sync_uuid:
+            return ng
+    return None
+
+
 def find_uuid_for_tree(tree, metadata: dict) -> str | None:
     """Find the UUID for a tree by checking its custom property first,
     then searching metadata by name.

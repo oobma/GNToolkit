@@ -435,18 +435,13 @@ def validate_all_tracked_trees() -> dict[str, list[ValidationIssue]]:
         Dict mapping UUID to list of issues found.
     """
     from .sync_manager import sync_manager
+    from .sync_metadata import find_tree_by_uuid
 
     all_issues: dict[str, list[ValidationIssue]] = {}
 
     for uuid_str, info in sync_manager.metadata.get("tracked_groups", {}).items():
         blend_name = info.get("blend_name", "")
-        tree = bpy.data.node_groups.get(blend_name)
-        if tree is None:
-            # Try to find by UUID property
-            for ng in bpy.data.node_groups:
-                if ng.get("gnt_sync_id") == uuid_str:
-                    tree = ng
-                    break
+        tree = find_tree_by_uuid(blend_name, uuid_str)
 
         if tree is None:
             continue

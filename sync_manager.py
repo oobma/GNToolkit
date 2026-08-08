@@ -42,6 +42,7 @@ from .sync_metadata import (
     store_uuid_on_tree,
     get_uuid_from_tree,
     find_uuid_for_tree,
+    find_tree_by_uuid,
     get_tracked_group,
     get_tracked_group_by_name,
     add_tracked_group,
@@ -222,12 +223,7 @@ class SyncManager:
             return SyncStatus.UNTRACKED
 
         blend_name = info.get("blend_name", "")
-        tree = bpy.data.node_groups.get(blend_name)
-        if tree is None:
-            for ng in bpy.data.node_groups:
-                if ng.get("gnt_sync_id") == sync_uuid:
-                    tree = ng
-                    break
+        tree = find_tree_by_uuid(blend_name, sync_uuid)
         if tree is None:
             return SyncStatus.ORPHAN
 
@@ -324,12 +320,7 @@ class SyncManager:
                 continue
 
             blend_name = info.get("blend_name", "")
-            tree = bpy.data.node_groups.get(blend_name)
-            if tree is None:
-                for ng in bpy.data.node_groups:
-                    if ng.get("gnt_sync_id") == uid:
-                        tree = ng
-                        break
+            tree = find_tree_by_uuid(blend_name, uid)
             if tree is None:
                 result[uid] = SyncStatus.ORPHAN
                 continue
@@ -771,12 +762,7 @@ class SyncManager:
             abs_stored = resolve_json_path(stored_path, self._blend_dir())
             if abs_stored == json_path:
                 blend_name = info.get("blend_name", "")
-                tree = bpy.data.node_groups.get(blend_name)
-                if tree is None:
-                    for ng in bpy.data.node_groups:
-                        if ng.get("gnt_sync_id") == uid:
-                            tree = ng
-                            break
+                tree = find_tree_by_uuid(blend_name, uid)
                 if tree is not None:
                     # JSON hash from pre-computed cache
                     dep_json_hash = json_hashes.get(blend_name, "")
@@ -958,12 +944,7 @@ class SyncManager:
                 return False
 
         blend_name = info.get("blend_name", "")
-        tree = bpy.data.node_groups.get(blend_name)
-        if tree is None:
-            for ng in bpy.data.node_groups:
-                if ng.get("gnt_sync_id") == sync_uuid:
-                    tree = ng
-                    break
+        tree = find_tree_by_uuid(blend_name, sync_uuid)
         if tree is None:
             return False
 
@@ -1308,12 +1289,7 @@ class SyncManager:
                 if info is None:
                     continue
                 blend_name = info.get("blend_name", "")
-                tree = bpy.data.node_groups.get(blend_name)
-                if tree is None:
-                    for ng in bpy.data.node_groups:
-                        if ng.get("gnt_sync_id") == uid:
-                            tree = ng
-                            break
+                tree = find_tree_by_uuid(blend_name, uid)
                 if tree is None:
                     continue
 
@@ -1400,12 +1376,7 @@ class SyncManager:
 
         for uid, info in tracked.items():
             blend_name = info.get("blend_name", "")
-            tree = bpy.data.node_groups.get(blend_name)
-            if tree is None:
-                for ng in bpy.data.node_groups:
-                    if ng.get("gnt_sync_id") == uid:
-                        tree = ng
-                        break
+            tree = find_tree_by_uuid(blend_name, uid)
             if tree is None:
                 skipped += 1
                 continue
@@ -1448,12 +1419,7 @@ class SyncManager:
             for uid in uids:
                 info = tracked[uid]
                 blend_name = info.get("blend_name", "")
-                tree = bpy.data.node_groups.get(blend_name)
-                if tree is None:
-                    for ng in bpy.data.node_groups:
-                        if ng.get("gnt_sync_id") == uid:
-                            tree = ng
-                            break
+                tree = find_tree_by_uuid(blend_name, uid)
                 if tree is not None:
                     groups_to_serialize[blend_name] = tree
 
@@ -1586,12 +1552,7 @@ class SyncManager:
             # Also check if blend was modified (user wants to overwrite with JSON)
             blend_changed = False
             if last_blend_hash:
-                tree = bpy.data.node_groups.get(blend_name)
-                if tree is None:
-                    for ng in bpy.data.node_groups:
-                        if ng.get("gnt_sync_id") == uid:
-                            tree = ng
-                            break
+                tree = find_tree_by_uuid(blend_name, uid)
                 if tree is not None:
                     current_blend_hash = canonical_hash_from_tree(tree)
                     blend_changed = current_blend_hash != last_blend_hash
@@ -1685,12 +1646,7 @@ class SyncManager:
                 if ig.get("json_path", "") != jp:
                     continue
                 blend_name = ig.get("blend_name", "")
-                tree = bpy.data.node_groups.get(blend_name)
-                if tree is None:
-                    for ng in bpy.data.node_groups:
-                        if ng.get("gnt_sync_id") == uid:
-                            tree = ng
-                            break
+                tree = find_tree_by_uuid(blend_name, uid)
                 if tree is None:
                     continue
 
