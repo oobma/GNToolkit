@@ -16,10 +16,13 @@ from .sync_ui import classes as ui_classes
 from .sync_manager import sync_manager, SyncStatus
 
 
+# bl_info must be a literal dict (addon_utils parses it with
+# ast.literal_eval; f-strings/comprehensions break Preferences).
+# Keep "version" and the name in sync with ADDON_VERSION in constants.py.
 bl_info = {
-    "name": f"GN DNA/RNA Toolkit v{ADDON_VERSION}",
+    "name": "GN DNA/RNA Toolkit v0.2.0",
     "author": "oobma/ Asistente IA",
-    "version": tuple(int(part) for part in ADDON_VERSION.split(".")),
+    "version": (0, 2, 0),
     "blender": (4, 0, 0),
     "location": "Node Editor > Sidebar > GN Tools",
     "description": "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups.",
