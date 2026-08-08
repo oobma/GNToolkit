@@ -177,6 +177,29 @@ class JsonLock:
         self.release()
 
 
+def read_json_tolerant(json_path: str, timeout: float = LOCK_TIMEOUT_SECONDS):
+    """Read a JSON file, tolerating concurrent writes from other sessions.
+
+    Waits while the lock file is present (another session is mid-write)
+    and retries briefly when the file fails to parse (caught halfway
+    through a write). Returns the parsed data, or None after giving up.
+    """
+    lock = JsonLock(json_path)
+    start = time.time()
+    while time.time() - start < timeout:
+        if lock.is_locked():
+            time.sleep(0.05)
+            continue
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            time.sleep(0.05)
+        except OSError:
+            return None
+    return None
+
+
 class SyncManager:
     """Orchestrates DNA/RNA synchronization state and actions."""
 
@@ -294,9 +317,8 @@ class SyncManager:
         for jp in unique_paths:
             json_path = resolve_json_path(jp, self._blend_dir())
             if json_path and os.path.isfile(json_path):
-                try:
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
+                data = read_json_tolerant(json_path)
+                if data is not None:
                     mtime = os.path.getmtime(json_path)
                     json_data_cache[jp] = (data, mtime)
                     # Pre-compute per-group hashes from in-memory data
@@ -306,8 +328,6 @@ class SyncManager:
                         for gname, gdata in groups.items():
                             group_hashes[gname] = canonical_hash_from_json_data(gdata)
                         json_hash_cache[jp] = group_hashes
-                except (json.JSONDecodeError, OSError):
-                    pass
 
         # Second pass: compute status for each tracked group
         result = {}
@@ -393,8 +413,15 @@ class SyncManager:
 
         # Read existing JSON or create new
         if os.path.isfile(abs_path):
-            with open(abs_path, 'r', encoding='utf-8') as f:
-                master_data = json.load(f)
+            master_data = read_json_tolerant(abs_path)
+            if master_data is None:
+                master_data = {
+                    "version": ADDON_VERSION,
+                    "type": "GN_UNIFIED_PACKAGE",
+                    "export_method": PACKAGE_EXPORT_METHOD,
+                    "node_groups": {},
+                    "modifiers": [],
+                }
         else:
             master_data = {
                 "version": ADDON_VERSION,
@@ -661,8 +688,11 @@ class SyncManager:
             tracker.record(f"JSON file not found: {json_path}")
             return tracker
 
-        with open(json_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
+        json_data = read_json_tolerant(json_path)
+        if json_data is None:
+            tracker = ImportErrorTracker()
+            tracker.record(f"Could not read JSON file (unreadable or concurrent write): {json_path}")
+            return tracker
 
         blend_name = info.get("blend_name", "")
 
@@ -733,11 +763,8 @@ class SyncManager:
         serialized_names = set(serialized_data.keys()) if serialized_data else set()
 
         # Read JSON file ONCE
-        json_data = None
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                json_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        json_data = read_json_tolerant(json_path)
+        if json_data is None:
             return
 
         # Extract group data from JSON
@@ -838,8 +865,9 @@ class SyncManager:
         if not os.path.isfile(json_path):
             return []
 
-        with open(json_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
+        json_data = read_json_tolerant(json_path)
+        if json_data is None:
+            return []
 
         if isinstance(json_data, dict) and json_data.get("type") == "GN_UNIFIED_PACKAGE":
             group_names = list(json_data.get("node_groups", {}).keys())
@@ -936,8 +964,15 @@ class SyncManager:
         try:
             # Surgical update: read existing JSON, update only this group
             if os.path.isfile(json_path):
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    master_data = json.load(f)
+                master_data = read_json_tolerant(json_path)
+                if master_data is None:
+                    master_data = {
+                        "version": ADDON_VERSION,
+                        "type": "GN_UNIFIED_PACKAGE",
+                        "export_method": PACKAGE_EXPORT_METHOD,
+                        "node_groups": {},
+                        "modifiers": [],
+                    }
             else:
                 master_data = {
                     "version": ADDON_VERSION,
@@ -1295,8 +1330,15 @@ class SyncManager:
             try:
                 # Read existing JSON to preserve non-tracked groups
                 if os.path.isfile(json_path):
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        master_data = json.load(f)
+                    master_data = read_json_tolerant(json_path)
+                    if master_data is None:
+                        master_data = {
+                            "version": ADDON_VERSION,
+                            "type": "GN_UNIFIED_PACKAGE",
+                            "export_method": PACKAGE_EXPORT_METHOD,
+                            "node_groups": {},
+                            "modifiers": [],
+                        }
                 else:
                     master_data = {
                         "version": ADDON_VERSION,
@@ -1420,8 +1462,10 @@ class SyncManager:
 
             try:
                 # Read existing JSON
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    master_data = json.load(f)
+                master_data = read_json_tolerant(json_path)
+                if master_data is None:
+                    errors += len(uids)
+                    continue
 
                 # Serialize and update only the modified groups
                 serialized_dict = {}
@@ -1490,17 +1534,14 @@ class SyncManager:
         for jp in unique_paths:
             json_path = resolve_json_path(jp, self._blend_dir())
             if json_path and os.path.isfile(json_path):
-                try:
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
+                data = read_json_tolerant(json_path)
+                if data is not None:
                     json_data_cache[jp] = data
                     if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
                         group_hashes = {}
                         for gname, gdata in data.get("node_groups", {}).items():
                             group_hashes[gname] = canonical_hash_from_json_data(gdata)
                         json_hash_cache[jp] = group_hashes
-                except (json.JSONDecodeError, OSError):
-                    pass
 
         # Determine which groups need importing
         # Include: json_modified, blend_modified, and conflict

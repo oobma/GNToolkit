@@ -13,7 +13,7 @@ from bpy.props import StringProperty, EnumProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
-from .sync_manager import sync_manager, SyncStatus
+from .sync_manager import read_json_tolerant, sync_manager, SyncStatus
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
 
@@ -556,11 +556,9 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
 
         # Load JSON
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception as e:
-            self.report({'ERROR'}, f"Failed to read JSON: {e}")
+        data = read_json_tolerant(json_path)
+        if data is None:
+            self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
             return {'CANCELLED'}
 
         groups = data.get("node_groups", {})
