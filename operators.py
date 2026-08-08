@@ -21,6 +21,7 @@ from .error_tracker import ImportErrorTracker
 from .importer import _import_node_tree_gen, restore_zone_area
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
+from .sync_manager import SyncManager
 
 
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
@@ -197,6 +198,14 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
+    overwrite_existing: BoolProperty(
+        name="Update existing groups",
+        description="Replace the content of groups that already exist in the "
+                    "file with the JSON version. Modifiers referencing them "
+                    "and external links are preserved",
+        default=False,
+    )
+
     _timer = None
     json_cache = {}
     group_interface_maps = {}
@@ -211,6 +220,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
 
     def draw(self, context):
         self.layout.prop(self, "apply_modifiers")
+        self.layout.prop(self, "overwrite_existing")
 
     def cancel_modal(self, context):
         if self._timer:
@@ -264,6 +274,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         self._mod_data_list = mod_data_list if self.apply_modifiers else []
         self._current_gen = None
         self._current_name = ""
+        self._pending_restore = None
         self._groups_done = 0
         self._total_groups = len(self._group_names)
 
@@ -283,9 +294,18 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         """Begin importing the next pending group. Returns True if started."""
         while self._group_names:
             name = self._group_names.pop(0)
-            if bpy.data.node_groups.get(name):
+            existing = bpy.data.node_groups.get(name)
+            if existing and not self.overwrite_existing:
                 self._groups_done += 1
                 continue
+            # Rebuilding an existing group replaces its interface sockets,
+            # which breaks links from parent groups: snapshot them first so
+            # they can be reconnected by name once the import finishes.
+            self._pending_restore = None
+            if existing:
+                self._pending_restore = (
+                    name, SyncManager._save_external_connections(name)
+                )
             self._current_gen = _import_node_tree_gen(
                 self.json_cache[name], self.json_cache, self.group_interface_maps,
                 None, self._tracker, {},
@@ -361,6 +381,13 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             except StopIteration:
                 self._current_gen = None
                 self._groups_done += 1
+                if self._pending_restore:
+                    restore_name, restore_saved = self._pending_restore
+                    self._pending_restore = None
+                    if restore_name == self._current_name:
+                        SyncManager._restore_external_connections(
+                            restore_name, restore_saved
+                        )
                 overall_pct = int((self._groups_done / max(self._total_groups, 1)) * 100)
                 context.window_manager.progress_update(overall_pct)
 
