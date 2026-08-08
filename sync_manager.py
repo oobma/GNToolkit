@@ -1108,6 +1108,10 @@ class SyncManager:
         Serializes every group, creates per-group tracking entries with
         per-group hashes, and auto-links all dependencies.
 
+        Uses surgical update like export_all: the existing JSON is read and
+        only the entries matching .blend groups are replaced, so groups that
+        exist solely in the JSON (and any modifiers) are preserved.
+
         Returns a dict with counts:
             {"linked": int, "skipped": int, "errors": int}
         """
@@ -1124,14 +1128,28 @@ class SyncManager:
         if not os.path.isabs(abs_path):
             abs_path = os.path.join(self._blend_dir(), abs_path)
 
-        # Step 1: serialize ALL groups into a unified package
-        master_data = {
-            "version": ADDON_VERSION,
-            "type": "GN_UNIFIED_PACKAGE",
-            "export_method": PACKAGE_EXPORT_METHOD,
-            "node_groups": {},
-            "modifiers": [],
-        }
+        # Step 1: build the unified package surgically — start from the
+        # existing JSON (preserving entries without a .blend counterpart),
+        # or from a fresh skeleton when the file does not exist.
+        if os.path.isfile(abs_path):
+            master_data = read_json_tolerant(abs_path)
+            if (not isinstance(master_data, dict)
+                    or not isinstance(master_data.get("node_groups"), dict)):
+                master_data = {
+                    "version": ADDON_VERSION,
+                    "type": "GN_UNIFIED_PACKAGE",
+                    "export_method": PACKAGE_EXPORT_METHOD,
+                    "node_groups": {},
+                    "modifiers": [],
+                }
+        else:
+            master_data = {
+                "version": ADDON_VERSION,
+                "type": "GN_UNIFIED_PACKAGE",
+                "export_method": PACKAGE_EXPORT_METHOD,
+                "node_groups": {},
+                "modifiers": [],
+            }
         done = 0
         for name, tree in all_groups.items():
             master_data["node_groups"][name] = serialize_node_tree(tree)
