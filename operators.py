@@ -353,6 +353,11 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                     f"Group {self._groups_done + 1}/{self._total_groups}: "
                     f"{self._current_name} — {group_pct}% · {overall_pct}% total"
                 )
+                # The percentage drawn next to the cursor only repaints when
+                # the area under it redraws. Force a redraw on every chunk
+                # so the number advances even while the mouse is still.
+                for _area in context.screen.areas:
+                    _area.tag_redraw()
             except StopIteration:
                 self._current_gen = None
                 self._groups_done += 1
