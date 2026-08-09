@@ -42,7 +42,7 @@ ZONE_OUTPUTS: frozenset[str] = frozenset({
 
 # Node properties to skip during serialization (handled separately or volatile).
 NODE_PROPS_TO_SKIP: frozenset[str] = frozenset({
-    'name', 'label', 'location', 'type', 'inputs', 'outputs', 'node_tree',
+    'name', 'label', 'location', 'width', 'type', 'inputs', 'outputs', 'node_tree',
     'repeat_items', 'simulation_items', 'state_items', 'input_items', 'main_items',
     'generation_items', 'capture_items', 'active_item', 'parent', 'menu_items',
     'enum_items', 'index_switch_items',
@@ -174,6 +174,7 @@ EXPLICITLY_HANDLED_PROPS: frozenset[str] = frozenset({
 # These are volatile/visual properties that do not affect node functionality.
 HASH_EXCLUDE_NODE_PROPS: frozenset[str] = frozenset({
     'location',
+    'width',
 })
 
 # Node-tree-level properties to exclude from canonical hash computation.
