@@ -579,6 +579,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 
         linked = 0
         skipped = 0
+        divergent = 0
 
         for gname in groups:
             tree = bpy.data.node_groups.get(gname)
@@ -600,6 +601,16 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
             json_hash = canonical_hash_from_json_data(groups[gname])
             mtime = os.path.getmtime(json_path)
 
+            # When the existing JSON already differs from the .blend, the
+            # divergence must stay visible: store the BLEND hash as the
+            # baseline for both sides (so check_status reports
+            # JSON_MODIFIED — "the JSON has changes to pull") and force the
+            # mtime fast-path off so the JSON hash is actually compared.
+            if json_hash != blend_hash:
+                json_hash = blend_hash
+                mtime = 0.0
+                divergent += 1
+
             add_tracked_group(
                 sync_manager.metadata, uid, gname, json_path,
                 blend_hash, json_hash, mtime
@@ -614,10 +625,10 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         sync_manager.invalidate_cache()
         sync_manager.check_all_statuses()
 
-        self.report(
-            {'INFO'},
-            f"Tracking started: {linked} groups, {skipped} skipped (already tracked or not in .blend)"
-        )
+        msg = f"Tracking started: {linked} groups, {skipped} skipped (already tracked or not in .blend)"
+        if divergent:
+            msg += f", {divergent} differ from the JSON (use Pull to apply)"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 

@@ -90,6 +90,16 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **"Track from Existing JSON" silently swallowed pre-existing divergence
+  between the .blend and the JSON.** The operator stored both current
+  hashes as the tracking baseline, so groups whose JSON content already
+  differed from the .blend (e.g. after the JSON was updated externally)
+  showed SYNCED and 0 issues — the user could not see that a Pull was
+  needed. Divergent groups now store the .blend hash as the baseline
+  (with the mtime fast-path disabled), so Refresh Status reports them as
+  **Changed in JSON** and the operator report includes
+  "N differ from the JSON (use Pull to apply)". Matching groups keep the
+  previous behavior (SYNCED).
 - **`JsonLock` deadlocked on its own lock file, silently clobbering the
   whole JSON package on every commit.** `export_to_json` and `export_all`
   acquire the lock and then call `read_json_tolerant`, which treated the
