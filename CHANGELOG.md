@@ -50,6 +50,14 @@ has no node/socket Python API changes at all).
 ## [0.2.1] - 2026-08-09
 
 ### Added
+- **Auto-rebaseline of tracking baselines when the hash algorithm
+  version changes.** `HASH_VERSION` is recorded in the sync metadata; on
+  load or Refresh Status, if the stored version differs, every baseline
+  is silently re-stamped with the current algorithm using the same rule
+  as Track from Existing JSON — matching groups become SYNCED, genuinely
+  divergent groups stay visible as Changed in JSON. Without this, an
+  addon update that refines the hash would report a spurious
+  "everything changed" once (stored hashes use the old algorithm).
 - New **Stop Tracking All** button in the Sync panel: unlinks every
   tracked group in one click (with a confirmation dialog). Removes the
   tracking metadata and the UUID custom properties; the JSON files and
@@ -94,6 +102,44 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **Canonical hash is now name-based and roundtrip-robust.** The hash
+  previously included interface/socket *identifiers*, which the import
+  roundtrip reorders (cosmetic), so every reimported group looked
+  changed: tracking an imported project against its own JSON reported
+  hundreds of false divergences and a full Pull equaled a fresh Import
+  Package. The canonical form now keys interface items and links by
+  socket **names** (identifiers dropped), drops volatile fields
+  (`width`, `select`, `socket_idname`, socket `bl_idname` subtypes,
+  `hide`, enum/menu `description`, interface panel `parent`,
+  `optional_label`/`menu_expanded`), and ignores `default_value` of
+  connected sockets (matched by unique identifier — socket names are
+  frequently shared, e.g. the three "Value" inputs of a Math node).
+  Real changes (defaults, nodes, links to different-named sockets) are
+  still detected; after a fresh import of the reference project, only
+  the groups whose links were actually swapped/lost by the import
+  (~178 of 439 — the documented importer fidelity issue) report as
+  divergent, and one Pull repairs them.
+- **Batch pull (Import Modified) and per-group Pull now rebuild the
+  transitive dependency closure.** A rebuilt group wires its links
+  against the freshly rebuilt interfaces of its dependencies (shared
+  interface maps); skipping a "matching" dependency leaves its reordered
+  identifiers in place and breaks the parent's wiring (215 links lost
+  without the closure). The external-connection snapshot covers the full
+  rebuild set, and the affected non-rebuilt parents are re-baselined
+  after the restore (both in the batch and the per-group pull), so the
+  result is byte-perfect except for a known edge: groups whose
+  dependencies have **duplicated interface socket names** (e.g. the two
+  "Tension" sockets of `SP - Blend Curve [Intern]`) — name-based
+  restoration is ambiguous there and a handful of links cannot be
+  reconnected (5 of 25,439 on the reference project, verified).
+- **Batch Import modal: restored the two-phase progress tick and finer
+  chunks.** The modal set the new group's "0% · name" status and
+  immediately entered the blocking first chunk, so the status bar kept
+  showing the previous group at "100% · N% total" during the first
+  (possibly long) chunk of a huge group. The tick now returns before
+  running the chunk (paints the new group's name at 0%), and the chunk
+  granularity is finer (10 nodes / 40 sockets / 20 links) so the
+  displayed progress updates more often during heavy groups.
 - **Node `width` excluded from serialization and the canonical hash.**
   Reroute/box widths are cosmetic and not restorable after a roundtrip
   (Blender resets them), so they poisoned the hash and made every group

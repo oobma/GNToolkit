@@ -175,12 +175,39 @@ EXPLICITLY_HANDLED_PROPS: frozenset[str] = frozenset({
 HASH_EXCLUDE_NODE_PROPS: frozenset[str] = frozenset({
     'location',
     'width',
+    'select',
+    # Derived from the node's actual sockets; not restored by the roundtrip
+    'socket_idname',
+})
+
+# Socket fields excluded from the canonical hash: identifiers reorder
+# during the roundtrip (cosmetic), bl_idname subtypes are lost on rebuild
+# (Float vs FloatAngle, Vector vs VectorXYZ), and 'hide' is UI-only state.
+HASH_EXCLUDE_SOCKET_PROPS: frozenset[str] = frozenset({
+    'identifier',
+    'bl_idname',
+    'hide',
+})
+
+# Interface item properties excluded from the canonical hash: UI-only
+# state that the roundtrip may not restore (kept in serialization, but
+# not meaningful for change detection).
+HASH_EXCLUDE_INTERFACE_PROPS: frozenset[str] = frozenset({
+    'optional_label',
+    'menu_expanded',
 })
 
 # Node-tree-level properties to exclude from canonical hash computation.
 HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
     'annotation',
 })
+
+# Version of the canonical hash algorithm. Bump it when the hash
+# normalization changes: stored baselines from older algorithms become
+# meaningless, and SyncManager._ensure_hash_version() silently re-stamps
+# them (preserving any real divergence) instead of reporting a spurious
+# "everything changed".
+HASH_VERSION: int = 2
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

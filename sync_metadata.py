@@ -14,7 +14,7 @@ import uuid as _uuid
 
 import bpy
 
-from .constants import SIDECAR_EXTENSION, SIDECAR_TEXT_BLOCK_NAME, ADDON_VERSION
+from .constants import SIDECAR_EXTENSION, SIDECAR_TEXT_BLOCK_NAME, ADDON_VERSION, HASH_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +343,7 @@ def _empty_metadata() -> dict:
     """Return a fresh metadata dict with version info."""
     return {
         "version": ADDON_VERSION,
+        "hash_version": HASH_VERSION,
         "tracked_groups": {},
     }
 

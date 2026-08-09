@@ -13,7 +13,12 @@ import hashlib
 import json
 from copy import deepcopy
 
-from .constants import HASH_EXCLUDE_NODE_PROPS, HASH_EXCLUDE_TREE_PROPS
+from .constants import (
+    HASH_EXCLUDE_NODE_PROPS,
+    HASH_EXCLUDE_TREE_PROPS,
+    HASH_EXCLUDE_SOCKET_PROPS,
+    HASH_EXCLUDE_INTERFACE_PROPS,
+)
 
 
 def canonicalize_node_tree_data(data: dict) -> dict:
@@ -28,76 +33,124 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     # Tree-level fields --------------------------------------------------
     out["name"] = data.get("name", "")
 
-    # Interface items: sort by identifier
+    # Connected sockets: the importer skips restoring default_value on
+    # sockets that are linked (the link overrides them at runtime), so
+    # those defaults are not roundtrip-stable and must not be hashed.
+    # Keyed by socket IDENTIFIER (unique per node) — socket names are
+    # frequently shared (e.g. the three "Value" inputs of a Math node).
+    connected_inputs = set()
+    connected_outputs = set()
+    for lk in data.get("links", []):
+        connected_outputs.add((lk.get("from_node", ""),
+                               lk.get("from_socket_id", lk.get("from_socket_name", ""))))
+        connected_inputs.add((lk.get("to_node", ""),
+                              lk.get("to_socket_id", lk.get("to_socket_name", ""))))
+
+    # Interface items: sort by NAME. Interface socket identifiers are
+    # reordered by the roundtrip (cosmetic), while names are stable —
+    # hashing by identifier made every reimported group look changed.
     if "interface_items" in data:
-        items = [dict(item) for item in data["interface_items"]]
-        for item in items:
-            if "properties" in item and isinstance(item["properties"], dict):
-                item["properties"] = dict(sorted(item["properties"].items()))
-        out["interface_items"] = sorted(items, key=lambda x: x.get("identifier", x.get("name", "")))
+        items = []
+        for item in data["interface_items"]:
+            it = dict(item)
+            it.pop("identifier", None)
+            it.pop("parent", None)
+            if "properties" in it and isinstance(it["properties"], dict):
+                it["properties"] = {
+                    k: v for k, v in it["properties"].items()
+                    if k not in HASH_EXCLUDE_INTERFACE_PROPS
+                }
+                it["properties"] = dict(sorted(it["properties"].items()))
+            if "enum_items" in it and isinstance(it["enum_items"], list):
+                cleaned = []
+                for e in it["enum_items"]:
+                    ed = dict(e)
+                    ed.pop("description", None)
+                    cleaned.append(ed)
+                it["enum_items"] = sorted(cleaned, key=lambda x: x.get("name", ""))
+            items.append(it)
+        out["interface_items"] = sorted(items, key=lambda x: x.get("name", ""))
     elif "inputs" in data or "outputs" in data:
         # Legacy path
-        inp = [dict(i) for i in data.get("inputs", [])]
-        otp = [dict(o) for o in data.get("outputs", [])]
-        for lst in (inp, otp):
+        def _clean_socket_list(lst):
+            cleaned = []
             for item in lst:
-                if "properties" in item and isinstance(item["properties"], dict):
-                    item["properties"] = dict(sorted(item["properties"].items()))
-        out["inputs"] = sorted(inp, key=lambda x: x.get("identifier", x.get("name", "")))
-        out["outputs"] = sorted(otp, key=lambda x: x.get("identifier", x.get("name", "")))
+                it = dict(item)
+                it.pop("identifier", None)
+                if "properties" in it and isinstance(it["properties"], dict):
+                    it["properties"] = {
+                        k: v for k, v in it["properties"].items()
+                        if k not in HASH_EXCLUDE_INTERFACE_PROPS
+                    }
+                    it["properties"] = dict(sorted(it["properties"].items()))
+                cleaned.append(it)
+            return sorted(cleaned, key=lambda x: x.get("name", ""))
+        out["inputs"] = _clean_socket_list(data.get("inputs", []))
+        out["outputs"] = _clean_socket_list(data.get("outputs", []))
 
     # Node list: sort by name
     nodes = []
     for node_data in data.get("nodes", []):
         nd = dict(node_data)
+        node_name = nd.get("name", "")
         # Remove volatile properties from hash computation
         if "properties" in nd and isinstance(nd["properties"], dict):
             nd["properties"] = {k: v for k, v in nd["properties"].items()
                                 if k not in HASH_EXCLUDE_NODE_PROPS}
             nd["properties"] = dict(sorted(nd["properties"].items()))
-        # Sort inputs/outputs by identifier
+        # Node sockets: canonical form is by NAME. Socket identifiers are
+        # reordered by the roundtrip (like interface identifiers), so
+        # sorting by identifier yields different orders per side.
+        def _clean_node_sockets(lst, connected_set):
+            cleaned = []
+            for s in lst:
+                sd = dict(s)
+                sock_id = sd.get("identifier", sd.get("name", ""))
+                if (node_name, sock_id) in connected_set:
+                    sd.pop("default_value", None)
+                for k in HASH_EXCLUDE_SOCKET_PROPS:
+                    sd.pop(k, None)
+                cleaned.append(sd)
+            return sorted(cleaned, key=lambda x: x.get("name", ""))
         if "inputs" in nd:
-            nd["inputs"] = sorted(
-                [dict(s) for s in nd["inputs"]],
-                key=lambda x: x.get("identifier", x.get("name", "")),
-            )
+            nd["inputs"] = _clean_node_sockets(nd["inputs"], connected_inputs)
         if "outputs" in nd:
-            nd["outputs"] = sorted(
-                [dict(s) for s in nd["outputs"]],
-                key=lambda x: x.get("identifier", x.get("name", "")),
-            )
+            nd["outputs"] = _clean_node_sockets(nd["outputs"], connected_outputs)
         # Remove location (visual position only)
         nd.pop("location", None)
-        # Sort zone_items if present
-        if "zone_items" in nd and isinstance(nd["zone_items"], list):
-            nd["zone_items"] = sorted(
-                [dict(z) for z in nd["zone_items"]],
-                key=lambda x: x.get("identifier", x.get("name", "")),
-            )
-        # Sort menu_items_data if present
-        if "menu_items_data" in nd and isinstance(nd["menu_items_data"], list):
-            nd["menu_items_data"] = sorted(
-                [dict(m) for m in nd["menu_items_data"]],
-                key=lambda x: x.get("identifier", x.get("name", "")),
-            )
-        # Sort capture_items_data if present
-        if "capture_items_data" in nd and isinstance(nd["capture_items_data"], list):
-            nd["capture_items_data"] = sorted(
-                [dict(c) for c in nd["capture_items_data"]],
-                key=lambda x: x.get("identifier", x.get("name", "")),
-            )
+        # Item collections: same name-based normalization
+        def _clean_items(lst):
+            cleaned = []
+            for item in lst:
+                it = dict(item)
+                it.pop("identifier", None)
+                it.pop("description", None)
+                cleaned.append(it)
+            return sorted(cleaned, key=lambda x: x.get("name", ""))
+        for coll in ("zone_items", "menu_items_data", "capture_items_data"):
+            if coll in nd and isinstance(nd[coll], list):
+                nd[coll] = _clean_items(nd[coll])
         nodes.append(nd)
     out["nodes"] = sorted(nodes, key=lambda x: x.get("name", ""))
 
-    # Links: sort by (from_node, from_socket_id, to_node, to_socket_id)
-    links = [dict(lk) for lk in data.get("links", [])]
+    # Links: canonical socket references are the NAMES (identifiers are
+    # reordered by the roundtrip); fall back to the id when a name is
+    # missing (defensive, old data).
+    links = []
+    for lk in data.get("links", []):
+        ld = dict(lk)
+        ld["from_socket_name"] = ld.get("from_socket_name", ld.get("from_socket_id", ""))
+        ld["to_socket_name"] = ld.get("to_socket_name", ld.get("to_socket_id", ""))
+        ld.pop("from_socket_id", None)
+        ld.pop("to_socket_id", None)
+        links.append(ld)
     out["links"] = sorted(
         links,
         key=lambda x: (
             x.get("from_node", ""),
-            x.get("from_socket_id", ""),
+            x.get("from_socket_name", ""),
             x.get("to_node", ""),
-            x.get("to_socket_id", ""),
+            x.get("to_socket_name", ""),
         ),
     )
 
