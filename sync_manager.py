@@ -110,7 +110,7 @@ class JsonLock:
                 except OSError:
                     pass
 
-            # Lock exists — check if it's stale
+            # Lock exists — check if it's stale or already ours
             try:
                 with open(self.lock_path, 'r', encoding='utf-8') as f:
                     content = f.read().strip().split('\n')
@@ -118,6 +118,10 @@ class JsonLock:
                     lock_pid = int(content[0])
                     lock_time = float(content[1])
                     age = time.time() - lock_time
+
+                    # Already held by this process: re-entrant acquire
+                    if lock_pid == os.getpid():
+                        return True
 
                     # Stale if: PID dead OR age > 15s
                     if not self._is_pid_alive(lock_pid) or age > LOCK_TIMEOUT_SECONDS * 3:
@@ -161,6 +165,8 @@ class JsonLock:
                 lock_pid = int(content[0])
                 lock_time = float(content[1])
                 age = time.time() - lock_time
+                if lock_pid == os.getpid():
+                    return False
                 if not self._is_pid_alive(lock_pid) or age > LOCK_TIMEOUT_SECONDS * 3:
                     return False
                 return True

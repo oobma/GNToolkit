@@ -90,6 +90,15 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **`JsonLock` deadlocked on its own lock file, silently clobbering the
+  whole JSON package on every commit.** `export_to_json` and `export_all`
+  acquire the lock and then call `read_json_tolerant`, which treated the
+  process's OWN lock as foreign and waited until timeout, fell back to an
+  empty skeleton and wrote back only the committed group — wiping every
+  other group from the package (found by the new real-project e2e suite:
+  committing one group left 438 of 439 groups deleted). The lock is now
+  process-aware: `acquire` is re-entrant and `is_locked` ignores locks
+  held by the same PID; foreign live locks still block as before.
 - `bl_info` was not a literal dict (it used f-strings), which broke
   `addon_utils` parsing — the addon could not be listed or enabled from
   Preferences. It is now literal; the smoke test keeps its version in sync
@@ -170,6 +179,21 @@ Remaining known characteristic: very large node trees (hundreds of nodes)
 still import slowly because of the per-mutation tree re-validation in
 Blender 5.1's node system; this is inherent to the API and cannot be
 avoided from Python.
+
+### Findings from the real-project e2e suite (439 groups, real deps)
+
+- **Link fidelity on roundtrip**: links into/out of group-reference nodes
+  can land on swapped sockets when a dependency's interface identifiers
+  are reordered during import (counts preserved; 8 of 85 links on
+  `SP - NURBS Patch Meshing`). A pull that rebuilds such a group can
+  legitimately mark its parent groups BLEND_MODIFIED (their link
+  identifiers change), which Commit Modified then publishes.
+- **Blender drops zero-user node groups on save** (verified with pure
+  Blender): a package imported into a fresh file and saved without
+  references keeps only groups referenced by other groups; leaf groups
+  referenced solely by object modifiers are lost unless fake users are
+  set. Distribution .blend files must reference the groups (modifiers or
+  `use_fake_user`).
 
 ## [0.2.0] - 2026-08-08
 
