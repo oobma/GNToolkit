@@ -540,6 +540,22 @@ class SyncManager:
             del tree["gnt_sync_id"]
         self._dirty = True
 
+    def unlink_all_groups(self) -> int:
+        """Stop tracking every group.
+
+        Removes all tracking entries and clears the UUID custom property
+        from the node trees. The JSON files and the node trees themselves
+        are kept.
+
+        Returns the number of groups that were tracked.
+        """
+        uids = list(self.metadata.get("tracked_groups", {}).keys())
+        for uid in uids:
+            self.unlink_group(uid)
+        self._status_cache.clear()
+        self._dirty = True
+        return len(uids)
+
     # --- External connection preservation -----------------------------------
 
     @staticmethod

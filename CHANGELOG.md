@@ -50,6 +50,10 @@ has no node/socket Python API changes at all).
 ## [0.2.1] - 2026-08-09
 
 ### Added
+- New **Stop Tracking All** button in the Sync panel: unlinks every
+  tracked group in one click (with a confirmation dialog). Removes the
+  tracking metadata and the UUID custom properties; the JSON files and
+  the node trees are kept. Backed by `sync_manager.unlink_all_groups()`.
 - Batch Import: new **Update existing groups** option (off by default).
   When enabled, groups that already exist in the file are rebuilt in place
   from the JSON — the datablock is kept, so modifiers referencing the group

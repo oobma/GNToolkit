@@ -133,6 +133,40 @@ class GN_OT_SyncUnlink(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Operator: Stop tracking all groups (batch)
+# ---------------------------------------------------------------------------
+
+class GN_OT_SyncUnlinkAll(bpy.types.Operator):
+    bl_idname = "gn.sync_unlink_all"
+    bl_label = "Stop Tracking All"
+    bl_description = "Stop tracking every group — the JSON files and the node trees are kept"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        n = len(sync_manager.metadata.get("tracked_groups", {}))
+        if n == 0:
+            self.report({'INFO'}, "Nothing tracked")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_confirm(
+            self, event,
+            title=f"Stop tracking {n} groups?",
+            message=(
+                f"All {n} tracked groups will lose their tracking metadata.\n\n"
+                "The JSON files and the node trees are kept."
+            ),
+            icon='WARNING',
+        )
+
+    def execute(self, context):
+        n = sync_manager.unlink_all_groups()
+        sync_manager.save()
+        for area in context.screen.areas:
+            area.tag_redraw()
+        self.report({'INFO'}, f"Stopped tracking {n} groups")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: Pull a group from JSON
 
 class GN_OT_SyncImport(bpy.types.Operator):
@@ -640,6 +674,7 @@ classes = (
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
     GN_OT_SyncUnlink,
+    GN_OT_SyncUnlinkAll,
     GN_OT_SyncImport,
     GN_OT_SyncExport,
     GN_OT_SyncIgnore,

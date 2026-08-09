@@ -212,6 +212,10 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             else:
                 layout.label(text="All synced", icon='CHECKMARK')
 
+        layout.separator()
+        stop_row = layout.row(align=True)
+        stop_row.operator("gn.sync_unlink_all", text="Stop Tracking All", icon='X')
+
 
 # ---------------------------------------------------------------------------
 # Panel 2: Issues List
