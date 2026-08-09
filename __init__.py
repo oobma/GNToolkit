@@ -21,7 +21,7 @@ from .sync_manager import sync_manager, SyncStatus
 # Keep "version" in sync with ADDON_VERSION in constants.py.
 bl_info = {
     "name": "GNToolkit",
-    "author": "oobma/ Asistente IA",
+    "author": "oobma / AI assistant",
     "version": (0, 2, 1),
     "blender": (4, 0, 0),
     "location": "Node Editor > Sidebar > GN Tools",
