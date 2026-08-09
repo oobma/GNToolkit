@@ -1119,13 +1119,13 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
         for nd in data["nodes"]
     ) or 1
     sockets_done = 0
-    _next_yield_at = 100
+    _next_yield_at = 40
 
     def _tick():
         nonlocal sockets_done, _next_yield_at
         sockets_done += 1
         if sockets_done >= _next_yield_at:
-            _next_yield_at += 100
+            _next_yield_at += 40
             frac = progress_base + progress_span * min(sockets_done / total_sockets, 1.0)
             return (frac, f"defaults {sockets_done}/{total_sockets}")
         return None
@@ -1338,7 +1338,7 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
     links_list = data.get("links", [])
     total_links = len(links_list) or 1
     for li, link_data in enumerate(links_list):
-        if li % 50 == 0:
+        if li % 20 == 0:
             frac = progress_base + progress_span * min(li / total_links, 1.0)
             yield (frac, f"links {li}/{total_links}")
         from_node = node_map.get(link_data["from_node"])
@@ -1993,7 +1993,7 @@ def _import_node_tree_gen(
 
     total_nodes = len(data["nodes"]) or 1
     for ni, node_data in enumerate(data["nodes"]):
-        if ni % 25 == 0:
+        if ni % 10 == 0:
             frac = 0.05 + 0.40 * min(ni / total_nodes, 1.0)
             yield (frac, f"nodes {ni}/{total_nodes}")
         node_name = node_data.get("name")

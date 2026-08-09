@@ -360,6 +360,11 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             if self._current_gen is None:
                 if not self._start_next_group(context):
                     return {'PASS_THROUGH'}
+                # Two-phase tick: return before running the first chunk so
+                # the "0%" status of the new group actually paints. A long
+                # first chunk (huge group, synchronous dependency imports)
+                # would otherwise leave the previous group's text on screen.
+                return {'PASS_THROUGH'}
 
             context.window.cursor_modal_set('WAIT')
             try:
