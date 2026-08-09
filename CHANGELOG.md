@@ -94,6 +94,31 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **Pull (per-group and batch) lost and swapped links into dependency
+  group nodes on real dependency webs.** The pull path rebuilt each group
+  with a fresh empty interface map and without dependency ordering: when
+  a parent was rebuilt before (or while) its dependency changed interface
+  socket identifiers, links into the dependency's group node were dropped
+  or landed on the wrong sockets (the manual test on the real project
+  lost 12 of Meshing's 85 links; `import_all_modified` reported 21
+  groups with wiring errors). Fixes:
+  - `group_interface_maps` is now **shared** across the pulls of a batch
+    (and per-group pull), so links into freshly rebuilt dependencies are
+    remapped correctly.
+  - Pull order is **dependency-first**: `import_all_modified` topologically
+    sorts its candidates over the JSON reference graph; `import_from_json`
+    recursively pulls modified dependencies before the target (using
+    json-changed semantics, matching the batch, so roundtrip fidelity
+    noise does not trigger unnecessary dependency rebuilds).
+  - Verified on the real project: batch pull now imports all 430
+    divergent groups with **0 wiring errors**, Meshing keeps all 85 links
+    with zero missing or extra signatures, and the real JSON changes
+    (Resolution 32 / Trim Contour off, Torus +2 nodes) apply correctly.
+- **Import summary counted DEBUG records as warnings/errors.**
+  `ImportErrorTracker` now distinguishes informational records (DEBUG,
+  DEFAULT_VALUE) from real issues (WARN+); `warn_count`/`has_errors`
+  reflect only the latter. The Batch Import summary and the Pull report
+  use `warn_count`, so a clean import no longer reports "19 warnings".
 - **"Track from Existing JSON" silently swallowed pre-existing divergence
   between the .blend and the JSON.** The operator stored both current
   hashes as the tracking baseline, so groups whose JSON content already

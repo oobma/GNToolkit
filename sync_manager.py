@@ -661,14 +661,21 @@ class SyncManager:
 
     def _import_from_json_data(self, sync_uuid: str, tree_data: dict,
                                 json_cache: dict, blend_name: str,
-                                context=None) -> ImportErrorTracker:
+                                context=None,
+                                group_interface_maps: dict | None = None) -> ImportErrorTracker:
         """Internal: import a node group from pre-loaded JSON data.
 
         Used by import_all_modified to avoid re-reading the JSON file
         from disk for each group.
+
+        *group_interface_maps* must be SHARED across the pulls of a batch
+        so that links into dependency group nodes are remapped against the
+        freshly rebuilt interfaces (a fresh empty dict per group breaks
+        the remap and loses those links).
         """
         tracker = ImportErrorTracker()
-        group_interface_maps = {}
+        if group_interface_maps is None:
+            group_interface_maps = {}
 
         # --- Save external connections for the target group only ---
         saved_connections = {}
@@ -694,6 +701,12 @@ class SyncManager:
 
     def import_from_json(self, sync_uuid: str, context=None) -> ImportErrorTracker:
         """Import a node group from JSON, overwriting the .blend version.
+
+        Rebuilds modified tracked dependencies FIRST (dependency-first
+        order), because a rebuilt dependency gets fresh interface socket
+        identifiers — parents must wire their links against the fresh
+        interface using a shared interface map, otherwise links into the
+        dependency's group node are lost or land on the wrong sockets.
 
         Also updates the hashes of all other tracked groups that share
         the same JSON file (cascade update).
@@ -724,19 +737,63 @@ class SyncManager:
                 tracker = ImportErrorTracker()
                 tracker.record("No node groups found in JSON package")
                 return tracker
-            tree_data = groups.get(blend_name)
-            if tree_data is None:
-                tree_data = next(iter(groups.values()))
             json_cache = groups
         elif isinstance(json_data, dict) and "nodes" in json_data:
-            tree_data = json_data
             json_cache = {blend_name: json_data}
         else:
             tracker = ImportErrorTracker()
             tracker.record(f"Unrecognized JSON format in {json_path}")
             return tracker
 
-        tracker = self._import_from_json_data(sync_uuid, tree_data, json_cache, blend_name, context)
+        json_path_stored = info.get("json_path", "")
+        group_interface_maps = {}
+        visited = set()
+        merged = ImportErrorTracker()
+
+        def pull_group(uid: str, gname: str) -> None:
+            if uid in visited:
+                return
+            visited.add(uid)
+            g_info = get_tracked_group(self.metadata, uid)
+            if g_info is None:
+                return
+            g_entry = json_cache.get(gname)
+            if g_entry is None:
+                return
+
+            # Dependencies first: pull only deps whose JSON entry changed
+            # since its baseline (json_changed semantics, matching
+            # import_all_modified). Comparing the blend against the entry
+            # would re-pull every dep affected by the roundtrip fidelity
+            # reorder, which breaks links when the parent entry was
+            # re-serialized from the .blend (link_group flow).
+            tree = bpy.data.node_groups.get(gname)
+            if tree is not None:
+                for node in tree.nodes:
+                    if node.bl_idname == "GeometryNodeGroup" and getattr(node, "node_tree", None):
+                        dep_tree = node.node_tree
+                        if dep_tree.name == gname:
+                            continue
+                        dep_uid = find_uuid_for_tree(dep_tree, self.metadata)
+                        if not dep_uid or dep_uid in visited:
+                            continue
+                        dep_info = get_tracked_group(self.metadata, dep_uid)
+                        if dep_info is None or dep_info.get("json_path", "") != json_path_stored:
+                            continue
+                        dep_entry = json_cache.get(dep_tree.name)
+                        if dep_entry is None:
+                            continue
+                        dep_last_json = dep_info.get("last_json_hash", "")
+                        dep_current_json = canonical_hash_from_json_data(dep_entry)
+                        if (not dep_last_json) or (dep_current_json != dep_last_json):
+                            pull_group(dep_uid, dep_tree.name)
+
+            sub = self._import_from_json_data(uid, g_entry, json_cache, gname, context,
+                                              group_interface_maps)
+            merged._count += sub._count
+            merged._issue_count += sub._issue_count
+
+        pull_group(sync_uuid, blend_name)
 
         ng = bpy.data.node_groups.get(blend_name)
         if ng is not None:
@@ -758,17 +815,16 @@ class SyncManager:
             self._cascade_update_hashes(json_path, new_mtime, exclude_uuid=sync_uuid)
 
             # Auto-link any newly imported groups that aren't tracked
-            self._auto_link_imported_groups(json_path, json_cache, json_path_stored=info.get("json_path", ""))
+            self._auto_link_imported_groups(json_path, json_cache, json_path_stored=json_path_stored)
 
             # Invalidate status cache for all groups sharing this JSON file
-            json_path_stored = info.get("json_path", "")
             for uid, ig in self.metadata.get("tracked_groups", {}).items():
                 if ig.get("json_path", "") == json_path_stored:
                     self._status_cache.pop(uid, None)
 
             self._dirty = True
 
-        return tracker
+        return merged
 
     def _cascade_update_hashes(self, json_path: str, new_mtime: float,
                                 exclude_uuid: str | None = None,
@@ -1633,6 +1689,10 @@ class SyncManager:
             return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0}
 
         # --- Import each modified group using cached data ---
+        # Dependency-first order: a rebuilt dependency gets fresh interface
+        # socket identifiers, so parents must be pulled AFTER their
+        # dependencies (with a SHARED interface map) or links into the
+        # dependency group nodes are lost or land on the wrong sockets.
         imported = 0
         errors = 0
         auto_linked = 0
@@ -1641,11 +1701,52 @@ class SyncManager:
         # Track which JSON paths were modified for batch post-processing
         modified_json_paths: set[str] = set()
 
+        name_to_item: dict[str, tuple[str, dict, str]] = {}
         for uid, info, jp in groups_to_import:
+            name_to_item[info.get("blend_name", "")] = (uid, info, jp)
+            modified_json_paths.add(jp)
+
+        # Build the dependency graph from the cached JSON data
+        graph: dict[str, set[str]] = {name: set() for name in name_to_item}
+        for name, (uid, info, jp) in name_to_item.items():
+            data = json_data_cache.get(jp)
+            entry = None
+            if isinstance(data, dict):
+                if data.get("type") == "GN_UNIFIED_PACKAGE":
+                    entry = data.get("node_groups", {}).get(name)
+                elif "nodes" in data:
+                    entry = data
+            if entry is None:
+                continue
+            for node in entry.get("nodes", []):
+                ref = node.get("node_tree_reference")
+                if ref and ref != name and ref in name_to_item:
+                    graph[name].add(ref)
+
+        ordered = []
+        indeg = {name: len(deps) for name, deps in graph.items()}
+        ready = sorted(name for name, d in indeg.items() if d == 0)
+        while ready:
+            name = ready.pop(0)
+            ordered.append(name)
+            for other, deps in graph.items():
+                if name in deps:
+                    deps.discard(name)
+                    indeg[other] -= 1
+                    if indeg[other] == 0:
+                        ready.append(other)
+                        ready.sort()
+        for name in graph:
+            if name not in ordered:
+                ordered.append(name)
+
+        group_interface_maps: dict = {}
+
+        for name in ordered:
+            uid, info, jp = name_to_item[name]
             done += 1
             blend_name = info.get("blend_name", "")
             json_path = resolve_json_path(jp, self._blend_dir())
-            modified_json_paths.add(jp)
 
             print(f"[Import Modified] importing '{blend_name}' ({done}/{to_import_count})...")
             if context and hasattr(context, 'workspace') and context.workspace:
@@ -1674,7 +1775,8 @@ class SyncManager:
                 continue
 
             # Use the fast internal import method (no disk reads, no cascade)
-            tracker = self._import_from_json_data(uid, tree_data, json_cache, blend_name, context)
+            tracker = self._import_from_json_data(uid, tree_data, json_cache, blend_name, context,
+                                                  group_interface_maps)
             if tracker.has_errors:
                 errors += 1
             else:

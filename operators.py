@@ -350,7 +350,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 self._process_modifiers(context)
                 msg = "Package import finished successfully."
                 if self._tracker and self._tracker.has_errors:
-                    msg = f"Package import finished with {self._tracker.count} warnings (Check Console)."
+                    msg = f"Package import finished with {self._tracker.warn_count} warnings (Check Console)."
                     self.report({'WARNING'}, msg)
                 else:
                     self.report({'INFO'}, msg)

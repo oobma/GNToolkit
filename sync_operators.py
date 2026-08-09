@@ -200,7 +200,7 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
         if tracker.has_errors:
             self.report({'WARNING'},
-                        f"Pull completed with {tracker.count} warnings — check console")
+                        f"Pull completed with {tracker.warn_count} warnings — check console")
         else:
             self.report({'INFO'}, "Pull from JSON completed")
         return {'FINISHED'}
