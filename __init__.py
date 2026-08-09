@@ -22,7 +22,7 @@ from .sync_manager import sync_manager, SyncStatus
 bl_info = {
     "name": "GNToolkit",
     "author": "oobma/ Asistente IA",
-    "version": (0, 2, 0),
+    "version": (0, 2, 1),
     "blender": (4, 0, 0),
     "location": "Node Editor > Sidebar > GN Tools",
     "description": "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups.",

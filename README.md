@@ -51,7 +51,22 @@ this addon:
 
 ## Installation
 
-1. Download or clone this repository and zip the folder.
+**Option 1 — GitHub Releases (recommended):**
+
+1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
+   and download the addon zip of the latest release (e.g.
+   `GNToolkit-v0.2.1.zip`).
+2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
+   downloaded zip (the zip contains the `ADNRNAGNTOOLKIT/` addon folder).
+3. Enable **"GNToolkit"** in the list.
+4. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
+
+**Option 2 — from the repository:**
+
+1. Download or clone this repository and zip the `ADNRNAGNTOOLKIT` folder
+   (the repository root is the addon folder itself; the GitHub source zip
+   also installs, but it creates a version-named folder that leaves
+   duplicates when upgrading — the release asset avoids this).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    `.zip` file.
 3. Enable **"GNToolkit"** in the list.
@@ -135,7 +150,7 @@ Exports are **unified packages**:
 
 ```json
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "GN_UNIFIED_PACKAGE",
   "export_method": "GN_TOOLKIT",
   "node_groups": {

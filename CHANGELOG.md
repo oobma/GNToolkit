@@ -47,7 +47,7 @@ zone creation or the socket pairing API (5.2 only changed Geometry Nodes
 modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
 has no node/socket Python API changes at all).
 
-## [Unreleased]
+## [0.2.1] - 2026-08-09
 
 ### Added
 - Batch Import: new **Update existing groups** option (off by default).
@@ -88,41 +88,12 @@ has no node/socket Python API changes at all).
   - Main panel renamed "JSON Package" with a "Snapshot" section
     (Export Package / Import Package); "Pipeline Tools" label removed.
 
-## [0.2.0] - 2026-08-08
+### Fixed
 
-### Added
-- DNA/RNA synchronization subsystem: JSON (DNA) is the source of truth, .blend (RNA) is the working cache.
-- `sync_manager.py`: state detection (SYNCED, BLEND_MODIFIED, JSON_MODIFIED, CONFLICT, ORPHAN, JSON_MISSING), per-group canonical hashing within unified JSON packages, batch operations (link all, export all, export modified, import modified), cascade hash updates, PID-based JSON lock file, external connection preservation on reimport.
-- `sync_metadata.py`: `.gntsync` sidecar file + text block cache, UUID tracking per node group.
-- `sync_operators.py`: 15 operators (link, unlink, import, export, ignore, unignore, resolve, check, link dependencies, link all, export all, export modified, import modified, initialize).
-- `sync_ui.py`: N-panel with batch operations, filterable issues list, geometry validation panel, conflict resolution.
-- `hash_utils.py`: deterministic canonical SHA-256 hashing (sorted structures, volatile properties excluded).
-- `geometry_validator.py`: generic issue detection (missing attributes, degenerate geometry, invalid outputs, missing groups, unlinked inputs, type mismatches).
-- Load/save/undo handlers in `__init__.py` for persistent synchronization.
-
-### Changed
-- All 8 modules from 0.1.4 evolved in place (`__init__.py`, `constants.py`, `importer.py`, `serializer.py`).
-
-## Known issues (0.2.0)
-
-- **Importer roundtrip is not byte-identical.** Reimported node groups are
-  functionally faithful (node/link counts, socket values and connections
-  verified on a 439-group project), but interface socket identifiers may be
-  assigned in a different order than the original (e.g. `Socket_0`/`Socket_1`
-  swapped) and Reroute node widths reset to Blender's default. This can make
-  a freshly imported group briefly report BLEND_MODIFIED against its JSON;
-  the sync system self-heals by storing the new hash as the baseline. Found
-  via the headless smoke test against the real project file.
-- **Zone input nodes (Simulation/Repeat/Foreach/Closure) are not recreated in
-  headless/background mode.** Zone pairs can only be created via
-  `bpy.ops.node.add_zone`, which requires a screen with areas; background
-  mode has none. In a GUI session the importer now guarantees a Node Editor
-  area (converting an existing area temporarily when the current layout has
-  none), so script-driven GUI imports create zones regardless of screen
-  layout.
-
-### Fixed (found via real-project import testing)
-
+- `bl_info` was not a literal dict (it used f-strings), which broke
+  `addon_utils` parsing — the addon could not be listed or enabled from
+  Preferences. It is now literal; the smoke test keeps its version in sync
+  with `constants.py`.
 - Zone output nodes could be duplicated when the serialized node order had an
   output entry before its paired input (the normal creation path ran first
   and collided with the pair created by `bpy.ops.node.add_zone`). The main
@@ -174,10 +145,24 @@ write time. Mitigations applied:
   has an "Apply Modifiers" checkbox (off by default); when off, modifiers
   are skipped entirely.
 
-### Known background-mode limitation
+### Known issues
 
-- Batch imports run from a headless/background session lose some links in
-  groups that reference other node groups (pre-existing; identical in the
+- **Importer roundtrip is not byte-identical.** Reimported node groups are
+  functionally faithful (node/link counts, socket values and connections
+  verified on a 439-group project), but interface socket identifiers may be
+  assigned in a different order than the original (e.g. `Socket_0`/`Socket_1`
+  swapped) and Reroute node widths reset to Blender's default. This can make
+  a freshly imported group briefly report BLEND_MODIFIED against its JSON;
+  the sync system self-heals by storing the new hash as the baseline. Found
+  via the headless smoke test against the real project file.
+- **Zone input nodes are only recreated when the serialized data carries
+  pairing info.** Data exported by this addon does; older JSON files and
+  hand-built trees (e.g. the smoke test's tiny zone nodes, created via
+  `nodes.new`) do not, so those zones are dropped. Background mode has a
+  virtual screen, so screen availability is never the blocker — see the
+  "Technical note: zone node pairing" at the top of this file.
+- **Batch imports run from a headless/background session lose some links in
+  groups that reference other node groups** (pre-existing; identical in the
   pre-refactor code). GUI batch imports (the normal workflow) reproduce all
   25,437 links of the reference project exactly.
 
@@ -185,6 +170,21 @@ Remaining known characteristic: very large node trees (hundreds of nodes)
 still import slowly because of the per-mutation tree re-validation in
 Blender 5.1's node system; this is inherent to the API and cannot be
 avoided from Python.
+
+## [0.2.0] - 2026-08-08
+
+### Added
+- DNA/RNA synchronization subsystem: JSON (DNA) is the source of truth, .blend (RNA) is the working cache.
+- `sync_manager.py`: state detection (SYNCED, BLEND_MODIFIED, JSON_MODIFIED, CONFLICT, ORPHAN, JSON_MISSING), per-group canonical hashing within unified JSON packages, batch operations (link all, export all, export modified, import modified), cascade hash updates, PID-based JSON lock file, external connection preservation on reimport.
+- `sync_metadata.py`: `.gntsync` sidecar file + text block cache, UUID tracking per node group.
+- `sync_operators.py`: 15 operators (link, unlink, import, export, ignore, unignore, resolve, check, link dependencies, link all, export all, export modified, import modified, initialize).
+- `sync_ui.py`: N-panel with batch operations, filterable issues list, geometry validation panel, conflict resolution.
+- `hash_utils.py`: deterministic canonical SHA-256 hashing (sorted structures, volatile properties excluded).
+- `geometry_validator.py`: generic issue detection (missing attributes, degenerate geometry, invalid outputs, missing groups, unlinked inputs, type mismatches).
+- Load/save/undo handlers in `__init__.py` for persistent synchronization.
+
+### Changed
+- All 8 modules from 0.1.4 evolved in place (`__init__.py`, `constants.py`, `importer.py`, `serializer.py`).
 
 ## [0.1.4] - earlier
 
