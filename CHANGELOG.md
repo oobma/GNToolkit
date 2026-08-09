@@ -94,6 +94,13 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **Node `width` excluded from serialization and the canonical hash.**
+  Reroute/box widths are cosmetic and not restorable after a roundtrip
+  (Blender resets them), so they poisoned the hash and made every group
+  with a non-default width report as changed. `width` is now skipped in
+  `NODE_PROPS_TO_SKIP` (new exports no longer carry it; old JSONs still
+  import) and excluded in `HASH_EXCLUDE_NODE_PROPS` (the hash ignores it
+  on both sides, so the noise disappears even for existing JSON files).
 - **Pull (per-group and batch) lost and swapped links into dependency
   group nodes on real dependency webs.** The pull path rebuilt each group
   with a fresh empty interface map and without dependency ordering: when
@@ -114,6 +121,20 @@ has no node/socket Python API changes at all).
     divergent groups with **0 wiring errors**, Meshing keeps all 85 links
     with zero missing or extra signatures, and the real JSON changes
     (Resolution 32 / Trim Contour off, Torus +2 nodes) apply correctly.
+- **Batch pull (Import Modified) spent O(N²) on external-connection
+  scans.** Each imported group snapshotted links from ALL other trees
+  (`_save_external_connections` scans every node group), making a
+  400+ group pull slower than a fresh package import. The snapshot is
+  now taken ONCE for all candidates (`_save_external_connections_batch`,
+  one pass) and restored afterwards for non-rebuilt parents only —
+  rebuilt groups already get their links from the JSON (dependency-first
+  order), so restoring into them would clobber JSON-wired links. The
+  post-pull cascade hash update is also limited to the rebuilt groups
+  (the pull never writes the JSON, so other baselines cannot change).
+  With the batch pull now verified to reproduce **all 25,439 links of
+  the reference project byte-for-byte** (global link-total invariant
+  matches the JSON exactly), the O(N²) scans are gone and the remaining
+  pull cost is the rebuild work itself plus one JSON hash pass.
 - **Import summary counted DEBUG records as warnings/errors.**
   `ImportErrorTracker` now distinguishes informational records (DEBUG,
   DEFAULT_VALUE) from real issues (WARN+); `warn_count`/`has_errors`

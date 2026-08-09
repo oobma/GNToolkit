@@ -601,6 +601,52 @@ class SyncManager:
         return saved
 
     @staticmethod
+    def _save_external_connections_batch(candidate_names: set) -> dict[str, list[dict]]:
+        """Snapshot external connections for many target groups in ONE pass.
+
+        Equivalent to calling ``_save_external_connections`` per name, but
+        scans every tree only once — batch pulls with hundreds of groups
+        would otherwise pay an O(N^2) scan (each target scans all trees).
+
+        Returns {group_name: [entries]} with the same entry format as
+        ``_save_external_connections``.
+        """
+        targets = {}
+        for name in candidate_names:
+            tree = bpy.data.node_groups.get(name)
+            if tree is not None:
+                targets[tree] = name
+        saved: dict[str, list[dict]] = {name: [] for name in candidate_names}
+        for ng in bpy.data.node_groups:
+            if ng.type != 'GEOMETRY' or ng in targets:
+                continue
+            for node in ng.nodes:
+                ref = getattr(node, 'node_tree', None)
+                if ref is None or ref not in targets:
+                    continue
+                target_name = targets[ref]
+                for link in ng.links:
+                    from_node = link.from_node
+                    to_node = link.to_node
+                    from_sock = link.from_socket
+                    to_sock = link.to_socket
+                    if from_node == node or to_node == node:
+                        direction = "output" if from_node == node else "input"
+                        group_sock_name = from_sock.name if from_node == node else to_sock.name
+                        entry = {
+                            "parent_name": ng.name,
+                            "group_node_name": node.name,
+                            "group_socket_name": group_sock_name,
+                            "group_socket_direction": direction,
+                            "other_node_name": to_node.name if from_node == node else from_node.name,
+                            "other_socket_name": to_sock.name if from_node == node else from_sock.name,
+                            "other_socket_direction": "input" if from_node == node else "output",
+                            "link_direction": "from_group" if from_node == node else "to_group",
+                        }
+                        saved[target_name].append(entry)
+        return saved
+
+    @staticmethod
     def _restore_external_connections(group_name: str, saved: list[dict]) -> None:
         """Restore external connections saved by _save_external_connections.
 
@@ -662,7 +708,8 @@ class SyncManager:
     def _import_from_json_data(self, sync_uuid: str, tree_data: dict,
                                 json_cache: dict, blend_name: str,
                                 context=None,
-                                group_interface_maps: dict | None = None) -> ImportErrorTracker:
+                                group_interface_maps: dict | None = None,
+                                preserve_external: bool = True) -> ImportErrorTracker:
         """Internal: import a node group from pre-loaded JSON data.
 
         Used by import_all_modified to avoid re-reading the JSON file
@@ -672,6 +719,10 @@ class SyncManager:
         so that links into dependency group nodes are remapped against the
         freshly rebuilt interfaces (a fresh empty dict per group breaks
         the remap and loses those links).
+
+        When *preserve_external* is False, the per-group external
+        connection snapshot is skipped — the batch caller snapshots all
+        candidates in one pass and restores them afterwards.
         """
         tracker = ImportErrorTracker()
         if group_interface_maps is None:
@@ -679,9 +730,10 @@ class SyncManager:
 
         # --- Save external connections for the target group only ---
         saved_connections = {}
-        conns = self._save_external_connections(blend_name)
-        if conns:
-            saved_connections[blend_name] = conns
+        if preserve_external:
+            conns = self._save_external_connections(blend_name)
+            if conns:
+                saved_connections[blend_name] = conns
 
         ng = import_node_tree_recursive(
             tree_data, json_cache, group_interface_maps, context, tracker
@@ -693,9 +745,10 @@ class SyncManager:
             update_tracked_group(self.metadata, sync_uuid, blend_name=ng.name)
 
             # --- Restore external connections after importing ---
-            for gname, conns in saved_connections.items():
-                if conns:
-                    self._restore_external_connections(gname, conns)
+            if preserve_external:
+                for gname, conns in saved_connections.items():
+                    if conns:
+                        self._restore_external_connections(gname, conns)
 
         return tracker
 
@@ -1667,9 +1720,12 @@ class SyncManager:
 
             json_changed = (not last_json_hash) or (current_json_hash != last_json_hash)
 
-            # Also check if blend was modified (user wants to overwrite with JSON)
+            # Also check if blend was modified (user wants to overwrite with
+            # JSON). Only serialized when the JSON did NOT change: a changed
+            # JSON makes the group a candidate anyway, and serializing every
+            # tree here costs a full pass over the project.
             blend_changed = False
-            if last_blend_hash:
+            if (not json_changed) and last_blend_hash:
                 tree = find_tree_by_uuid(blend_name, uid)
                 if tree is not None:
                     current_blend_hash = canonical_hash_from_tree(tree)
@@ -1742,6 +1798,13 @@ class SyncManager:
 
         group_interface_maps: dict = {}
 
+        # Batch external-connection snapshot: ONE pass over all trees
+        # instead of one full-tree scan per imported group (the per-group
+        # scans made batch pulls O(N^2) and slower than a fresh import).
+        candidate_names = {info.get("blend_name", "") for uid, info, jp in groups_to_import}
+        ext_snapshot = self._save_external_connections_batch(candidate_names)
+        rebuilt_names: set[str] = set()
+
         for name in ordered:
             uid, info, jp = name_to_item[name]
             done += 1
@@ -1776,11 +1839,24 @@ class SyncManager:
 
             # Use the fast internal import method (no disk reads, no cascade)
             tracker = self._import_from_json_data(uid, tree_data, json_cache, blend_name, context,
-                                                  group_interface_maps)
+                                                  group_interface_maps, preserve_external=False)
+            rebuilt_names.add(blend_name)
             if tracker.has_errors:
                 errors += 1
             else:
                 imported += 1
+
+        # Restore external connections for NON-rebuilt parents only:
+        # rebuilt groups already got their links from the JSON (dependency-
+        # first order + shared interface maps), so restoring the old
+        # snapshot into them would clobber those links (Blender allows a
+        # single link per input socket).
+        for name, entries in ext_snapshot.items():
+            if not entries or name not in rebuilt_names:
+                continue
+            filtered = [e for e in entries if e.get("parent_name") not in rebuilt_names]
+            if filtered:
+                self._restore_external_connections(name, filtered)
 
         # --- Post-processing: update hashes, cascade, auto-link ---
         # Do this once for all imported groups instead of per-group
@@ -1794,7 +1870,9 @@ class SyncManager:
             new_mtime = os.path.getmtime(json_path)
 
             # Cascade update: compute JSON hashes from cached data,
-            # blend hashes from actual trees
+            # blend hashes from actual trees. The pull does not write the
+            # JSON file, so only the REBUILT groups need their baselines
+            # refreshed — skipping the others saves a full project pass.
             data = json_data_cache.get(jp)
             if data is None:
                 continue
@@ -1810,6 +1888,8 @@ class SyncManager:
                 if ig.get("json_path", "") != jp:
                     continue
                 blend_name = ig.get("blend_name", "")
+                if blend_name not in rebuilt_names:
+                    continue
                 tree = find_tree_by_uuid(blend_name, uid)
                 if tree is None:
                     continue
