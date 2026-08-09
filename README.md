@@ -1,4 +1,4 @@
-# GN DNA/RNA Toolkit
+# GNToolkit
 
 A Blender add-on for **Geometry Nodes JSON batch export/import** and
 **DNA/RNA synchronization**: JSON is the DNA (source of truth), the .blend
@@ -54,7 +54,7 @@ this addon:
 1. Download or clone this repository and zip the folder.
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    `.zip` file.
-3. Enable **"GN DNA/RNA Toolkit"** in the list.
+3. Enable **"GNToolkit"** in the list.
 4. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
 
 ## Quick Start

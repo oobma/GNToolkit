@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-GN DNA/RNA Toolkit v0.2.0 — Blender Add-on Package
+GNToolkit — Blender Add-on Package
 
 Flawless Post-Creation Sequential Mapping to prevent ID Collisions on
 Volatile Nodes.  Now includes DNA/RNA synchronization for Geometry Nodes:
@@ -18,9 +18,9 @@ from .sync_manager import sync_manager, SyncStatus
 
 # bl_info must be a literal dict (addon_utils parses it with
 # ast.literal_eval; f-strings/comprehensions break Preferences).
-# Keep "version" and the name in sync with ADDON_VERSION in constants.py.
+# Keep "version" in sync with ADDON_VERSION in constants.py.
 bl_info = {
-    "name": "GN DNA/RNA Toolkit v0.2.0",
+    "name": "GNToolkit",
     "author": "oobma/ Asistente IA",
     "version": (0, 2, 0),
     "blender": (4, 0, 0),
