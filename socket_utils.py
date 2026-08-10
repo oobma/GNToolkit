@@ -108,16 +108,23 @@ def attempt_create_item(coll, raw_type: str, name: str) -> bool:
 # Robust socket search
 # ---------------------------------------------------------------------------
 
-def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hint=None):
+def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hint=None, name_only=False):
     """Search for a socket safely, evading identifier collisions.
 
     For volatile nodes (``dynamic_hint is True``), Blender recycles
     identifiers; this function trusts name + type over the identifier.
+
+    When ``name_only`` is True the identifier is ignored entirely: used
+    for links into/out of dependency group nodes whose interface was NOT
+    rebuilt in this pass, where the serialized (stale) identifier may
+    match a DIFFERENT socket after the roundtrip and silently rewire the
+    link (matching by the bare id is worse than matching by name).
     """
     # 1. Exact match: identifier + name
-    s = next((x for x in sockets if x.identifier == sid and x.name == sname), None)
-    if s:
-        return s
+    if not name_only:
+        s = next((x for x in sockets if x.identifier == sid and x.name == sname), None)
+        if s:
+            return s
 
     # 1.5 Active protection for volatile nodes — ID may be recycled
     if dynamic_hint is True:
@@ -129,15 +136,16 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
         if s:
             return s
 
-    # 2. Exact match: identifier only
-    s = next((x for x in sockets if x.identifier == sid), None)
-    if s:
-        if dynamic_hint is True:
-            # Only accept the recycled ID if type matches
-            if expected_type and s.type == expected_type:
+    if not name_only:
+        # 2. Exact match: identifier only
+        s = next((x for x in sockets if x.identifier == sid), None)
+        if s:
+            if dynamic_hint is True:
+                # Only accept the recycled ID if type matches
+                if expected_type and s.type == expected_type:
+                    return s
+            else:
                 return s
-        else:
-            return s
 
     # 3. Fallback: name + type
     if expected_type:

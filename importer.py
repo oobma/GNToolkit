@@ -1364,19 +1364,28 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
         )
 
         # 1. Group Input/Output Remap
+        from_name_only = False
         if from_node.type == 'GROUP_INPUT':
             from_id = interface_map.get(from_id, from_id)
         elif from_node.bl_idname == 'GeometryNodeGroup' and getattr(from_node, "node_tree", None) and group_interface_maps is not None:
             ref_name = from_node.node_tree.name
             if ref_name in group_interface_maps:
                 from_id = group_interface_maps[ref_name].get(from_id, from_id)
+            else:
+                # Dependency not rebuilt in this pass: its identifiers
+                # are stale, so match by name only — the bare stale id may
+                # hit a DIFFERENT socket after the roundtrip.
+                from_name_only = True
 
+        to_name_only = False
         if to_node.type == 'GROUP_OUTPUT':
             to_id = interface_map.get(to_id, to_id)
         elif to_node.bl_idname == 'GeometryNodeGroup' and getattr(to_node, "node_tree", None) and group_interface_maps is not None:
             ref_name = to_node.node_tree.name
             if ref_name in group_interface_maps:
                 to_id = group_interface_maps[ref_name].get(to_id, to_id)
+            else:
+                to_name_only = True
 
         # 2. Dynamic Status
         from_is_dynamic = from_node.bl_idname in _VOLATILE_TYPES
@@ -1396,6 +1405,7 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
         from_sock = find_robust_socket(
             from_node, from_node.outputs, from_id, from_name,
             from_expected_type, dynamic_hint=from_is_dynamic,
+            name_only=from_name_only,
         )
 
         if to_node.bl_idname == "GeometryNodeViewer" and to_name == "Geometry":
@@ -1406,6 +1416,7 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
             to_sock = find_robust_socket(
                 to_node, to_node.inputs, to_id, to_name,
                 to_expected_type, dynamic_hint=to_is_dynamic,
+                name_only=to_name_only,
             )
 
         if from_sock and to_sock:
@@ -1689,6 +1700,7 @@ def _post_sync_interface(ng, data: dict, interface_map: dict,
 # ---------------------------------------------------------------------------
 
 def _reapply_group_node_defaults(data: dict, node_map: dict,
+                                  group_interface_maps: dict | None,
                                   tracker: ImportErrorTracker) -> None:
     """Re-apply default_value on Group node sockets after all other steps.
 
@@ -1701,6 +1713,8 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
     This is a targeted pass that ONLY processes GeometryNodeGroup nodes,
     and ONLY sets default_value (no other properties).
     """
+    if group_interface_maps is None:
+        group_interface_maps = {}
     for node_data in data["nodes"]:
         node_name = node_data.get("name")
         if node_name not in node_map:
@@ -1714,18 +1728,30 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
         if not getattr(node, 'node_tree', None):
             continue
 
+        ref_name = node.node_tree.name
+        ref_map = group_interface_maps.get(ref_name, {})
+
         for inp_data in node_data.get("inputs", []):
             raw_val = inp_data.get("default_value")
             if raw_val is None:
                 continue
             sname = inp_data.get("name", "")
-            # Find the socket by name (most reliable for Group nodes
-            # whose identifiers may have changed after node_tree assignment)
+            sid = inp_data.get("identifier", "")
+            # Resolve the socket by its UNIQUE identifier first: socket
+            # names are frequently duplicated on the referenced interface
+            # (e.g. two "Switch Target End" sockets), and a name match
+            # would always hit the first one.
             sock = None
-            for s in node.inputs:
-                if s.name == sname:
-                    sock = s
-                    break
+            if ref_map and sid:
+                mapped = ref_map.get(sid)
+                if mapped:
+                    sock = next(
+                        (s for s in node.inputs if s.identifier == mapped), None,
+                    )
+            if sock is None:
+                sock = next(
+                    (s for s in node.inputs if s.name == sname), None,
+                )
             if sock is None:
                 continue
             if not hasattr(sock, 'default_value'):
@@ -2173,7 +2199,7 @@ def _import_node_tree_gen(
     # defaults from the JSON data, ensuring that per-instance overrides
     # (like Self Side = 1 instead of the interface default 0) are
     # preserved.
-    _reapply_group_node_defaults(data, node_map, tracker)
+    _reapply_group_node_defaults(data, node_map, group_interface_maps, tracker)
 
     # --- Step 6: Final Menu defaults verification ---
     # Safety net for NodeSocketMenu default_values that weren't set by
