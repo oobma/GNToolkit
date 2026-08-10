@@ -21,6 +21,31 @@ from .constants import (
 )
 
 
+# Datablock reference values ({type, name}) cannot round-trip: the .blend
+# may not contain the referenced datablock, and the import may resolve or
+# re-create it under a different name (fonts, objects).  Hashing them
+# produces permanent noise, so they are dropped from the canonical form —
+# together with null defaults (unset datablock defaults serialize as null
+# on one side and a reference dict on the other).
+def _is_datablock_ref(value) -> bool:
+    return value is None or (isinstance(value, dict) and "name" in value)
+
+
+# The importer creates 2D vector interface sockets as NodeSocketVector2D
+# (NodeSocketVectorTranslation2D is not accepted by interface.new_socket);
+# the two types are functionally identical and must hash the same.
+_2D_VECTOR_SOCKETS = frozenset({
+    "NodeSocketVector2D",
+    "NodeSocketVectorTranslation2D",
+})
+
+
+def _normalize_interface_socket_type(bl_socket_idname: str) -> str:
+    if bl_socket_idname in _2D_VECTOR_SOCKETS:
+        return "NodeSocketVector2D"
+    return bl_socket_idname
+
+
 def canonicalize_node_tree_data(data: dict) -> dict:
     """Return a deep copy of *data* with all lists and dicts sorted
     deterministically so that two functionally identical node trees
@@ -55,10 +80,13 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             it = dict(item)
             it.pop("identifier", None)
             it.pop("parent", None)
+            if "bl_socket_idname" in it:
+                it["bl_socket_idname"] = _normalize_interface_socket_type(it["bl_socket_idname"])
             if "properties" in it and isinstance(it["properties"], dict):
                 it["properties"] = {
                     k: v for k, v in it["properties"].items()
                     if k not in HASH_EXCLUDE_INTERFACE_PROPS
+                    and not (k == "default_value" and _is_datablock_ref(v))
                 }
                 it["properties"] = dict(sorted(it["properties"].items()))
             if "enum_items" in it and isinstance(it["enum_items"], list):
@@ -77,10 +105,13 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             for item in lst:
                 it = dict(item)
                 it.pop("identifier", None)
+                if "bl_socket_idname" in it:
+                    it["bl_socket_idname"] = _normalize_interface_socket_type(it["bl_socket_idname"])
                 if "properties" in it and isinstance(it["properties"], dict):
                     it["properties"] = {
                         k: v for k, v in it["properties"].items()
                         if k not in HASH_EXCLUDE_INTERFACE_PROPS
+                        and not (k == "default_value" and _is_datablock_ref(v))
                     }
                     it["properties"] = dict(sorted(it["properties"].items()))
                 cleaned.append(it)
@@ -107,6 +138,8 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                 sd = dict(s)
                 sock_id = sd.get("identifier", sd.get("name", ""))
                 if (node_name, sock_id) in connected_set:
+                    sd.pop("default_value", None)
+                if "default_value" in sd and _is_datablock_ref(sd.get("default_value")):
                     sd.pop("default_value", None)
                 for k in HASH_EXCLUDE_SOCKET_PROPS:
                     sd.pop(k, None)

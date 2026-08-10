@@ -401,7 +401,7 @@ def unclean_value(val, expected_type=None, context=None):
                 return result
             # Fallback: try alternative collection names for unusual types
             alt_names = {
-                "vectorfont": "vectorfonts",
+                "vectorfont": "fonts",
                 "curve": "curves",
                 "brush": "brushes",
                 "palettes": "palettes",
