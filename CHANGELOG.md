@@ -102,6 +102,47 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **Pulls crashed Blender with access violations (interactive sessions).**
+  Three crash vectors were removed from the pull paths (batch and
+  per-group):
+  - The interface rebuild of a dependency clears and recreates its
+    sockets while the parents' group nodes still hold **live links into
+    them**; Blender's propagation of that churn can leave dangling link
+    pointers. Both pulls now **remove the external links into a group
+    before rebuilding it** (they are re-created from the external-
+    connection snapshot afterwards) — the batch uses the already-known
+    reverse dependency graph, so there is no extra full-project scan.
+  - Zone pairs were created with a fresh `temp_override` + pin/unpin of
+    `space.node_tree` per zone, plus `ensure_zone_area()` mutating the
+    area type mid-pull. Zone creation now uses **one pinned Node Editor
+    session per rebuilt tree** (created once, restored in `finally`),
+    and both pull operators always restore the zone area, even on
+    failure.
+  - Pending interface propagation was resolved during the first UI
+    redraw after the operator returned ("crash just after the pull").
+    Both pulls now **flush the depsgraph** (`view_layer.update()`) and
+    **validate every rebuilt tree's links** before returning.
+- **Dangling-link detection and self-repair.** A crash mid-interface-
+  rebuild can leave links whose sockets point at other nodes' (or other
+  trees') sockets; reading them crashes Blender again ("crash almost
+  immediately on the next pull"). The pull now checks every tree's links
+  first (pointer equality — NOT Python identity, which produces false
+  positives because Blender wraps the same C pointer differently per
+  access path), strips the dead links (their content is rebuilt from the
+  JSON anyway), and refuses with a clear message if any remain. The
+  snapshot/restore steps skip links with missing endpoints instead of
+  dereferencing them.
+- **Per-group Pull (Pull from JSON) now rebuilds the target's whole
+  connected component — dependencies AND parents — with the same
+  verification and honest re-stamping as the batch.** It previously
+  rebuilt only the target and its dependencies: renumbering a dependency
+  interface broke the links its (unrebuilt) parents had into it, and the
+  cascade hash update silently absorbed the damage (the project looked
+  SYNCED while dozens of groups were broken). The per-group pull now
+  goes through the same machinery as the batch (bidirectional closure,
+  external-connection snapshot/restore, tree-vs-JSON verification, still
+  divergent groups reported and kept visible), so a per-group pull can
+  no longer break or hide anything.
 - **Pull rebuilt the wrong-socket links and then hid the damage.** The
   pull's rebuild set covered only the divergent groups plus their
   *dependencies*; rebuilding a dependency renumbers its interface, which

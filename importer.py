@@ -183,6 +183,58 @@ def map_dynamic_sockets(old_data, new_node, remap_dict, node_key):
 
 _zone_area_state = {"area": None, "orig_type": None}
 
+# Pinned-area session shared by all add_zone calls of one tree rebuild:
+# one pin/restore per tree instead of per zone (less context churn and a
+# smaller interactive-session crash surface).
+_zone_session = {"active": False, "win": None, "area": None, "space": None,
+                 "region": None, "orig_tree": None, "orig_pin": None}
+
+
+def _find_node_editor():
+    for w in bpy.context.window_manager.windows:
+        for s in w.screen.areas:
+            if s.type == 'NODE_EDITOR':
+                return w, s
+    return None, None
+
+
+def begin_zone_session(nt):
+    """Pin a Node Editor area on *nt* for the duration of a tree rebuild.
+
+    All ``add_zone`` calls inside the rebuild reuse this single pinned
+    area instead of pinning/restoring per zone.  Returns True when a
+    session was started (pair with ``end_zone_session()``).
+    """
+    if _zone_session["active"]:
+        end_zone_session()
+    ensure_zone_area()
+    win, area = _find_node_editor()
+    if not area:
+        return False
+    space = area.spaces[0]
+    region = next((r for r in area.regions if r.type == 'WINDOW'), area.regions[-1])
+    _zone_session.update({
+        "active": True, "win": win, "area": area, "space": space, "region": region,
+        "orig_tree": getattr(space, 'node_tree', None),
+        "orig_pin": getattr(space, 'pin', False),
+    })
+    space.pin = True
+    space.node_tree = nt
+    return True
+
+
+def end_zone_session():
+    """Restore the area pinned by ``begin_zone_session()``."""
+    if not _zone_session["active"]:
+        return
+    space = _zone_session["space"]
+    try:
+        space.node_tree = _zone_session["orig_tree"]
+        space.pin = _zone_session["orig_pin"]
+    except Exception:
+        pass
+    _zone_session["active"] = False
+
 
 def ensure_zone_area():
     """Make sure the current screen has a Node Editor area for zone creation.
@@ -226,29 +278,39 @@ def run_add_zone_operator(nt, input_type, output_type, tracker: ImportErrorTrack
     """Create a zone pair (input+output nodes) using ``bpy.ops.node.add_zone``.
 
     The operator requires an active Node Editor area with the target tree
-    pinned.  This function temporarily overrides the context, runs the
-    operator, and restores the original state.
+    pinned.  Inside a zone session (``begin_zone_session``) the session's
+    pinned area is reused; otherwise this function temporarily overrides
+    the context, runs the operator, and restores the original state.
     """
-    ensure_zone_area()
-    win = bpy.context.window
-    area = next((a for a in bpy.context.screen.areas if a.type == 'NODE_EDITOR'), None)
-    if not area:
-        for w in bpy.context.window_manager.windows:
-            for s in w.screen.areas:
-                if s.type == 'NODE_EDITOR':
-                    area = s
-                    win = w
+    session_active = _zone_session["active"]
+    if session_active:
+        win = _zone_session["win"]
+        area = _zone_session["area"]
+        region = _zone_session["region"]
+        space = _zone_session["space"]
+    else:
+        ensure_zone_area()
+        win = bpy.context.window
+        area = next((a for a in bpy.context.screen.areas if a.type == 'NODE_EDITOR'), None)
+        if not area:
+            for w in bpy.context.window_manager.windows:
+                for s in w.screen.areas:
+                    if s.type == 'NODE_EDITOR':
+                        area = s
+                        win = w
+                        break
+                if area:
                     break
-            if area:
-                break
-    if area:
+        if not area:
+            return None, None
         space = area.spaces[0]
         region = next((r for r in area.regions if r.type == 'WINDOW'), area.regions[-1])
         orig_tree = getattr(space, 'node_tree', None)
         orig_pin = getattr(space, 'pin', False)
-        nodes_before = set(nt.nodes)
         space.pin = True
         space.node_tree = nt
+    try:
+        nodes_before = set(nt.nodes)
         try:
             with bpy.context.temp_override(window=win, area=area, region=region, space_data=space):
                 op_args = {
@@ -262,8 +324,6 @@ def run_add_zone_operator(nt, input_type, output_type, tracker: ImportErrorTrack
         except Exception as e:
             tracker.record(f"Failed to create Zone {input_type}: {e}", level="CRITICAL ERROR")
 
-        space.node_tree = orig_tree
-        space.pin = orig_pin
         added_nodes = list(set(nt.nodes) - nodes_before)
         n_in = next((n for n in added_nodes if n.bl_idname == input_type), None)
         n_out = next((n for n in added_nodes if n.bl_idname == output_type), None)
@@ -276,6 +336,10 @@ def run_add_zone_operator(nt, input_type, output_type, tracker: ImportErrorTrack
                 return n1, n2
             elif n2.bl_idname == input_type:
                 return n2, n1
+    finally:
+        if not session_active:
+            space.node_tree = orig_tree
+            space.pin = orig_pin
     return None, None
 
 
@@ -2001,6 +2065,12 @@ def _import_node_tree_gen(
     if group_interface_maps is not None:
         group_interface_maps[name] = interface_map
 
+    # Pin ONE Node Editor area for all zone creations of this rebuild
+    # (one pin/restore per tree instead of per zone).  The session is
+    # also replaced/cleaned by the operators' finally blocks if this
+    # generator is interrupted mid-way (modal cancellation).
+    zone_session_active = begin_zone_session(ng)
+
     # --- Step 1: Node creation ---
     node_map = {}
     processed_zone_nodes = set()
@@ -2097,6 +2167,9 @@ def _import_node_tree_gen(
                 ref_tree = bpy.data.node_groups.get(ref_name)
                 if ref_tree:
                     new_node.node_tree = ref_tree
+
+    if zone_session_active:
+        end_zone_session()
 
     # --- Step 2: Default values ---
     yield (0.45, "defaults")

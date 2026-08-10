@@ -660,6 +660,107 @@ class SyncManager:
         return saved
 
     @staticmethod
+    def _link_is_dangling(link, ng) -> bool:
+        """True when a link's endpoints are missing or point at other nodes.
+
+        Uses pointer equality (``==``), NOT ``is``: Blender creates
+        distinct Python wrapper objects for the same C pointer depending
+        on the access path (e.g. ``link.from_node`` vs
+        ``link.from_socket.node``), so identity checks produce false
+        positives on perfectly valid links.
+        """
+        fnode = getattr(link, "from_node", None)
+        tnode = getattr(link, "to_node", None)
+        fsock = getattr(link, "from_socket", None)
+        tsock = getattr(link, "to_socket", None)
+        return (fnode is None or tnode is None or fsock is None or tsock is None
+                or getattr(fnode, "id_data", None) != ng
+                or getattr(tnode, "id_data", None) != ng
+                or getattr(fsock, "node", None) != fnode
+                or getattr(tsock, "node", None) != tnode)
+
+    @staticmethod
+    def _validate_links(trees=None) -> list:
+        """Return the names of trees containing corrupted (dangling) links.
+
+        A link whose endpoints are None or do not belong to the tree means
+        the node data was left in an inconsistent state (e.g. by an
+        earlier crash mid-interface-rebuild).  Reading such links crashes
+        Blender with an access violation, so the pull refuses to run on a
+        corrupted file.
+        """
+        bad: list[str] = []
+        if trees is None:
+            trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+        for ng in trees:
+            for link in ng.links:
+                if SyncManager._link_is_dangling(link, ng):
+                    bad.append(ng.name)
+                    break
+        return bad
+
+    @staticmethod
+    def _unlink_external_into(target_name: str, parents=None) -> None:
+        """Remove all links OTHER trees have into *target_name*'s group nodes.
+
+        The interface rebuild removes and recreates sockets; Blender's
+        propagation of that churn onto referencing group nodes with live
+        links can leave dangling link pointers (access violation).  The
+        external connections are restored from the snapshot after the
+        rebuild (batch snapshot / per-group restore), so the links are
+        not lost — and no live link points into the tree while its
+        interface churns.
+
+        *parents* optionally limits the scan to known referencing trees
+        (the batch passes the reverse-dependency graph, avoiding an
+        O(N^2) scan); when None every geometry tree is scanned.
+        """
+        target = bpy.data.node_groups.get(target_name)
+        if target is None:
+            return
+        if parents is None:
+            trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+        else:
+            trees = [bpy.data.node_groups.get(p) for p in parents]
+        for ptree in trees:
+            if ptree is None or ptree == target:
+                continue
+            for node in ptree.nodes:
+                if node.bl_idname != 'GeometryNodeGroup':
+                    continue
+                if getattr(node, 'node_tree', None) != target:
+                    continue
+                for link in list(ptree.links):
+                    if link.from_node == node or link.to_node == node:
+                        try:
+                            ptree.links.remove(link)
+                        except (TypeError, AttributeError, ValueError, RuntimeError):
+                            pass
+
+    @staticmethod
+    def _repair_dangling_links(trees=None) -> int:
+        """Strip corrupted (dangling) links from the given trees.
+
+        A crash mid-interface-rebuild can leave links whose sockets point
+        at other nodes' (or other trees') sockets.  Such links are dead:
+        the pull rebuilds their content from the JSON anyway.  Returns the
+        number of removed links.
+        """
+        removed = 0
+        if trees is None:
+            trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+        for ng in trees:
+            for link in list(ng.links):
+                if not SyncManager._link_is_dangling(link, ng):
+                    continue
+                try:
+                    ng.links.remove(link)
+                    removed += 1
+                except Exception:
+                    pass
+        return removed
+
+    @staticmethod
     def _save_external_connections_batch(candidate_names: set) -> dict[str, list[dict]]:
         """Snapshot external connections for many target groups in ONE pass.
 
@@ -689,6 +790,9 @@ class SyncManager:
                     to_node = link.to_node
                     from_sock = link.from_socket
                     to_sock = link.to_socket
+                    if (from_node is None or to_node is None
+                            or from_sock is None or to_sock is None):
+                        continue
                     if from_node == node or to_node == node:
                         direction = "output" if from_node == node else "input"
                         group_sock_name = from_sock.name if from_node == node else to_sock.name
@@ -725,6 +829,8 @@ class SyncManager:
                 continue
             other_node = ng.nodes.get(entry["other_node_name"])
             if other_node is None:
+                continue
+            if group_node.id_data is not ng or other_node.id_data is not ng:
                 continue
 
             group_sock_name = entry["group_socket_name"]
@@ -768,7 +874,8 @@ class SyncManager:
                                 json_cache: dict, blend_name: str,
                                 context=None,
                                 group_interface_maps: dict | None = None,
-                                preserve_external: bool = True) -> ImportErrorTracker:
+                                preserve_external: bool = True,
+                                unlink_parents=None) -> ImportErrorTracker:
         """Internal: import a node group from pre-loaded JSON data.
 
         Used by import_all_modified to avoid re-reading the JSON file
@@ -782,6 +889,11 @@ class SyncManager:
         When *preserve_external* is False, the per-group external
         connection snapshot is skipped — the batch caller snapshots all
         candidates in one pass and restores them afterwards.
+
+        *unlink_parents* optionally lists the trees whose links into this
+        group are removed BEFORE the rebuild (the interface rebuild churns
+        sockets and Blender's propagation onto live links can crash); the
+        external connections are restored from the snapshot afterwards.
         """
         tracker = ImportErrorTracker()
         if group_interface_maps is None:
@@ -793,6 +905,9 @@ class SyncManager:
             conns = self._save_external_connections(blend_name)
             if conns:
                 saved_connections[blend_name] = conns
+
+        # --- Remove live external links into this tree (crash guard) ---
+        self._unlink_external_into(blend_name, unlink_parents)
 
         ng = import_node_tree_recursive(
             tree_data, json_cache, group_interface_maps, context, tracker
@@ -829,6 +944,23 @@ class SyncManager:
             tracker.record(f"UUID {sync_uuid} not found in metadata")
             return tracker
 
+        # Crash guard: strip dangling links left by an earlier crash (the
+        # pull rebuilds their content from the JSON anyway) instead of
+        # dereferencing them (access violation).
+        corrupted = self._validate_links()
+        if corrupted:
+            removed = self._repair_dangling_links()
+            still = self._validate_links()
+            if still:
+                tracker = ImportErrorTracker()
+                tracker.record(
+                    f"{len(still)} node tree(s) still contain dangling links "
+                    f"after repair (e.g. {still[0]}) — the .blend was left in an "
+                    f"inconsistent state. Save and restart Blender, then pull again."
+                )
+                return tracker
+            print(f"[Pull] repaired {removed} dangling link(s) left by a previous crash")
+
         json_path = resolve_json_path(info.get("json_path", ""), self._blend_dir())
         if not os.path.isfile(json_path):
             tracker = ImportErrorTracker()
@@ -859,95 +991,64 @@ class SyncManager:
 
         json_path_stored = info.get("json_path", "")
         group_interface_maps = {}
-        visited = set()
-        pulled_names: set[str] = set()
         merged = ImportErrorTracker()
 
-        def pull_group(uid: str, gname: str) -> None:
-            if uid in visited:
-                return
-            visited.add(uid)
-            pulled_names.add(gname)
-            g_info = get_tracked_group(self.metadata, uid)
-            if g_info is None:
-                return
-            g_entry = json_cache.get(gname)
-            if g_entry is None:
-                return
+        # The target's whole connected component (dependencies AND parents)
+        # is rebuilt: a rebuilt dependency renumbers its interface, which
+        # removes the links its parents have into it — so parents must be
+        # rebuilt in the same pass (dependency-first) and re-wire from the
+        # JSON.  This mirrors the batch pull (import_all_modified).
+        json_data_cache = {json_path_stored: json_data}
+        modified_json_paths = {json_path_stored}
+        all_names, all_graph, rev_graph, json_group_hashes, tracked_by_name = \
+            self._build_pull_graphs(json_data_cache, modified_json_paths)
 
-            # Dependencies first: EVERY tracked dependency sharing the JSON
-            # must be rebuilt before the parent. A rebuilt dependency gets
-            # fresh interface socket identifiers, and the parent's links are
-            # remapped against them via the shared interface map — skipping
-            # a dependency (even a "matching" one) leaves its reordered
-            # identifiers in place and breaks the parent's wiring.
-            tree = bpy.data.node_groups.get(gname)
-            if tree is not None:
-                for node in tree.nodes:
-                    if node.bl_idname == "GeometryNodeGroup" and getattr(node, "node_tree", None):
-                        dep_tree = node.node_tree
-                        if dep_tree.name == gname:
-                            continue
-                        dep_uid = find_uuid_for_tree(dep_tree, self.metadata)
-                        if not dep_uid or dep_uid in visited:
-                            continue
-                        dep_info = get_tracked_group(self.metadata, dep_uid)
-                        if dep_info is None or dep_info.get("json_path", "") != json_path_stored:
-                            continue
-                        if dep_tree.name not in json_cache:
-                            continue
-                        pull_group(dep_uid, dep_tree.name)
+        rebuilt_names, affected_parents, _p_imported, _p_errors = self._run_pull_pass(
+            [(sync_uuid, info, json_path_stored)], context, json_data_cache,
+            all_graph, rev_graph, all_names, tracked_by_name, group_interface_maps,
+        )
+        pulled_names = set(rebuilt_names)
 
-            sub = self._import_from_json_data(uid, g_entry, json_cache, gname, context,
-                                              group_interface_maps)
-            merged._count += sub._count
-            merged._issue_count += sub._issue_count
+        # The external-connection restore rewired links of NON-rebuilt
+        # parents into the rebuilt groups, so those parents' stored blend
+        # baselines are stale: refresh them (mirrors the batch handling).
+        for pname in affected_parents:
+            p_uid, p_info, _p_jp = tracked_by_name.get(pname, (None, None, None))
+            if p_uid is None:
+                continue
+            p_tree = bpy.data.node_groups.get(pname)
+            if p_tree is not None:
+                update_tracked_group(
+                    self.metadata, p_uid,
+                    last_blend_hash=canonical_hash_from_tree(p_tree),
+                )
 
-        pull_group(sync_uuid, blend_name)
+        # Verification: rebuilt groups that still differ from the JSON keep
+        # the DIVERGENT baseline (visible) and are reported as warnings.
+        still_divergent: list[str] = []
+        for name in sorted(rebuilt_names):
+            uid, r_info, r_jp = tracked_by_name.get(name, (None, None, None))
+            if uid is None:
+                continue
+            tree = bpy.data.node_groups.get(name)
+            if tree is None:
+                continue
+            jh = json_group_hashes.get(r_jp, {}).get(name)
+            if jh is None:
+                continue
+            th = canonical_hash_from_tree(tree)
+            if th != jh:
+                still_divergent.append(name)
 
-        # The per-group external-connection restores rewired links of
-        # NON-pulled parents into the pulled groups, so those parents'
-        # stored blend baselines are stale: refresh them (mirrors the
-        # batch restore handling in import_all_modified).
-        if pulled_names:
-            ext_snap = self._save_external_connections_batch(pulled_names)
-            affected = set()
-            for entries in ext_snap.values():
-                for e in entries:
-                    pname = e.get("parent_name", "")
-                    if pname and pname not in pulled_names:
-                        affected.add(pname)
-            for pname in affected:
-                p_tree = bpy.data.node_groups.get(pname)
-                if p_tree is None:
-                    continue
-                for p_uid, p_info in self.metadata.get("tracked_groups", {}).items():
-                    if p_info.get("blend_name", "") == pname:
-                        update_tracked_group(
-                            self.metadata, p_uid,
-                            last_blend_hash=canonical_hash_from_tree(p_tree),
-                        )
-                        break
+        # Honest re-stamp: matching rebuilt groups -> SYNCED; groups the
+        # rebuild could not reproduce stay visible as "Changed in JSON".
+        self._restamp_rebuilt(set(rebuilt_names), modified_json_paths, json_data_cache)
+
+        for name in still_divergent:
+            merged.record(f"'{name}' still differs from the JSON after pull", level="WARN")
 
         ng = bpy.data.node_groups.get(blend_name)
         if ng is not None:
-            # Update primary group hashes (per-group)
-            new_blend_hash = canonical_hash_from_tree(ng)
-            new_json_hash = canonical_hash_from_json_group(json_path, ng.name)
-            if new_json_hash is None:
-                new_json_hash = canonical_hash_from_json_path(json_path)
-            new_mtime = os.path.getmtime(json_path)
-            update_tracked_group(
-                self.metadata, sync_uuid,
-                last_blend_hash=new_blend_hash,
-                last_json_hash=new_json_hash,
-                last_json_mtime=new_mtime,
-            )
-
-            # Cascade: update hashes for all other tracked groups
-            # that share the same JSON file and were also imported
-            self._cascade_update_hashes(json_path, new_mtime, exclude_uuid=sync_uuid)
-
             # Auto-link any newly imported groups that aren't tracked
             self._auto_link_imported_groups(json_path, json_cache, json_path_stored=json_path_stored)
 
@@ -957,6 +1058,23 @@ class SyncManager:
                     self._status_cache.pop(uid, None)
 
             self._dirty = True
+
+        # Crash guard + depsgraph flush (mirrors import_all_modified): the
+        # rebuild churned interfaces; verify no dangling links accumulated
+        # and resolve pending propagation before the UI redraws.
+        pulled_trees = [t for n in pulled_names if (t := bpy.data.node_groups.get(n)) is not None]
+        corrupted = self._validate_links(pulled_trees)
+        if corrupted:
+            merged.record(
+                f"{len(corrupted)} rebuilt node tree(s) left dangling links "
+                f"(e.g. {corrupted[0]}). The .blend state is inconsistent — "
+                f"save and restart Blender, then pull again."
+            )
+            return merged
+        try:
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
 
         return merged
 
@@ -1729,6 +1847,259 @@ class SyncManager:
             context.workspace.status_text_set(f"Export Modified: done ({exported} exported, {errors} errors)")
         return {"exported": exported, "skipped": skipped, "errors": errors}
 
+    def _build_pull_graphs(self, json_data_cache: dict, modified_json_paths: set):
+        """Build the dependency graphs and hash caches for a pull.
+
+        Returns ``(all_names, all_graph, rev_graph, json_group_hashes,
+        tracked_by_name)`` — the shared inputs of ``_run_pull_pass``.
+        """
+        all_names: dict[str, tuple[str, dict, str]] = {}
+        for uid, ig in self.metadata.get("tracked_groups", {}).items():
+            jp = ig.get("json_path", "")
+            if jp in modified_json_paths:
+                all_names[ig.get("blend_name", "")] = (uid, ig, jp)
+
+        def _entry_for(name, jp):
+            data = json_data_cache.get(jp)
+            if not isinstance(data, dict):
+                return None
+            if data.get("type") == "GN_UNIFIED_PACKAGE":
+                return data.get("node_groups", {}).get(name)
+            if "nodes" in data:
+                return data
+            return None
+
+        all_graph: dict[str, set[str]] = {}
+        for name, (uid, ig, jp) in all_names.items():
+            entry = _entry_for(name, jp)
+            refs = set()
+            if entry is not None:
+                for node in entry.get("nodes", []):
+                    ref = node.get("node_tree_reference")
+                    if ref and ref != name and ref in all_names:
+                        refs.add(ref)
+            all_graph[name] = refs
+
+        # Reverse graph (dependency -> parents): rebuilding a group renumbers
+        # its interface, which BREAKS the links its parents have into it
+        # (Blender removes links into recreated interface sockets).  Every
+        # parent must therefore be rebuilt in the same pass, otherwise the
+        # pull damages the very groups it is supposed to leave untouched —
+        # and the next pull would re-break them again.
+        rev_graph: dict[str, set[str]] = {}
+        for name, refs in all_graph.items():
+            for ref in refs:
+                rev_graph.setdefault(ref, set()).add(name)
+
+        # JSON hashes per group (from cached data) for post-pull verification
+        json_group_hashes: dict[str, dict[str, str]] = {}
+        for jp in modified_json_paths:
+            data = json_data_cache.get(jp)
+            if not isinstance(data, dict):
+                continue
+            if data.get("type") == "GN_UNIFIED_PACKAGE":
+                json_group_hashes[jp] = {
+                    gname: canonical_hash_from_json_data(gd)
+                    for gname, gd in data.get("node_groups", {}).items()
+                }
+            elif "nodes" in data:
+                json_group_hashes[jp] = {
+                    data.get("name", ""): canonical_hash_from_json_data(data)
+                }
+
+        tracked_by_name: dict[str, tuple[str, dict, str]] = {}
+        for uid, ig in self.metadata.get("tracked_groups", {}).items():
+            tracked_by_name[ig.get("blend_name", "")] = (uid, ig, ig.get("json_path", ""))
+
+        return all_names, all_graph, rev_graph, json_group_hashes, tracked_by_name
+
+    def _run_pull_pass(self, candidates: list, context, json_data_cache: dict,
+                       all_graph: dict, rev_graph: dict, all_names: dict,
+                       tracked_by_name: dict, group_interface_maps: dict):
+        """Rebuild *candidates* plus the transitive closure of their
+        dependencies AND their parents, dependency-first, with the shared
+        interface maps.
+
+        Parents must be included: rebuilding a dependency renumbers its
+        interface, which removes the links its parents have into it — the
+        parents are rebuilt right after (dependency-first order) and
+        re-wire from the JSON, so nothing is lost.
+
+        Returns ``(rebuilt_names, affected_parents, local_imported,
+        local_errors)``.  The rebuilt trees are NOT re-stamped here: the
+        caller verifies each one against the JSON afterwards.
+        """
+        name_to_item: dict[str, tuple[str, dict, str]] = {}
+        for uid, info, jp in candidates:
+            name_to_item[info.get("blend_name", "")] = (uid, info, jp)
+
+        # Expand the candidates with the transitive closure of their
+        # dependencies AND their parents (bidirectional BFS).
+        included = set(name_to_item)
+        frontier = list(included)
+        while frontier:
+            name = frontier.pop()
+            for ref in all_graph.get(name, ()):
+                if ref not in included:
+                    included.add(ref)
+                    name_to_item[ref] = all_names[ref]
+                    frontier.append(ref)
+            for ref in rev_graph.get(name, ()):
+                if ref not in included:
+                    included.add(ref)
+                    name_to_item[ref] = all_names[ref]
+                    frontier.append(ref)
+
+        # Dependency graph restricted to the included set (for the order)
+        graph: dict[str, set[str]] = {
+            name: {r for r in all_graph.get(name, ()) if r in included}
+            for name in included
+        }
+
+        ordered = []
+        indeg = {name: len(deps) for name, deps in graph.items()}
+        ready = sorted(name for name, d in indeg.items() if d == 0)
+        while ready:
+            name = ready.pop(0)
+            ordered.append(name)
+            for other, deps in graph.items():
+                if name in deps:
+                    deps.discard(name)
+                    indeg[other] -= 1
+                    if indeg[other] == 0:
+                        ready.append(other)
+                        ready.sort()
+        for name in graph:
+            if name not in ordered:
+                ordered.append(name)
+
+        # Batch external-connection snapshot: ONE pass over all trees
+        # instead of one full-tree scan per imported group (the per-group
+        # scans made batch pulls O(N^2) and slower than a fresh import).
+        # Must cover the FULL rebuild set (divergent + dependency closure).
+        candidate_names = set(name_to_item)
+        ext_snapshot = self._save_external_connections_batch(candidate_names)
+        rebuilt_names: set[str] = set()
+        affected_parents: set[str] = set()
+        local_imported = 0
+        local_errors = 0
+        to_import_count = len(ordered)
+
+        for done, name in enumerate(ordered, 1):
+            uid, info, jp = name_to_item[name]
+            blend_name = info.get("blend_name", "")
+
+            print(f"[Import Modified] importing '{blend_name}' ({done}/{to_import_count})...")
+            if context and hasattr(context, 'workspace') and context.workspace:
+                context.workspace.status_text_set(f"Import Modified: {done}/{to_import_count} — {blend_name}")
+
+            # Use cached JSON data instead of re-reading from disk
+            data = json_data_cache.get(jp)
+            if data is None:
+                local_errors += 1
+                continue
+
+            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
+                json_cache = data.get("node_groups", {})
+                tree_data = json_cache.get(blend_name)
+                if tree_data is None:
+                    tree_data = next(iter(json_cache.values()))
+            elif isinstance(data, dict) and "nodes" in data:
+                json_cache = {blend_name: data}
+                tree_data = data
+            else:
+                local_errors += 1
+                continue
+
+            if tree_data is None:
+                local_errors += 1
+                continue
+
+            # Use the fast internal import method (no disk reads, no cascade)
+            tracker = self._import_from_json_data(uid, tree_data, json_cache, blend_name, context,
+                                                  group_interface_maps, preserve_external=False,
+                                                  unlink_parents=rev_graph.get(blend_name, ()))
+            rebuilt_names.add(blend_name)
+            if tracker.has_errors:
+                local_errors += 1
+            else:
+                local_imported += 1
+
+        # Restore external connections for NON-rebuilt parents only:
+        # rebuilt groups already got their links from the JSON (dependency-
+        # first order + shared interface maps), so restoring the old
+        # snapshot into them would clobber those links (Blender allows a
+        # single link per input socket).
+        for name, entries in ext_snapshot.items():
+            if not entries or name not in rebuilt_names:
+                continue
+            filtered = [e for e in entries if e.get("parent_name") not in rebuilt_names]
+            if filtered:
+                self._restore_external_connections(name, filtered)
+                affected_parents.update(e.get("parent_name", "") for e in filtered)
+
+        return rebuilt_names, affected_parents, local_imported, local_errors
+
+    def _restamp_rebuilt(self, rebuilt_all: set, modified_json_paths: set,
+                         json_data_cache: dict) -> None:
+        """Re-stamp the baselines of rebuilt groups after a pull.
+
+        Groups whose rebuild reproduced the JSON become SYNCED (real
+        mtime).  Groups that STILL differ keep the DIVERGENT baseline
+        (blend hash on both sides + mtime 0) so the divergence stays
+        visible as "Changed in JSON" instead of being silently absorbed.
+        """
+        for jp in modified_json_paths:
+            json_path = resolve_json_path(jp, self._blend_dir())
+            if not json_path or not os.path.isfile(json_path):
+                continue
+
+            new_mtime = os.path.getmtime(json_path)
+
+            data = json_data_cache.get(jp)
+            if data is None:
+                continue
+
+            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
+                json_groups = data.get("node_groups", {})
+            elif isinstance(data, dict) and "nodes" in data:
+                json_groups = {data.get("name", ""): data}
+            else:
+                continue
+
+            for uid, ig in self.metadata.get("tracked_groups", {}).items():
+                if ig.get("json_path", "") != jp:
+                    continue
+                blend_name = ig.get("blend_name", "")
+                if blend_name not in rebuilt_all:
+                    continue
+                tree = find_tree_by_uuid(blend_name, uid)
+                if tree is None:
+                    continue
+
+                # JSON hash from cached data
+                dep_json_hash = canonical_hash_from_json_data(json_groups.get(blend_name, {}))
+                # Blend hash from actual tree
+                dep_blend_hash = canonical_hash_from_tree(tree)
+
+                if dep_blend_hash != dep_json_hash:
+                    # Rebuild did not reproduce the JSON content: keep the
+                    # divergence visible (blend hash as the baseline, mtime 0
+                    # disables the fast path so the JSON is compared).
+                    update_tracked_group(
+                        self.metadata, uid,
+                        last_blend_hash=dep_blend_hash,
+                        last_json_hash=dep_blend_hash,
+                        last_json_mtime=0.0,
+                    )
+                else:
+                    update_tracked_group(
+                        self.metadata, uid,
+                        last_blend_hash=dep_blend_hash,
+                        last_json_hash=dep_json_hash,
+                        last_json_mtime=new_mtime,
+                    )
+
     def import_all_modified(self, context=None) -> dict:
         """Import all groups that are JSON_MODIFIED, BLEND_MODIFIED, or CONFLICT.
 
@@ -1746,6 +2117,22 @@ class SyncManager:
         tracked = self.metadata.get("tracked_groups", {})
         if not tracked:
             return {"imported": 0, "skipped": 0, "errors": 0, "auto_linked": 0}
+
+        # Crash guard: a crash mid-interface-rebuild can leave dangling
+        # links (sockets pointing at other nodes' sockets).  Reading them
+        # is an access violation; the links are dead anyway (the pull
+        # rebuilds their content from the JSON), so strip them first.
+        corrupted = self._validate_links()
+        if corrupted:
+            removed = self._repair_dangling_links()
+            still = self._validate_links()
+            if still:
+                raise RuntimeError(
+                    f"{len(still)} node tree(s) still contain dangling links "
+                    f"after repair (e.g. {still[0]}) — the .blend was left in an "
+                    f"inconsistent state. Save and restart Blender, then pull again."
+                )
+            print(f"[Import Modified] repaired {removed} dangling link(s) left by a previous crash")
 
         print("[Import Modified] scanning for changes...")
 
@@ -1823,13 +2210,10 @@ class SyncManager:
         print(f"[Import Modified] {to_import_count} of {total} groups need importing, {skipped} up-to-date")
 
         if not groups_to_import:
-            return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0}
+            return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0,
+                    "still_differ": 0}
 
         # --- Import each modified group using cached data ---
-        # Dependency-first order: a rebuilt dependency gets fresh interface
-        # socket identifiers, so parents must be pulled AFTER their
-        # dependencies (with a SHARED interface map) or links into the
-        # dependency group nodes are lost or land on the wrong sockets.
         imported = 0
         errors = 0
         auto_linked = 0
@@ -1839,194 +2223,12 @@ class SyncManager:
         for uid, info, jp in groups_to_import:
             modified_json_paths.add(jp)
 
-        # Build the dependency graph over ALL tracked groups on the
-        # modified JSON paths (from the cached JSON data)
-        all_names: dict[str, tuple[str, dict, str]] = {}
-        for uid, ig in self.metadata.get("tracked_groups", {}).items():
-            jp = ig.get("json_path", "")
-            if jp in modified_json_paths:
-                all_names[ig.get("blend_name", "")] = (uid, ig, jp)
-
-        def _entry_for(name, jp):
-            data = json_data_cache.get(jp)
-            if not isinstance(data, dict):
-                return None
-            if data.get("type") == "GN_UNIFIED_PACKAGE":
-                return data.get("node_groups", {}).get(name)
-            if "nodes" in data:
-                return data
-            return None
-
-        all_graph: dict[str, set[str]] = {}
-        for name, (uid, ig, jp) in all_names.items():
-            entry = _entry_for(name, jp)
-            refs = set()
-            if entry is not None:
-                for node in entry.get("nodes", []):
-                    ref = node.get("node_tree_reference")
-                    if ref and ref != name and ref in all_names:
-                        refs.add(ref)
-            all_graph[name] = refs
-
-        # Reverse graph (dependency -> parents): rebuilding a group renumbers
-        # its interface, which BREAKS the links its parents have into it
-        # (Blender removes links into recreated interface sockets).  Every
-        # parent must therefore be rebuilt in the same pass, otherwise the
-        # pull damages the very groups it is supposed to leave untouched —
-        # and the next pull would re-break them again.
-        rev_graph: dict[str, set[str]] = {}
-        for name, refs in all_graph.items():
-            for ref in refs:
-                rev_graph.setdefault(ref, set()).add(name)
-
-        # JSON hashes per group (from cached data) for post-pull verification
-        json_group_hashes: dict[str, dict[str, str]] = {}
-        for jp in modified_json_paths:
-            data = json_data_cache.get(jp)
-            if not isinstance(data, dict):
-                continue
-            if data.get("type") == "GN_UNIFIED_PACKAGE":
-                json_group_hashes[jp] = {
-                    gname: canonical_hash_from_json_data(gd)
-                    for gname, gd in data.get("node_groups", {}).items()
-                }
-            elif "nodes" in data:
-                json_group_hashes[jp] = {
-                    data.get("name", ""): canonical_hash_from_json_data(data)
-                }
-
-        tracked_by_name: dict[str, tuple[str, dict, str]] = {}
-        for uid, ig in self.metadata.get("tracked_groups", {}).items():
-            tracked_by_name[ig.get("blend_name", "")] = (uid, ig, ig.get("json_path", ""))
-
         # Shared across ALL passes: maps every rebuilt group's JSON
         # interface identifiers to the identifiers of the tree that is
         # CURRENT in the .blend.
         group_interface_maps: dict = {}
-
-        def _run_pass(candidates: list[tuple[str, dict, str]]):
-            """Rebuild *candidates* plus the transitive closure of their
-            dependencies AND their parents, dependency-first, with the
-            shared interface maps.
-
-            Parents must be included: rebuilding a dependency renumbers its
-            interface, which removes the links its parents have into it —
-            the parents are rebuilt right after (dependency-first order) and
-            re-wire from the JSON, so nothing is lost.
-
-            Returns ``(rebuilt_names, affected_parents, local_imported,
-            local_errors)``.  The rebuilt trees are NOT re-stamped here:
-            the caller verifies each one against the JSON afterwards.
-            """
-            name_to_item: dict[str, tuple[str, dict, str]] = {}
-            for uid, info, jp in candidates:
-                name_to_item[info.get("blend_name", "")] = (uid, info, jp)
-
-            # Expand the candidates with the transitive closure of their
-            # dependencies AND their parents (bidirectional BFS).
-            included = set(name_to_item)
-            frontier = list(included)
-            while frontier:
-                name = frontier.pop()
-                for ref in all_graph.get(name, ()):
-                    if ref not in included:
-                        included.add(ref)
-                        name_to_item[ref] = all_names[ref]
-                        frontier.append(ref)
-                for ref in rev_graph.get(name, ()):
-                    if ref not in included:
-                        included.add(ref)
-                        name_to_item[ref] = all_names[ref]
-                        frontier.append(ref)
-
-            # Dependency graph restricted to the included set (for the order)
-            graph: dict[str, set[str]] = {
-                name: {r for r in all_graph.get(name, ()) if r in included}
-                for name in included
-            }
-
-            ordered = []
-            indeg = {name: len(deps) for name, deps in graph.items()}
-            ready = sorted(name for name, d in indeg.items() if d == 0)
-            while ready:
-                name = ready.pop(0)
-                ordered.append(name)
-                for other, deps in graph.items():
-                    if name in deps:
-                        deps.discard(name)
-                        indeg[other] -= 1
-                        if indeg[other] == 0:
-                            ready.append(other)
-                            ready.sort()
-            for name in graph:
-                if name not in ordered:
-                    ordered.append(name)
-
-            # Batch external-connection snapshot: ONE pass over all trees
-            # instead of one full-tree scan per imported group (the per-group
-            # scans made batch pulls O(N^2) and slower than a fresh import).
-            # Must cover the FULL rebuild set (divergent + dependency closure).
-            candidate_names = set(name_to_item)
-            ext_snapshot = self._save_external_connections_batch(candidate_names)
-            rebuilt_names: set[str] = set()
-            affected_parents: set[str] = set()
-            local_imported = 0
-            local_errors = 0
-            to_import_count = len(ordered)
-
-            for done, name in enumerate(ordered, 1):
-                uid, info, jp = name_to_item[name]
-                blend_name = info.get("blend_name", "")
-
-                print(f"[Import Modified] importing '{blend_name}' ({done}/{to_import_count})...")
-                if context and hasattr(context, 'workspace') and context.workspace:
-                    context.workspace.status_text_set(f"Import Modified: {done}/{to_import_count} — {blend_name}")
-
-                # Use cached JSON data instead of re-reading from disk
-                data = json_data_cache.get(jp)
-                if data is None:
-                    local_errors += 1
-                    continue
-
-                if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                    json_cache = data.get("node_groups", {})
-                    tree_data = json_cache.get(blend_name)
-                    if tree_data is None:
-                        tree_data = next(iter(json_cache.values()))
-                elif isinstance(data, dict) and "nodes" in data:
-                    json_cache = {blend_name: data}
-                    tree_data = data
-                else:
-                    local_errors += 1
-                    continue
-
-                if tree_data is None:
-                    local_errors += 1
-                    continue
-
-                # Use the fast internal import method (no disk reads, no cascade)
-                tracker = self._import_from_json_data(uid, tree_data, json_cache, blend_name, context,
-                                                      group_interface_maps, preserve_external=False)
-                rebuilt_names.add(blend_name)
-                if tracker.has_errors:
-                    local_errors += 1
-                else:
-                    local_imported += 1
-
-            # Restore external connections for NON-rebuilt parents only:
-            # rebuilt groups already got their links from the JSON (dependency-
-            # first order + shared interface maps), so restoring the old
-            # snapshot into them would clobber those links (Blender allows a
-            # single link per input socket).
-            for name, entries in ext_snapshot.items():
-                if not entries or name not in rebuilt_names:
-                    continue
-                filtered = [e for e in entries if e.get("parent_name") not in rebuilt_names]
-                if filtered:
-                    self._restore_external_connections(name, filtered)
-                    affected_parents.update(e.get("parent_name", "") for e in filtered)
-
-            return rebuilt_names, affected_parents, local_imported, local_errors
+        all_names, all_graph, rev_graph, json_group_hashes, tracked_by_name = \
+            self._build_pull_graphs(json_data_cache, modified_json_paths)
 
         # --- Run the pull. ---
         # The rebuild set covers every dependency AND every parent
@@ -2039,7 +2241,10 @@ class SyncManager:
         if candidates:
             pass_no = 1
             print(f"[Import Modified] pass {pass_no}: {len(candidates)} group(s) to import")
-            rebuilt_names, affected_parents, local_imported, local_errors = _run_pass(candidates)
+            rebuilt_names, affected_parents, local_imported, local_errors = self._run_pull_pass(
+                candidates, context, json_data_cache, all_graph, rev_graph,
+                all_names, tracked_by_name, group_interface_maps,
+            )
             rebuilt_all.update(rebuilt_names)
             imported += local_imported
             errors += local_errors
@@ -2077,75 +2282,25 @@ class SyncManager:
             if still_divergent:
                 print(f"[Import Modified] pass {pass_no}: {len(still_divergent)} group(s) still differ from the JSON")
 
-        # --- Post-processing: update hashes, cascade, auto-link ---
-        # Only the REBUILT groups need their baselines refreshed — skipping
-        # the others saves a full project pass.  Groups whose rebuild still
-        # differs from the JSON keep the DIVERGENT baseline (blend hash on
-        # both sides + mtime 0) so the divergence stays visible as
-        # "Changed in JSON" instead of being silently absorbed.
+        # --- Post-processing: update hashes (honest), auto-link ---
+        # Groups whose rebuild still differs from the JSON keep the
+        # DIVERGENT baseline (blend hash on both sides + mtime 0) so the
+        # divergence stays visible as "Changed in JSON" instead of being
+        # silently absorbed.
         print(f"[Import Modified] updating hashes for {len(modified_json_paths)} JSON file(s)...")
+        self._restamp_rebuilt(rebuilt_all, modified_json_paths, json_data_cache)
 
+        # Auto-link new groups for this JSON
         for jp in modified_json_paths:
-            json_path = resolve_json_path(jp, self._blend_dir())
-            if not json_path or not os.path.isfile(json_path):
-                continue
-
-            new_mtime = os.path.getmtime(json_path)
-
-            # Cascade update: compute JSON hashes from cached data,
-            # blend hashes from actual trees.
             data = json_data_cache.get(jp)
-            if data is None:
+            if not isinstance(data, dict) or data.get("type") != "GN_UNIFIED_PACKAGE":
                 continue
-
-            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                json_groups = data.get("node_groups", {})
-            elif isinstance(data, dict) and "nodes" in data:
-                json_groups = {data.get("name", ""): data}
-            else:
-                continue
-
-            for uid, ig in self.metadata.get("tracked_groups", {}).items():
-                if ig.get("json_path", "") != jp:
-                    continue
-                blend_name = ig.get("blend_name", "")
-                if blend_name not in rebuilt_all:
-                    continue
-                tree = find_tree_by_uuid(blend_name, uid)
-                if tree is None:
-                    continue
-
-                # JSON hash from cached data
-                dep_json_hash = canonical_hash_from_json_data(json_groups.get(blend_name, {}))
-                # Blend hash from actual tree
-                dep_blend_hash = canonical_hash_from_tree(tree)
-
-                if dep_blend_hash != dep_json_hash:
-                    # Rebuild did not reproduce the JSON content: keep the
-                    # divergence visible (blend hash as the baseline, mtime 0
-                    # disables the fast path so the JSON is compared).
-                    update_tracked_group(
-                        self.metadata, uid,
-                        last_blend_hash=dep_blend_hash,
-                        last_json_hash=dep_blend_hash,
-                        last_json_mtime=0.0,
-                    )
-                else:
-                    update_tracked_group(
-                        self.metadata, uid,
-                        last_blend_hash=dep_blend_hash,
-                        last_json_hash=dep_json_hash,
-                        last_json_mtime=new_mtime,
-                    )
-
-            # Auto-link new groups for this JSON
-            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                for group_name in data.get("node_groups", {}):
-                    tree = bpy.data.node_groups.get(group_name)
-                    if tree and not get_uuid_from_tree(tree):
-                        existing = find_uuid_for_tree(tree, self.metadata)
-                        if not existing:
-                            auto_linked += 1
+            for group_name in data.get("node_groups", {}):
+                tree = bpy.data.node_groups.get(group_name)
+                if tree and not get_uuid_from_tree(tree):
+                    existing = find_uuid_for_tree(tree, self.metadata)
+                    if not existing:
+                        auto_linked += 1
 
         # Invalidate status cache for all affected groups
         for jp in modified_json_paths:
@@ -2157,6 +2312,24 @@ class SyncManager:
         still_count = len(still_divergent)
         print(f"[Import Modified] done: {imported} imported, {skipped} skipped, {errors} errors, "
               f"{auto_linked} auto-linked, {still_count} still differ after pull")
+
+        # Crash guard: the rebuilds churn interfaces; verify the rebuilt
+        # trees did not accumulate dangling links, and flush the depsgraph
+        # so any pending interface propagation resolves INSIDE the script
+        # instead of during the first UI redraw after the operator returns.
+        rebuilt_trees = [t for n in rebuilt_all if (t := bpy.data.node_groups.get(n)) is not None]
+        corrupted = self._validate_links(rebuilt_trees)
+        if corrupted:
+            raise RuntimeError(
+                f"{len(corrupted)} rebuilt node tree(s) left dangling links "
+                f"(e.g. {corrupted[0]}). The .blend state is inconsistent — "
+                f"save and restart Blender, then pull again."
+            )
+        try:
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
+
         if context and hasattr(context, 'workspace') and context.workspace:
             context.workspace.status_text_set(
                 f"Import Modified: done ({imported} imported, {errors} errors, {still_count} still differ)"
