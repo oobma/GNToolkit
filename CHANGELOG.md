@@ -102,23 +102,50 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
-- **Canonical hash is now name-based and roundtrip-robust.** The hash
-  previously included interface/socket *identifiers*, which the import
-  roundtrip reorders (cosmetic), so every reimported group looked
-  changed: tracking an imported project against its own JSON reported
-  hundreds of false divergences and a full Pull equaled a fresh Import
-  Package. The canonical form now keys interface items and links by
-  socket **names** (identifiers dropped), drops volatile fields
-  (`width`, `select`, `socket_idname`, socket `bl_idname` subtypes,
-  `hide`, enum/menu `description`, interface panel `parent`,
-  `optional_label`/`menu_expanded`), and ignores `default_value` of
-  connected sockets (matched by unique identifier — socket names are
-  frequently shared, e.g. the three "Value" inputs of a Math node).
-  Real changes (defaults, nodes, links to different-named sockets) are
-  still detected; after a fresh import of the reference project, only
-  the groups whose links were actually swapped/lost by the import
-  (~178 of 439 — the documented importer fidelity issue) report as
-  divergent, and one Pull repairs them.
+- **Pull rebuilt the wrong-socket links and then hid the damage.** The
+  pull's rebuild set covered only the divergent groups plus their
+  *dependencies*; rebuilding a dependency renumbers its interface, which
+  removes the links its *parents* have into it (Blender drops links into
+  recreated interface sockets), so a pull could break more groups than it
+  repaired — and the unconditional baseline re-stamping then made the
+  damage invisible (a second pull found "nothing to do"). The pull now
+  rebuilds the transitive closure in **both directions** (dependencies
+  and parents), the rebuilt trees are **verified against the JSON**, and
+  any group the rebuild cannot reproduce stays visible as "Changed in
+  JSON" and is counted in the report ("N still differ after pull")
+  instead of being silently absorbed. On the reference project a single
+  pull now aligns all 439 groups byte-perfect (25,439/25,439 links, 0
+  errors, 0 residual divergence) — previously it left ~108 groups
+  divergent.
+- **Links into/out of dependency group nodes landed on wrong sockets
+  when the dependency was not rebuilt in the same pass.** The identifier
+  remap (`group_interface_maps`) is only available for rebuilt
+  dependencies; with the raw (stale) identifier, the socket lookup fell
+  back to a bare-id match that could hit a *different* socket after the
+  roundtrip — and `links.new` on an already-linked input silently
+  replaced the correct link, so links were lost without any error. When
+  the dependency has no registered map the lookup now matches by socket
+  name only (with the type hint), never by the stale identifier.
+- **Per-instance Group-node socket defaults lost on interfaces with
+  duplicated socket names.** `_reapply_group_node_defaults` resolved
+  sockets by name with a first-match, so with two same-named sockets
+  (e.g. two "Switch Target End") the JSON override was always written to
+  the first one; it now resolves through the dependency's identifier
+  map (unique) and only falls back to the name.
+- **Canonical hash normalization (HASH_VERSION 3).** `use_extra_user`
+  (fake user — a file-management flag, not content) and
+  `location_absolute` are excluded; the 2D vector socket subtypes
+  `NodeSocketVectorTranslation2D`/`NodeSocketVector2D` hash as one type
+  (the importer cannot create the Translation subtype via
+  `interface.new_socket`); datablock-reference defaults (fonts, objects)
+  and null defaults are dropped — they cannot round-trip (the .blend may
+  not contain the referenced datablock, and re-created ones get
+  different names). Existing baselines migrate automatically via the
+  auto-rebaseline mechanism.
+- **Font references by name now reuse the existing datablock**
+  (`vectorfont` resolves against `bpy.data.fonts` — previously the
+  collection lookup used a nonexistent `vectorfonts` name and the
+  assignment was skipped).
 - **Batch pull (Import Modified) and per-group Pull now rebuild the
   transitive dependency closure.** A rebuilt group wires its links
   against the freshly rebuilt interfaces of its dependencies (shared
@@ -132,6 +159,22 @@ has no node/socket Python API changes at all).
   "Tension" sockets of `SP - Blend Curve [Intern]`) — name-based
   restoration is ambiguous there and a handful of links cannot be
   reconnected (5 of 25,439 on the reference project, verified).
+- **Canonical hash is now name-based and roundtrip-robust.** The hash
+  previously included interface/socket *identifiers*, which the import
+  roundtrip reorders (cosmetic), so every reimported group looked
+  changed: tracking an imported project against its own JSON reported
+  hundreds of false divergences and a full Pull equaled a fresh Import
+  Package. The canonical form now keys interface items and links by
+  socket **names** (identifiers dropped), drops volatile fields
+  (`width`, `select`, `socket_idname`, socket `bl_idname` subtypes,
+  `hide`, enum/menu `description`, interface panel `parent`,
+  `optional_label`/`menu_expanded`), and ignores `default_value` of
+  connected sockets (matched by unique identifier — socket names are
+  frequently shared, e.g. the three "Value" inputs of a Math node).
+  Real changes (defaults, nodes, links to different-named sockets) are
+  still detected; the remaining importer fidelity noise is small (on the
+  reference project a fresh track reports only the genuinely affected
+  groups) and one Pull repairs it.
 - **Batch Import modal: restored the two-phase progress tick and finer
   chunks.** The modal set the new group's "0% · name" status and
   immediately entered the blocking first chunk, so the status bar kept
