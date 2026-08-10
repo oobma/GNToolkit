@@ -555,7 +555,9 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                         f"Pulled {result['imported']}, "
                         f"skipped {result['skipped']}, "
                         f"errors {result['errors']}, "
-                        f"auto-tracked {result['auto_linked']}")
+                        f"auto-tracked {result['auto_linked']}"
+                        + (f", {result.get('still_differ', 0)} still differ from JSON"
+                           if result.get('still_differ') else ""))
         except Exception as e:
             context.window_manager.progress_end()
             self.report({'ERROR'}, f"Pull failed: {e}")
