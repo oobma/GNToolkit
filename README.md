@@ -40,14 +40,20 @@ file is the RNA (working cache).
 ## Compatibility
 
 A port to **Blender 5.2 LTS** is planned. Known 5.2 API changes that affect
-this addon:
+this addon — see [docs/port-5.2.md](docs/port-5.2.md) for the full
+research (empirical measurements + official documentation + quantified
+impact + porting order):
 
 - Geometry Nodes modifier inputs/outputs moved from custom properties
   (`modifier["identifier"]`) to real RNA properties
   (`modifier.properties.inputs/outputs.<id>`), which will require a
   version-gated rewrite of the modifier export/import path.
-- The socket identifiers of the **Compare** and **Random Value** nodes
-  changed; the importer's name+type fallback already tolerates this.
+- The **Compare** and **Random Value** nodes only expose the sockets of
+  the active data type/mode (the 5.1 type-variant sockets `A_INT`,
+  `B_VEC3`, `Min_001`, … and the mode-gated `C`/`Angle` no longer
+  exist), which requires an identifier-mapping layer in the importer
+  and hash normalization; the importer's name+type fallback already
+  tolerates the rest.
 
 ## Installation
 
