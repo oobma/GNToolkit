@@ -232,6 +232,33 @@ class SyncManager:
             self._dirty = False
         return ok
 
+    def _relativize_json_paths(self) -> bool:
+        """Rewrite stored JSON paths to blend-relative (//) form.
+
+        Groups tracked before the .blend was first saved keep absolute
+        JSON paths (there was no blend directory to make them relative
+        to).  This is called on every save (save_post handler): once a
+        filepath exists, such paths are converted to relative form so
+        the project stays portable.  Paths outside the blend directory
+        or on another drive are left absolute (make_json_path_relative
+        guarantees this).  Returns True when any path changed.
+        """
+        blend_dir = self._blend_dir()
+        if not blend_dir:
+            return False
+        changed = False
+        for info in self.metadata.get("tracked_groups", {}).values():
+            jp = info.get("json_path", "")
+            if not jp or jp.startswith("//"):
+                continue
+            rel = make_json_path_relative(jp, blend_dir)
+            if rel != jp:
+                info["json_path"] = rel
+                changed = True
+        if changed:
+            self._dirty = True
+        return changed
+
     def _ensure_hash_version(self) -> None:
         """Silently re-stamp tracking baselines when the hash algorithm changed.
 

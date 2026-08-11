@@ -410,11 +410,10 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         if not bpy.data.filepath:
-            self.report({'WARNING'},
-                        "The .blend is not saved yet — tracking will be lost if you "
-                        "close without saving, and JSON paths will be stored as absolute "
-                        "paths. Save the file first (File → Save) for portable relative "
-                        "paths and an external .gntsync sidecar.")
+            self.report({'INFO'},
+                        "The .blend is not saved yet — tracking is kept in memory "
+                        "until you save. Save the file to persist the sidecar and "
+                        "relative JSON paths.")
 
         gn_groups = [ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY']
         if not gn_groups:
@@ -606,11 +605,10 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         from .hash_utils import canonical_hash_from_tree, canonical_hash_from_json_data
 
         if not bpy.data.filepath:
-            self.report({'WARNING'},
-                        "The .blend is not saved yet — tracking will be lost if you "
-                        "close without saving, and JSON paths will be stored as absolute "
-                        "paths. Save the file first (File → Save) for portable relative "
-                        "paths and an external .gntsync sidecar.")
+            self.report({'INFO'},
+                        "The .blend is not saved yet — tracking is kept in memory "
+                        "until you save. Save the file to persist the sidecar and "
+                        "relative JSON paths.")
 
         json_path = self.filepath
         if not os.path.isfile(json_path):

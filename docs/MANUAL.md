@@ -76,15 +76,14 @@ Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.1.x.
 **What happens if you track without saving first**
 
 Tracking still works: the metadata is kept in a text block inside the
-.blend, and the sidecar is created automatically on the first save. Two
-caveats — the track operators show a warning when the .blend is
-unsaved:
-
-- If you close Blender **without saving**, the tracking is lost.
-- The JSON paths are stored as **absolute paths** (not relative), so
-  the project is not portable if the files are moved together.
-
-Neither is fatal; saving before tracking avoids both.
+.blend, the JSON paths start absolute, and the sidecar does not exist
+yet. On the **first save** everything settles automatically: the sidecar
+is created, stored JSON paths are re-written to relative form when they
+live under the project directory (paths elsewhere or on another drive
+stay absolute by design), and the text block is saved with the file. The
+track operators show an informational message when the .blend is
+unsaved — the only real risk is closing Blender without saving, which
+discards the session (Blender asks for confirmation).
 
 ---
 

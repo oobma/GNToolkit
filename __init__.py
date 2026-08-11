@@ -49,6 +49,7 @@ def _on_load_post(scene):
 def _on_save_post(scene):
     """Save sync metadata when the .blend file is saved."""
     try:
+        sync_manager._relativize_json_paths()
         sync_manager.save()
     except Exception:
         pass
