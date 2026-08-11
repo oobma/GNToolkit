@@ -159,6 +159,15 @@ Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.1.x.
   pre-pull .blend and the statuses would no longer match — a false
   alarm, not a data problem.)
 
+> **Note (debugging only):** the batch Pull only rebuilds groups that
+> differ — after a clean pull, running it again finds nothing to do
+> (report "Pulled 0, skipped N, errors 0") and changes nothing. Running
+> it back-to-back is **not part of the normal workflow**; it is only a
+> sanity check that the sync is idempotent (useful after updating the
+> addon or when investigating odd behavior). If a second pull rebuilds
+> hundreds of groups or introduces new divergence, report it — that is
+> a regression.
+
 ---
 
 ## Step 8 — Verify the applied changes
@@ -176,24 +185,7 @@ Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.1.x.
 
 ---
 
-## Step 9 — Second batch Pull (idempotence)
-
-**What to do**
-
-1. Click **Pull from JSON** (batch) again.
-
-**What should happen**
-
-- The scan finds nothing to do and the operation is **fast** (seconds).
-- Report: *"Pulled 0, skipped N, errors 0"*.
-- Nothing is rebuilt, nothing regresses, status stays all Synced.
-
-> If the second pull rebuilds hundreds of groups or introduces new
-> divergence, stop and report it — that is a regression.
-
----
-
-## Step 10 — Per-group Pull
+## Step 9 — Per-group Pull
 
 **What to do**
 
@@ -208,10 +200,10 @@ Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.1.x.
 **What should happen**
 
 - The per-group pull uses the **same component-wide rebuild** as the
-  batch: it can take as long as the batch pull. This is by design —
-  safety over speed.
+   batch: it can take as long as the batch pull. This is by design —
+   safety over speed.
 - A group that already matches the JSON stays identical and the
-  project remains all Synced (0 errors, 0 warnings).
+   project remains all Synced (0 errors, 0 warnings).
 
 ---
 
