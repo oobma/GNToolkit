@@ -70,8 +70,21 @@ Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.1.x.
 
 - The file saves without errors.
 - A **sidecar** file `project.blend.gntsync` appears next to it.
-- Saving *before* tracking is required so that relative JSON paths
-  resolve against the file's directory.
+- Saving *before* tracking is **strongly recommended** so that relative
+  JSON paths resolve against the file's directory.
+
+**What happens if you track without saving first**
+
+Tracking still works: the metadata is kept in a text block inside the
+.blend, and the sidecar is created automatically on the first save. Two
+caveats — the track operators show a warning when the .blend is
+unsaved:
+
+- If you close Blender **without saving**, the tracking is lost.
+- The JSON paths are stored as **absolute paths** (not relative), so
+  the project is not portable if the files are moved together.
+
+Neither is fatal; saving before tracking avoids both.
 
 ---
 
