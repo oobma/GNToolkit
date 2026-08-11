@@ -74,6 +74,9 @@ this addon:
 
 ## Quick Start
 
+> For a step-by-step walkthrough with the expected behavior at every
+> step, see the [Usage Manual](docs/MANUAL.md).
+
 ### JSON package snapshots (no tracking)
 
 1. In the Node Editor sidebar → **GN Tools**, use:
