@@ -47,18 +47,28 @@ _SOCKET_SUBTYPE_MAP: dict[str, str] = {
     "NodeSocketFloatPercentage": "PERCENTAGE",
     "NodeSocketFloatTime": "TIME",
     "NodeSocketFloatTimeAbsolute": "TIME_ABSOLUTE",
+    "NodeSocketFloatFrequency": "FREQUENCY",
+    "NodeSocketFloatMass": "MASS",
+    "NodeSocketFloatPixel": "PIXEL",
+    "NodeSocketFloatColorTemperature": "COLOR_TEMPERATURE",
+    "NodeSocketFloatWavelength": "WAVELENGTH",
     "NodeSocketFloatTranslation": "TRANSLATION",
     # Int subtypes: Blender 5.1 NodeTreeInterfaceSocketInt only supports
     # NONE and FACTOR.  PERCENTAGE is NOT a valid Int subtype — setting it
     # causes slow C-level warnings for every socket on every import.
     "NodeSocketIntPercentage": None,
     "NodeSocketIntFactor": "FACTOR",
+    "NodeSocketIntPixel": "PIXEL",
     "NodeSocketVectorAcceleration": "ACCELERATION",
     "NodeSocketVectorDirection": "DIRECTION",
     "NodeSocketVectorEuler": "EULER",
     "NodeSocketVectorXYZ": "XYZ",
     "NodeSocketVectorTranslation": "TRANSLATION",
     "NodeSocketVectorVelocity": "VELOCITY",
+    "NodeSocketStringFilePath": "FILE_PATH",
+    # Not settable via subtype on any engine — never attempt
+    "NodeSocketFloatUnsigned": None,
+    "NodeSocketIntUnsigned": None,
 }
 
 
@@ -85,14 +95,11 @@ def _apply_socket_subtype(interface_item, raw_socket_type: str,
                 pass
         return
 
-    # Validate that the subtype value is accepted by this socket type's
-    # enum property to avoid slow C-level RNA warnings.
-    subtype_prop = interface_item.bl_rna.properties.get('subtype')
-    if subtype_prop is not None:
-        valid_ids = {e.identifier for e in subtype_prop.enum_items}
-        if subtype not in valid_ids:
-            return
-
+    # NOTE: do NOT pre-validate against bl_rna.properties['subtype']
+    # .enum_items — Blender 5.2 reports only ["DEFAULT"] there even though
+    # the full subtype enum is accepted by setattr (the enum is validated
+    # per socket type in C).  Pre-validating against it silently dropped
+    # every subtype on 5.2.
     try:
         interface_item.subtype = subtype
     except (TypeError, AttributeError, ValueError, RuntimeError) as exc:

@@ -329,14 +329,15 @@ def serialize_node_tree(tree):
                     continue
                 # Reading 'subtype' on an Int interface socket with an
                 # invalid value triggers slow C-level RNA warnings.
-                # Use enum validation instead of getattr to avoid this.
+                # NOTE: do not validate against prop.enum_items — on
+                # Blender 5.2 it reports only ["DEFAULT"] even though the
+                # full subtype enum is accepted by the setter.
                 if prop.identifier == 'subtype' and prop.type == 'ENUM':
                     try:
-                        valid_ids = {e.identifier for e in prop.enum_items}
                         current = item.get(prop.identifier)
-                        if current in valid_ids and current != 'NONE':
+                        if current and current != 'NONE':
                             i_data["properties"][prop.identifier] = current
-                    except:
+                    except Exception:
                         pass
                     continue
                 try:
@@ -359,15 +360,13 @@ def serialize_node_tree(tree):
                 for opt_prop in OPTIONAL_SOCKET_PROPS:
                     if opt_prop == 'subtype':
                         # Reading subtype via getattr on Int sockets with
-                        # invalid values triggers RNA warnings.  Use
-                        # enum validation instead.
+                        # invalid values triggers RNA warnings.  Do NOT
+                        # validate against rna_prop.enum_items — Blender
+                        # 5.2 reports only ["DEFAULT"] there.
                         try:
-                            rna_prop = item.bl_rna.properties.get('subtype')
-                            if rna_prop and rna_prop.type == 'ENUM':
-                                valid_ids = {e.identifier for e in rna_prop.enum_items}
-                                current = item.get('subtype')
-                                if current in valid_ids and current != 'NONE':
-                                    s_data['subtype'] = current
+                            current = item.get('subtype')
+                            if current and current != 'NONE':
+                                s_data['subtype'] = current
                         except:
                             pass
                         continue
