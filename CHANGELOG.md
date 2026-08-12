@@ -57,7 +57,7 @@ has no node/socket Python API changes at all).
 
 ### Changed
 
-- **Canonical hash v4 — version-independent fingerprints.** A project
+- **Canonical hash v5 — version-independent fingerprints.** A project
   tracked in 5.1 and opened in 5.2 (or vice versa) converges without
   noise:
   - `node_socket_is_active()` (shared with the importer) keeps only the
@@ -84,6 +84,15 @@ has no node/socket Python API changes at all).
 
 ### Fixed
 
+- **Frame parenting was lost on every import/rebuild**: the serializer
+  never wrote the node `parent` (frame) relationship, so children were
+  recreated at the right positions but unparented. Nodes now serialize
+  their parent frame name, the importer re-parents children in a
+  deferred pass (the frame may appear after its children in the package;
+  Blender converts the absolute location to the frame's local space, so
+  the visual position is preserved), and the canonical hash includes the
+  relationship (HASH_VERSION 5 — older packages without the field hash
+  the same as an explicit None, so old JSONs keep converging).
 - **~310 "socket not found" warnings** (C/Angle/Epsilon) during pulls on
   5.2: the defaults pass now skips inactive socket records.
 - **Importing 5.2-exported packages on 5.1**: Compare/Random Value

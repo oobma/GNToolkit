@@ -182,6 +182,10 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     for node_data in data.get("nodes", []):
         nd = dict(node_data)
         node_name = nd.get("name", "")
+        # Parent (frame) relationship: older packages predate the field,
+        # so a missing key and an explicit None must hash the same.
+        if not nd.get("parent"):
+            nd.pop("parent", None)
         # Remove volatile properties from hash computation.  The bl_*
         # UI-template limits (bl_width_max, bl_height_max, ...) differ
         # between Blender versions (e.g. 30.0 vs FLT_MAX) and are not

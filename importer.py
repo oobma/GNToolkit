@@ -2182,6 +2182,33 @@ def _import_node_tree_gen(
     if zone_session_active:
         end_zone_session()
 
+    # --- Step 1.5: Frame parenting ---
+    # Deferred until every node exists: the parent frame may be
+    # serialized AFTER its children.  Parenting converts the child's
+    # absolute location to the frame's local space, so the visual
+    # position is preserved.
+    for node_data in data["nodes"]:
+        pname = node_data.get("parent")
+        if not pname:
+            continue
+        child = node_map.get(node_data.get("name"))
+        parent_node = node_map.get(pname)
+        if child is not None and parent_node is not None:
+            try:
+                child.parent = parent_node
+            except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+                tracker.record(
+                    f"Node '{node_data.get('name')}': could not set parent "
+                    f"'{pname}': {exc}",
+                    level="DEBUG",
+                )
+        elif pname not in node_map:
+            tracker.record(
+                f"Node '{node_data.get('name')}': parent frame '{pname}' "
+                f"not found in the package",
+                level="DEBUG",
+            )
+
     # --- Step 2: Default values ---
     yield (0.45, "defaults")
     for _prog in _apply_default_values_gen(data, node_map, zone_socket_remap, tracker, holder):

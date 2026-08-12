@@ -162,6 +162,7 @@ def serialize_node(node, skip_output_defaults: bool = False):
         "type": node.bl_idname,
         "label": node.label,
         "location": list(node.location),
+        "parent": node.parent.name if node.parent else None,
         "inputs": [],
         "outputs": [],
         "properties": {},
