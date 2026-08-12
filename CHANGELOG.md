@@ -47,7 +47,7 @@ zone creation or the socket pairing API (5.2 only changed Geometry Nodes
 modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
 has no node/socket Python API changes at all).
 
-## Unreleased
+## [0.2.2] - 2026-08-12
 
 ### Added
 

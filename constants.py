@@ -6,7 +6,7 @@ gn_toolkit.constants — All constants and immutable sets for the addon.
 # Canonical addon version — single source of truth.
 # Reflected in bl_info (__init__.py), exported JSON files, the sidecar
 # metadata file, and UI labels.
-ADDON_VERSION = "0.2.1"
+ADDON_VERSION = "0.2.2"
 
 # Marker written to unified JSON packages. Written for user inspection
 # only; importers never read it.
@@ -45,7 +45,7 @@ NODE_PROPS_TO_SKIP: frozenset[str] = frozenset({
     'name', 'label', 'location', 'width', 'type', 'inputs', 'outputs', 'node_tree',
     'repeat_items', 'simulation_items', 'state_items', 'input_items', 'main_items',
     'generation_items', 'capture_items', 'active_item', 'parent', 'menu_items',
-    'enum_items', 'index_switch_items',
+    'enum_items', 'index_switch_items', 'list_items',
     # Read-only / non-serializable properties
     'asset_data', 'is_preview',
 })
@@ -114,10 +114,18 @@ INTERFACE_SOCKET_TYPE_REMAP: dict[str, str] = {
     "NodeSocketFloatPercentage": "NodeSocketFloat",
     "NodeSocketFloatTime": "NodeSocketFloat",
     "NodeSocketFloatTimeAbsolute": "NodeSocketFloat",
+    "NodeSocketFloatFrequency": "NodeSocketFloat",
+    "NodeSocketFloatMass": "NodeSocketFloat",
+    "NodeSocketFloatPixel": "NodeSocketFloat",
+    "NodeSocketFloatColorTemperature": "NodeSocketFloat",
+    "NodeSocketFloatWavelength": "NodeSocketFloat",
     "NodeSocketFloatTranslation": "NodeSocketFloat",
     # Int subtypes → create as NodeSocketInt, then set subtype
     "NodeSocketIntPercentage": "NodeSocketInt",
     "NodeSocketIntFactor": "NodeSocketInt",
+    "NodeSocketIntPixel": "NodeSocketInt",
+    # String subtypes → create as NodeSocketString, then set subtype
+    "NodeSocketStringFilePath": "NodeSocketString",
     # Vector subtypes → create as NodeSocketVector, then set subtype
     "NodeSocketVectorAcceleration": "NodeSocketVector",
     "NodeSocketVectorDirection": "NodeSocketVector",

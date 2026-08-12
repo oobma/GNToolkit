@@ -8,7 +8,7 @@ layer converges cleanly. Each step describes **what to do** and **what
 should happen**; do not move to the next step until the current one
 completes as described.
 
-Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
+Applies to GNToolkit 0.2.2 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
 5.2.0; the same code and the same workflow run on both).
 
 ---
@@ -35,7 +35,7 @@ Applies to GNToolkit 0.2.1 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
 
 **What should happen**
 
-- The panel shows **GNToolkit 0.2.1**.
+- The panel shows **GNToolkit 0.2.2**.
 - No addon import errors appear in the System Console
   (Window → Toggle System Console).
 

@@ -58,7 +58,7 @@ Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0, full suite
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.2.1.zip`).
+   `GNToolkit-v0.2.2.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    downloaded zip (the zip contains the `ADNRNAGNTOOLKIT/` addon folder).
 3. Enable **"GNToolkit"** in the list.
@@ -156,7 +156,7 @@ Exports are **unified packages**:
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "GN_UNIFIED_PACKAGE",
   "export_method": "GN_TOOLKIT",
   "node_groups": {
