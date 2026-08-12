@@ -23,6 +23,15 @@ def clean_value(val):
     """Convert a Python/Blender value into a JSON-safe representation."""
     if val is None:
         return None
+    # ID data-blocks MUST be handled before the container checks below:
+    # e.g. a Collection data-block is iterable and its class name contains
+    # "collection", which would otherwise serialize it as an empty dict.
+    if isinstance(val, bpy.types.ID):
+        return {
+            "type": val.__class__.__name__,
+            "name": val.name,
+            "library": val.library.name if val.library else None,
+        }
     val_type = type(val).__name__.lower()
     if "array" in val_type or "collection" in val_type or val_type in ("idpropertyarray", "idpropertygroup"):
         if hasattr(val, "items") and callable(getattr(val, "items")):
@@ -47,13 +56,6 @@ def clean_value(val):
 
     if hasattr(val, '__iter__') and not isinstance(val, str):
         return [clean_value(v) for v in val]
-
-    if isinstance(val, bpy.types.ID):
-        return {
-            "type": val.__class__.__name__,
-            "name": val.name,
-            "library": val.library.name if val.library else None,
-        }
 
     return str(val)
 
