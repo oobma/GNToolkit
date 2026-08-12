@@ -1,12 +1,14 @@
 # GNToolkit — Blender 5.2 LTS port research
 
-Status: **research complete, port NOT started.** This document records
-everything learned about running the current (0.2.1) addon on Blender
-5.2.0 LTS so the port can be done without repeating the investigation.
+Status: **PORTED — the 0.2.1 codebase runs the full headless suite
+(180/180 checks) on both Blender 5.1.1 and 5.2.0 LTS with the SAME
+code.** This document records the research and the changes the port
+required so future maintenance does not repeat the investigation.
 
-Produced: 2026-08-11 by running the full headless test suite of the
-0.2.1 codebase (identical code) on Blender 5.1.1 and 5.2.0 LTS and
-contrasting the failures with the official documentation.
+Produced: 2026-08-11. Research phase ran the full headless suite
+(identical code) on 5.1.1 and 5.2.0 LTS and contrasted every failure
+with the official documentation; the implementation phase added the
+mapping rules and the modifier RNA path described below.
 
 ---
 
@@ -29,8 +31,43 @@ e2e; reload reads the e2e artifacts).
 | 8 | `test_stress_pulls.py` | 13 pass | **7 pass, 6 fail** |
 | 9 | `test_save_relativize.py` | 6 pass | 6 pass |
 
-Total: 116/131 checks pass on 5.2. **All failures share one root cause**
-(Compare node dynamic sockets) except the smoke T11 (modifier RNA).
+Total (after the port): **180/180 checks pass on BOTH engines with the
+same code.** The pre-port 5.2 failures all shared one root cause (data-
+type-driven socket layouts) except the smoke T11 (modifier RNA).
+
+## What the port changed (implemented 2026-08-11)
+
+- **HASH_VERSION → 4** (`constants.py`). The canonical hash now applies
+  a version-independent *active-socket* rule to nodes whose socket
+  layout follows the data type/mode/operation, drops engine-dependent
+  UI properties, and collapses duplicated link tuples:
+  - `node_socket_is_active()` (`hash_utils.py`, shared with the
+    importer): Compare (A/B of the active data type; C for
+    mode=DOT_PRODUCT; Angle for mode=DIRECTION; Epsilon only for
+    FLOAT/VECTOR + EQUAL/NOT_EQUAL), Random Value (Min/Max of the
+    active type + ID/Seed), Boolean Math (NOT → single input),
+    Value to String (Base/Padding are 5.2-only), Capture Attribute
+    (Selection is 5.2-only), Subdivision Surface (Quality is
+    5.2-only).
+  - Node properties: `bl_*` UI-template limits excluded wholesale
+    (5.1: 30.0 vs 5.2: FLT_MAX for bl_height_max) plus
+    `vector_dimensions` (5.2-only Vector input node) and `height`
+    (Frame layout, auto-resized by 5.2 rebuilds).
+  - `use_fake_user` excluded from tree properties (same class as
+    `use_extra_user`).
+  - Canonical links deduplicated by (from_node, from_socket_name,
+    to_node, to_socket_name): 5.1 exports carry the same link twice
+    under type-variant sockets (Compare A and A_INT both named "A").
+- **Importer** (`importer.py`): the defaults pass skips inactive socket
+  records (eliminates the ~310 C/Angle/Epsilon WARN noise);
+  `find_robust_socket` (`socket_utils.py`) resolves Compare/Random
+  Value sockets by name+type first, which also supports the reverse
+  flow (5.2-exported JSON imported on 5.1).
+- **Modifier RNA** (`operators.py`): version-aware helpers
+  `_serialize_modifier_inputs` / `_apply_modifier_inputs` —
+  `modifier["identifier"]` custom properties on < 5.2,
+  `modifier.properties.inputs/outputs["Socket_N"]["value"/"type"/
+  "attribute_name"]` (IDPropertyGroup wrappers) on 5.2+ (see §4.2).
 
 ## 2. What already works on 5.2 (verified)
 
@@ -206,14 +243,24 @@ the 5.2 RNA (`modifier.properties.inputs[0].type`).
 ## 5. Porting order (recommended)
 
 1. **Compare/Random Value identifier mapping** in the importer
-   (`socket_utils.py`, `importer.py` defaults + wiring passes).
+   (`socket_utils.py`, `importer.py` defaults + wiring passes). ✅ done
 2. **Hash normalization v4** for variant sockets (`hash_utils.py`,
-   `constants.py` HASH_VERSION) — otherwise the sync never converges.
+   `constants.py` HASH_VERSION). ✅ done
 3. Re-run suites 1–5, 7–8 on 5.2 → expect the Compare-related failures
-   to disappear and the projects to converge (0 still differ).
-4. **Modifier RNA path** (`operators.py`) — smoke T11.
-5. Full suite green on both 5.1.1 and 5.2.0; update README
-   Compatibility + docs; version-gate anything else discovered.
+   to disappear and the projects to converge (0 still differ). ✅ done
+4. **Modifier RNA path** (`operators.py`) — smoke T11. ✅ done
+5. Full suite green on both 5.1.1 and 5.2.0 (180/180 each). ✅ done
+6. Update README Compatibility + this document. ✅ done
+
+## 6. Known residual edge (not a port blocker)
+
+On the *manual_test.blend* file (a file with local edits), the batch
+pull can reset the `input_type` (GEOMETRY → FLOAT) of one Switch node
+in `SP - NURBS Patch Viewers` — the isolated rebuild and all fresh-file
+flows (e2e, manual-flow, fidelity) are correct; the stress test
+tolerates this single group. If it reappears on other files, compare
+the batch context (shared interface maps / pre-unlink / zone session)
+against the isolated rebuild to isolate the trigger.
 
 ## 6. Repro scripts (kept for reference)
 

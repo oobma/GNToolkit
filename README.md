@@ -39,21 +39,18 @@ file is the RNA (working cache).
 
 ## Compatibility
 
-A port to **Blender 5.2 LTS** is planned. Known 5.2 API changes that affect
-this addon — see [docs/port-5.2.md](docs/port-5.2.md) for the full
-research (empirical measurements + official documentation + quantified
-impact + porting order):
+Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0, full suite
+180/180 checks on each). The 5.2 port details are recorded in
+[docs/port-5.2.md](docs/port-5.2.md). What the port required:
 
-- Geometry Nodes modifier inputs/outputs moved from custom properties
-  (`modifier["identifier"]`) to real RNA properties
-  (`modifier.properties.inputs/outputs.<id>`), which will require a
-  version-gated rewrite of the modifier export/import path.
-- The **Compare** and **Random Value** nodes only expose the sockets of
-  the active data type/mode (the 5.1 type-variant sockets `A_INT`,
-  `B_VEC3`, `Min_001`, … and the mode-gated `C`/`Angle` no longer
-  exist), which requires an identifier-mapping layer in the importer
-  and hash normalization; the importer's name+type fallback already
-  tolerates the rest.
+- Geometry Nodes modifier inputs/outputs: version-gated between the
+  legacy custom properties (`modifier["identifier"]`) and the 5.2 RNA
+  path (`modifier.properties.inputs/outputs.<id>`).
+- Data-type-driven node sockets (Compare, Random Value, Boolean Math
+  NOT, Capture Attribute, Value to String, Subdivision Surface): the
+  importer and the canonical hash share an *active-socket* rule so 5.1
+  and 5.2 produce identical fingerprints (HASH_VERSION 4) and projects
+  track across versions without noise.
 
 ## Installation
 

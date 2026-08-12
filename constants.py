@@ -176,6 +176,9 @@ HASH_EXCLUDE_NODE_PROPS: frozenset[str] = frozenset({
     'location',
     'location_absolute',
     'width',
+    # Frame height: layout-only and auto-resized by Blender during
+    # rebuilds (5.2 resizes differently), so it cannot round-trip.
+    'height',
     'select',
     # Derived from the node's actual sockets; not restored by the roundtrip
     'socket_idname',
@@ -199,12 +202,13 @@ HASH_EXCLUDE_INTERFACE_PROPS: frozenset[str] = frozenset({
 })
 
 # Node-tree-level properties to exclude from canonical hash computation.
-# use_extra_user (fake user) is a file-management flag that the roundtrip
-# does not control (Blender may set it on referenced trees during
-# operations); it is not content.
+# use_extra_user / use_fake_user (fake user) are file-management flags that
+# the roundtrip does not control (Blender may set them on referenced trees
+# during operations); they are not content.
 HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
     'annotation',
     'use_extra_user',
+    'use_fake_user',
 })
 
 # Version of the canonical hash algorithm. Bump it when the hash
@@ -212,7 +216,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 3
+HASH_VERSION: int = 4
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

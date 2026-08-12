@@ -24,6 +24,103 @@ from .socket_utils import get_tree_dependencies
 from .sync_manager import SyncManager
 
 
+def _modifier_uses_rna_inputs(mod) -> bool:
+    """True when the NODES modifier stores its inputs as RNA (Blender 5.2+)."""
+    return hasattr(mod, "properties") and hasattr(mod.properties, "inputs")
+
+
+def _modifier_input_is_attribute(raw_type) -> bool:
+    """Interpret a 5.2 modifier input ``type`` value (string or enum index).
+
+    A fresh input reads back the enum index of its default (VALUE); a
+    written value round-trips as the string.
+    """
+    if isinstance(raw_type, str):
+        return raw_type == "ATTRIBUTE"
+    return raw_type != 1
+
+
+def _iter_modifier_sockets(collection):
+    """Yield the socket subgroups of a 5.2 modifier inputs/outputs wrapper.
+
+    ``dir()`` may list identifiers that the ``[]`` accessor refuses to
+    resolve; every entry is resolved defensively and bad ones skipped.
+    """
+    for attr in dir(collection):
+        if not attr.startswith("Socket"):
+            continue
+        try:
+            item = collection[attr]
+        except (KeyError, TypeError):
+            continue
+        if item is not None:
+            yield attr, item
+
+
+def _serialize_modifier_inputs(mod) -> dict:
+    """Export a NODES modifier's inputs/outputs in the package key format.
+
+    Keys mirror the legacy ID-property naming (``Socket_8``,
+    ``Socket_8_use_attribute``, ``Socket_8_attribute_name``) so packages
+    round-trip identically on every engine.
+    """
+    if _modifier_uses_rna_inputs(mod):
+        data = {}
+        props = mod.properties
+        for attr, item in _iter_modifier_sockets(props.inputs):
+            try:
+                raw_val = item["value"]
+            except (KeyError, TypeError):
+                continue  # non-value sockets (Geometry, Menu, ...) have no value
+            data[attr] = clean_value(raw_val)
+            try:
+                data[attr + "_use_attribute"] = _modifier_input_is_attribute(item["type"])
+            except (KeyError, TypeError):
+                data[attr + "_use_attribute"] = False
+            try:
+                data[attr + "_attribute_name"] = item["attribute_name"]
+            except (KeyError, TypeError):
+                data[attr + "_attribute_name"] = ""
+        for attr, item in _iter_modifier_sockets(props.outputs):
+            try:
+                data[attr + "_attribute_name"] = item["attribute_name"]
+            except (KeyError, TypeError):
+                pass
+        return data
+    return {k: clean_value(v) for k, v in dict(mod).items()}
+
+
+def _apply_modifier_inputs(mod, inputs: dict) -> None:
+    """Apply a modifier's serialized inputs (legacy or RNA path)."""
+    if not _modifier_uses_rna_inputs(mod):
+        for k, v in inputs.items():
+            try:
+                mod[k] = unclean_value(v)
+            except (TypeError, AttributeError, ValueError, RuntimeError):
+                pass
+        return
+    props = mod.properties
+    input_ids = {attr for attr, _ in _iter_modifier_sockets(props.inputs)}
+    output_ids = {attr for attr, _ in _iter_modifier_sockets(props.outputs)}
+    for k, v in inputs.items():
+        try:
+            if k.endswith("_use_attribute"):
+                base = k[:-len("_use_attribute")]
+                if base in input_ids:
+                    props.inputs[base]["type"] = "ATTRIBUTE" if v else "VALUE"
+            elif k.endswith("_attribute_name"):
+                base = k[:-len("_attribute_name")]
+                if base in input_ids:
+                    props.inputs[base]["attribute_name"] = v
+                elif base in output_ids:
+                    props.outputs[base]["attribute_name"] = v
+            else:
+                if k in input_ids:
+                    props.inputs[k]["value"] = unclean_value(v)
+        except (TypeError, AttributeError, ValueError, RuntimeError, KeyError):
+            pass
+
+
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_batch_json"
     bl_label = "Export JSON Package"
@@ -73,7 +170,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "object": obj.name,
                                 "modifier_name": mod.name,
                                 "node_group": mod.node_group.name if mod.node_group else None,
-                                "inputs": {k: clean_value(v) for k, v in dict(mod).items()},
+                                "inputs": _serialize_modifier_inputs(mod),
                             }
                             safe_name = "".join(c if c.isalnum() or c in (' ', '_') else '_' for c in f"{obj.name}_{mod.name}")
                             with open(os.path.join(mod_dir, f"{safe_name}.json"), 'w', encoding='utf-8') as f:
@@ -99,7 +196,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "object": obj.name,
                                 "modifier_name": mod.name,
                                 "node_group": mod.node_group.name if mod.node_group else None,
-                                "inputs": {k: clean_value(v) for k, v in dict(mod).items()},
+                                "inputs": _serialize_modifier_inputs(mod),
                             })
                 with open(self.filepath, 'w', encoding='utf-8') as f:
                     json.dump(master_data, f, **dump_args)
@@ -169,7 +266,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
                         "object": obj.name,
                         "modifier_name": mod.name,
                         "node_group": mod.node_group.name,
-                        "inputs": {k: clean_value(v) for k, v in dict(mod).items()},
+                        "inputs": _serialize_modifier_inputs(mod),
                     })
 
         try:
@@ -332,11 +429,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                     ng = bpy.data.node_groups.get(m["node_group"])
                     if ng:
                         mod.node_group = ng
-                for k, v in m.get("inputs", {}).items():
-                    try:
-                        mod[k] = unclean_value(v)
-                    except (TypeError, AttributeError, ValueError, RuntimeError):
-                        pass
+                _apply_modifier_inputs(mod, m.get("inputs", {}))
 
     def modal(self, context, event):
         if event.type == 'ESC':

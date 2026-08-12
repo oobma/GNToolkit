@@ -108,11 +108,20 @@ def attempt_create_item(coll, raw_type: str, name: str) -> bool:
 # Robust socket search
 # ---------------------------------------------------------------------------
 
+from .hash_utils import node_socket_is_active  # noqa: E402  (pure rule, shared with the canonical hash)
+
+
 def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hint=None, name_only=False):
     """Search for a socket safely, evading identifier collisions.
 
     For volatile nodes (``dynamic_hint is True``), Blender recycles
     identifiers; this function trusts name + type over the identifier.
+
+    For the Compare and Random Value nodes the socket layout follows the
+    active data type: the 5.1 exports reference the type variants by
+    identifier (``A_INT``...), the 5.2 nodes only carry the active-type
+    sockets under the base identifier (``A``).  A name+type match is
+    therefore tried first — it resolves both directions across versions.
 
     When ``name_only`` is True the identifier is ignored entirely: used
     for links into/out of dependency group nodes whose interface was NOT
@@ -120,6 +129,13 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
     match a DIFFERENT socket after the roundtrip and silently rewire the
     link (matching by the bare id is worse than matching by name).
     """
+    # Data-type-driven nodes: resolve by name+type first.
+    type_first = node.bl_idname in ("FunctionNodeCompare", "FunctionNodeRandomValue")
+    if type_first and expected_type and not name_only:
+        s = next((x for x in sockets if x.name == sname and x.type == expected_type), None)
+        if s:
+            return s
+
     # 1. Exact match: identifier + name
     if not name_only:
         s = next((x for x in sockets if x.identifier == sid and x.name == sname), None)

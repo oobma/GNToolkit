@@ -31,6 +31,64 @@ def _is_datablock_ref(value) -> bool:
     return value is None or (isinstance(value, dict) and "name" in value)
 
 
+# data_type property -> socket type of the ACTIVE input for nodes whose
+# socket layout is data-type-driven (Compare, Random Value).
+_SOCKET_ACTIVE_TYPES = {
+    "BOOLEAN": "BOOLEAN",
+    "INT": "INT",
+    "FLOAT": "VALUE",
+    "VECTOR": "VECTOR",
+    "COLOR": "RGBA",
+    "STRING": "STRING",
+}
+
+
+def node_socket_is_active(bl_idname: str, props: dict, sname: str, stype: str, sid: str = "") -> bool:
+    """True when a socket record belongs to the node's ACTIVE configuration.
+
+    Blender 5.2 only exposes the sockets of the active data type (plus
+    mode/operation-gated sockets) on several nodes, while 5.1 exports
+    contain every variant (A_INT/A_VEC3/..., Min/Min_001/...).  The
+    canonical hash and the importer apply this same rule on BOTH engines
+    so fingerprints stay version-independent.
+    """
+    if bl_idname == "FunctionNodeCompare":
+        want = _SOCKET_ACTIVE_TYPES.get(props.get("data_type"))
+        if sname in ("A", "B"):
+            return stype == want
+        if sname == "C":
+            return props.get("mode") == "DOT_PRODUCT"
+        if sname == "Angle":
+            return props.get("mode") == "DIRECTION"
+        if sname == "Epsilon":
+            return (props.get("data_type") in ("FLOAT", "VECTOR")
+                    and props.get("operation") in ("EQUAL", "NOT_EQUAL"))
+        return True
+    if bl_idname == "FunctionNodeRandomValue":
+        want = _SOCKET_ACTIVE_TYPES.get(props.get("data_type"))
+        if sname in ("Min", "Max"):
+            return stype == want
+        if sname in ("ID", "Seed"):
+            return True
+        # Probability and the type variants are 5.1-only
+        return False
+    if bl_idname == "FunctionNodeBooleanMath":
+        # The NOT operation has a single input; 5.1 exports two records.
+        if props.get("operation") == "NOT":
+            return sid != "Boolean_001"
+        return True
+    if bl_idname == "FunctionNodeValueToString":
+        # Base and Padding inputs were added in 5.2.
+        return sname not in ("Base", "Padding")
+    if bl_idname == "GeometryNodeCaptureAttribute":
+        # The Selection input was added in 5.2.
+        return sname != "Selection"
+    if bl_idname == "GeometryNodeSubdivisionSurface":
+        # The Quality input was added in 5.2.
+        return sname != "Quality"
+    return True
+
+
 # The importer creates 2D vector interface sockets as NodeSocketVector2D
 # (NodeSocketVectorTranslation2D is not accepted by interface.new_socket);
 # the two types are functionally identical and must hash the same.
@@ -124,14 +182,24 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     for node_data in data.get("nodes", []):
         nd = dict(node_data)
         node_name = nd.get("name", "")
-        # Remove volatile properties from hash computation
+        # Remove volatile properties from hash computation.  The bl_*
+        # UI-template limits (bl_width_max, bl_height_max, ...) differ
+        # between Blender versions (e.g. 30.0 vs FLT_MAX) and are not
+        # content, so they are excluded wholesale.  vector_dimensions
+        # (Vector input node) was added in 5.2 and cannot exist in 5.1
+        # exports.
         if "properties" in nd and isinstance(nd["properties"], dict):
             nd["properties"] = {k: v for k, v in nd["properties"].items()
-                                if k not in HASH_EXCLUDE_NODE_PROPS}
+                                if k not in HASH_EXCLUDE_NODE_PROPS
+                                and not k.startswith("bl_")
+                                and k != "vector_dimensions"}
             nd["properties"] = dict(sorted(nd["properties"].items()))
         # Node sockets: canonical form is by NAME. Socket identifiers are
         # reordered by the roundtrip (like interface identifiers), so
         # sorting by identifier yields different orders per side.
+        node_bl_idname = nd.get("type", "")
+        node_props = nd.get("properties", {}) if isinstance(nd.get("properties"), dict) else {}
+
         def _clean_node_sockets(lst, connected_set):
             cleaned = []
             for s in lst:
@@ -141,6 +209,14 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                     sd.pop("default_value", None)
                 if "default_value" in sd and _is_datablock_ref(sd.get("default_value")):
                     sd.pop("default_value", None)
+                # Compare / Random Value: only the active-type sockets
+                # (plus mode/operation-gated ones) are real; the 5.1
+                # exports carry every type variant, the 5.2 nodes only the
+                # active ones — drop the rest so both sides hash equal.
+                if not node_socket_is_active(node_bl_idname, node_props,
+                                             sd.get("name", ""), sd.get("type", ""),
+                                             sd.get("identifier", "")):
+                    continue
                 for k in HASH_EXCLUDE_SOCKET_PROPS:
                     sd.pop(k, None)
                 cleaned.append(sd)
@@ -168,14 +244,23 @@ def canonicalize_node_tree_data(data: dict) -> dict:
 
     # Links: canonical socket references are the NAMES (identifiers are
     # reordered by the roundtrip); fall back to the id when a name is
-    # missing (defensive, old data).
+    # missing (defensive, old data).  Identical canonical tuples are the
+    # same link (a socket accepts one link) — 5.1 exports can carry the
+    # same link twice under the type-variant sockets (e.g. Compare A and
+    # A_INT both named "A"), so duplicates are collapsed.
     links = []
+    seen = set()
     for lk in data.get("links", []):
         ld = dict(lk)
         ld["from_socket_name"] = ld.get("from_socket_name", ld.get("from_socket_id", ""))
         ld["to_socket_name"] = ld.get("to_socket_name", ld.get("to_socket_id", ""))
         ld.pop("from_socket_id", None)
         ld.pop("to_socket_id", None)
+        key = (ld.get("from_node", ""), ld["from_socket_name"],
+               ld.get("to_node", ""), ld["to_socket_name"])
+        if key in seen:
+            continue
+        seen.add(key)
         links.append(ld)
     out["links"] = sorted(
         links,

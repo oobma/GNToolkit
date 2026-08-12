@@ -29,6 +29,7 @@ from .socket_utils import (
     attempt_create_item,
     find_robust_socket,
 )
+from .hash_utils import node_socket_is_active
 
 # Sentinel for "no tracker available" — used by low-level helpers that
 # may be called outside the main import flow.
@@ -1217,7 +1218,17 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
         if node.bl_idname == "NodeReroute":
             continue
 
+        # Compare / Random Value: the 5.1 exports carry every type variant
+        # plus mode/operation-gated sockets, but the node only exposes the
+        # ACTIVE ones.  Skipping the inactive records removes the
+        # "socket not found" warnings and the pointless write attempts.
+        node_props = node_data.get("properties", {}) if isinstance(node_data.get("properties"), dict) else {}
+
         for inp_data in node_data.get("inputs", []):
+            if not node_socket_is_active(node.bl_idname, node_props,
+                                         inp_data.get("name", ""), inp_data.get("type", ""),
+                                         inp_data.get("identifier", "")):
+                continue
             prog = _tick()
             if prog:
                 yield prog
