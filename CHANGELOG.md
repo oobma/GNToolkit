@@ -47,6 +47,49 @@ zone creation or the socket pairing API (5.2 only changed Geometry Nodes
 modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
 has no node/socket Python API changes at all).
 
+## Unreleased
+
+### Added
+
+- **Blender 5.2 LTS support.** The full headless test suite
+  (180/180 checks) passes on Blender 5.1.1 and 5.2.0 with the same
+  code; see `docs/port-5.2.md` for the research and the changes.
+
+### Changed
+
+- **Canonical hash v4 — version-independent fingerprints.** A project
+  tracked in 5.1 and opened in 5.2 (or vice versa) converges without
+  noise:
+  - `node_socket_is_active()` (shared with the importer) keeps only the
+    sockets a node actually exposes for its active configuration:
+    Compare (A/B of the active data type; C for `mode=DOT_PRODUCT`;
+    Angle for `mode=DIRECTION`; Epsilon only for FLOAT/VECTOR with
+    EQUAL/NOT_EQUAL), Random Value (active Min/Max + ID/Seed),
+    Boolean Math (NOT has a single input), Capture Attribute (5.2-only
+    `Selection`), Value to String (5.2-only `Base`/`Padding`),
+    Subdivision Surface (5.2-only `Quality`).
+  - Engine-dependent properties are excluded: all `bl_*` UI-template
+    limits (e.g. `bl_height_max` differs between versions), the 5.2-only
+    `vector_dimensions` (Vector input node), `height` (Frame layout,
+    auto-resized by 5.2 rebuilds) and `use_fake_user` (file flag).
+  - Duplicated canonical link tuples are collapsed: 5.1 exports carry
+    the same link twice under type-variant sockets (e.g. Compare `A`
+    and `A_INT`, both named "A").
+  - Stored baselines migrate automatically via the auto-rebaseline
+    mechanism (HASH_VERSION bump).
+- **Modifier inputs/outputs are version-gated** (`operators.py`):
+  legacy `modifier["identifier"]` custom properties below 5.2, the new
+  RNA path (`modifier.properties.inputs/outputs["Socket_N"]
+  ["value"/"type"/"attribute_name"]`) on 5.2+.
+
+### Fixed
+
+- **~310 "socket not found" warnings** (C/Angle/Epsilon) during pulls on
+  5.2: the defaults pass now skips inactive socket records.
+- **Importing 5.2-exported packages on 5.1**: Compare/Random Value
+  sockets resolve by name+type first, so links land on the correct
+  type-variant socket.
+
 ## [0.2.1] - 2026-08-09
 
 ### Added

@@ -4,7 +4,7 @@ A Blender add-on for **Geometry Nodes JSON batch export/import** and
 **DNA/RNA synchronization**: JSON is the DNA (source of truth), the .blend
 file is the RNA (working cache).
 
-![Blender](https://img.shields.io/badge/Blender-4.0%E2%80%935.1-orange)
+![Blender](https://img.shields.io/badge/Blender-4.0%E2%80%935.2-orange)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
 ## Features
@@ -34,7 +34,7 @@ file is the RNA (working cache).
 
 ## Requirements
 
-- Blender 4.0 – 5.1.x (tested up to 5.1.1)
+- Blender 4.0 – 5.2 LTS (tested on 5.1.1 and 5.2.0)
 - No external dependencies
 
 ## Compatibility
