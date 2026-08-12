@@ -40,7 +40,8 @@ file is the RNA (working cache).
 ## Compatibility
 
 Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0, full suite
-180/180 checks on each). The 5.2 port details are recorded in
+187/187 checks on 5.1.1 and 227/227 on 5.2.0, same code; the 5.2-only
+new-node E2E adds 40 checks). The 5.2 port details are recorded in
 [docs/port-5.2.md](docs/port-5.2.md). What the port required:
 
 - Geometry Nodes modifier inputs/outputs: version-gated between the

@@ -10,6 +10,10 @@ Produced: 2026-08-11. Research phase ran the full headless suite
 with the official documentation; the implementation phase added the
 mapping rules and the modifier RNA path described below.
 
+Updated: 2026-08-13 (0.2.3) — the suite now also covers the **new 5.2
+node set** (test #10, `test_52_new_nodes_e2e.py`); three roundtrip
+fidelity bugs found by that test were fixed (see §9).
+
 ---
 
 ## 1. Method — the fidelity suite
@@ -19,21 +23,25 @@ copy), so both engines ran the **exact same code**. Order matters for
 shared artifacts (`master_sync_test.json` must be pristine before the
 e2e; reload reads the e2e artifacts).
 
-| # | Test | 5.1.1 (baseline) | 5.2.0 LTS |
+| # | Test | 5.1.1 | 5.2.0 LTS |
 |---|---|---|---|
-| 1 | `smoke_test_5.1.py` | 38 pass, 1 warn | **37 pass, 1 fail, 1 warn** |
-| 2 | `test_sync_e2e.py` | 74 pass | **68 pass, 6 fail** |
-| 3 | `test_sync_reload.py` | 8 pass | **7 pass, 1 fail** |
+| 1 | `smoke_test_5.1.py` | 41 pass, 1 warn | 41 pass, 1 warn |
+| 2 | `test_sync_e2e.py` | 74 pass | 74 pass |
+| 3 | `test_sync_reload.py` (persist / fresh) | 8 / 5 pass | 8 / 5 pass |
 | 4 | `test_hash_migration.py` | 9 pass | 9 pass |
-| 5 | `test_pull_fidelity.py` | 14 pass | **13 pass, 1 fail** |
+| 5 | `test_pull_fidelity.py` | 14 pass | 14 pass |
 | 6 | `test_real_blend.py` | 7 pass, 1 warn | 7 pass, 1 warn |
-| 7 | `test_manual_flow.py` | 12 pass | **8 pass, 4 fail** |
-| 8 | `test_stress_pulls.py` | 13 pass | **7 pass, 6 fail** |
+| 7 | `test_manual_flow.py` | 12 pass | 12 pass |
+| 8 | `test_stress_pulls.py` | 11 pass | 11 pass |
 | 9 | `test_save_relativize.py` | 6 pass | 6 pass |
+| 10 | `test_52_new_nodes_e2e.py` | n/a (skips < 5.2) | **40 pass** |
 
-Total (after the port): **180/180 checks pass on BOTH engines with the
-same code.** The pre-port 5.2 failures all shared one root cause (data-
-type-driven socket layouts) except the smoke T11 (modifier RNA).
+Pre-port (2026-08-11) the 5.2 failures were: smoke T11 (modifier RNA),
+e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
+one root cause (data-type-driven socket layouts) except the modifier RNA.
+
+**Current state (2026-08-13):** 187/187 checks on 5.1.1 and 227/227 on
+5.2.0 LTS (test #10 runs on 5.2 only), same code on both engines.
 
 ## What the port changed (implemented 2026-08-11)
 
@@ -292,3 +300,51 @@ against the isolated rebuild to isolate the trigger.
   https://docs.blender.org/manual/en/5.2/modeling/geometry_nodes/utilities/math/compare.html
 - Commit changing the socket identifiers: `3a5cd7862b`
 - Commit changing the modifier API: `1561c1ea4a`
+
+## 9. New-node set verification (0.2.3, 2026-08-13)
+
+Test #10 (`tests/test_52_new_nodes_e2e.py`, fixture
+`tests/gn52_all_nodes.blend` built by `tests/prepare_52_fixture.py`)
+covers every node class that is new in 5.2 plus every GN-valid socket
+type. Verified facts worth keeping (do NOT re-investigate):
+
+- **25 of the 26 new classes are usable**; `GeometryNodeApplySimulatedData`
+  is registered in `bpy.types` but `nodes.new` raises on 5.2.0 final —
+  a leftover of the experimental physics system. Excluded from the fixture.
+- **`node_groups.new("...", "GeometryNodeTree")` has no settable
+  `geometry_type`** on 5.2.0 (the property is gone) and there is no
+  PHYSICS tree type to create physics-only nodes in.
+- **Interface `new_socket` accepts ONLY the 18 base types** on 5.2:
+  Float, Int, Bool, Vector, Color, Rotation, Matrix, String, Menu,
+  Geometry, Object, Collection, Image, Material, Font, Sound, Bundle,
+  Closure. All subtypes (FloatAngle, VectorEuler, StringFilePath, …)
+  must be created as the base type and then `item.subtype = ...`
+  (same mechanism the importer already used — see the 0.2.3 subtype
+  fix). `Vector2D` = Vector + `dimensions = 2`. `FloatUnsigned` /
+  `IntUnsigned` / `IntVector3D` cannot be created via the interface.
+- **`item.subtype` enum_items reports only `["DEFAULT"]`** even though
+  the full enum is accepted by the setter — never validate subtypes
+  against `enum_items` (this cost the 0.2.3 subtype bug).
+- **`default_input`** (new on interface items) supports
+  `SCENE_FRAME` and `SELF_OBJECT` among its enum values.
+- **`TransferAttributes` "Attribute Names" is a STRING LIST socket**:
+  a plain string default is silently ignored (the node early-returns).
+  Feed it a `Field to List` (STRING item) or `Split String` list. It
+  maps by ID fields (index fields by default).
+- **`GetGeometryComponent` defaults to `Type=MESH`, `Remove=True`**:
+  the "Geometry" output is the input minus the component (empty), the
+  extracted component is the "Component" output.
+- **`MeshGrid` in 5.2 has no node-level size properties and no input
+  geometry** — everything is socket inputs (Size X/Y, Vertices X/Y).
+- **Custom menu items for `FunctionNodeInputMenu`/menu sockets cannot
+  be created from Python on 5.2.0** (no `enum_items`/`menu_items` RNA;
+  the items live in a C-only `bNodeSocketValueMenu`). MenuSwitch's
+  `enum_items` still works and is the serializable path.
+- **`bpy.data.sounds`/`fonts` have `.load()` (no `.new()`)**;
+  `textures` keeps `.new()`. Node-socket datablock defaults of
+  non-scalar type (COLLECTION/OBJECT/MATERIAL/…) are not serialized
+  by design; the Sound socket default IS serialized and restored.
+- **The list data type has no dedicated socket class**: list values
+  ride on typed sockets (`NodeSocketVirtual` for Field/Closure to
+  List outputs) and `list_items` collections on the nodes must be
+  round-tripped (0.2.3 fix).

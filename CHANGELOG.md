@@ -47,7 +47,7 @@ zone creation or the socket pairing API (5.2 only changed Geometry Nodes
 modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
 has no node/socket Python API changes at all).
 
-## [0.2.2] - 2026-08-12
+## [0.2.2] - 2026-08-12 (updated 2026-08-13: roundtrip-fidelity fixes and the 5.2 new-node E2E)
 
 ### Added
 
@@ -98,6 +98,56 @@ has no node/socket Python API changes at all).
 - **Importing 5.2-exported packages on 5.1**: Compare/Random Value
   sockets resolve by name+type first, so links land on the correct
   type-variant socket.
+
+### Fixed (2026-08-13 — roundtrip fidelity, found by the new-node E2E)
+
+- **`clean_value` serialized a Collection data-block as an empty dict.**
+  The ID check ran after the container checks and a Collection's class
+  name contains "collection", so it was treated as a `bpy_prop_collection`
+  (which iterates its contents). Interface-socket Collection defaults
+  now round-trip as `{"type": "Collection", "name": ...}` references
+  (8dedd10).
+- **`list_items` of the 5.2 list nodes was non-deterministic garbage.**
+  `GeometryNodeFieldToList` / `GeometryNodeClosureToList` keep their
+  typed items in a `list_items` collection; the generic RNA loop
+  serialized it as `bpy_struct` reprs containing memory addresses
+  (the JSON changed on every export) and the importer never restored it.
+  Items (name + socket type) are now serialized as `list_items_data` and
+  recreated before wiring, since the nodes' output socket is named after
+  the active item (c83e12e).
+- **Interface socket subtypes silently degraded to base types on 5.2.**
+  Blender 5.2 reports only `["DEFAULT"]` for the interface-socket
+  `subtype` enum items, so the importer's pre-validation (and the
+  serializer's subtype read) dropped every subtype: `FloatAngle`,
+  `FloatDistance`, `StringFilePath`, ... were recreated as plain
+  `Float`/`String`, changing hashes and losing the socket types. The
+  enum pre-validation is gone (the `setattr` itself raises on genuinely
+  invalid values) and the subtype/remap tables now cover the 5.2
+  subtypes (`FloatFrequency`, `FloatMass`, `FloatPixel`,
+  `FloatColorTemperature`, `FloatWavelength`, `IntPixel`,
+  `StringFilePath`) (968a236).
+
+### Verified (2026-08-13)
+
+- **Default-value precision policy (unchanged, now documented):** socket
+  default values are serialized with `round(6)` (six decimals — policy
+  since the initial commit); Blender stores float32, so a value like
+  `0.8` reads back as `0.800000011920929`, but the roundtrip is stable:
+  re-serialization always yields `0.8`. Color defaults are 4-component
+  (`bpy_prop_array`), so the RGBA alpha is preserved. Node `location` is
+  serialized raw (full float32 precision) and is excluded from the
+  canonical hash.
+- **New headless E2E for the 5.2 node set** (test #10 of the regression
+  suite, see `docs/port-5.2.md`): `tests/test_52_new_nodes_e2e.py` plus
+  the generated fixture `tests/gn52_all_nodes.blend` (builder:
+  `tests/prepare_52_fixture.py`). The fixture is one object with a NODES
+  modifier whose tree covers all 25 instantiable 5.2 node classes and
+  every GN-valid socket type (including Menu/Sound/Font/Bundle/Closure/
+  IntVector and the `Scene Frame`/`Self Object` interface default-input
+  modes). The test verifies: serialization determinism, canonical-hash
+  agreement, and that the modifier output geometry (vertex counts,
+  attribute values, attribute names) is byte-identical after an import
+  roundtrip. 40/40 checks.
 
 ## [0.2.1] - 2026-08-09
 
