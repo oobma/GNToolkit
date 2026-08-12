@@ -117,6 +117,20 @@ def _handle_bundle_node(node, data: dict) -> None:
             break
 
 
+def _handle_list_items(node, data: dict) -> None:
+    """Serialize the list_items collection of the 5.2 list nodes
+    (Field to List, Closure to List). The output socket of these nodes is
+    named after the active list item, so the item set must round-trip."""
+    if hasattr(node, 'list_items'):
+        data["list_items_data"] = [
+            {
+                "name": getattr(item, 'name', 'Value'),
+                "socket_type": getattr(item, 'socket_type', 'FLOAT'),
+            }
+            for item in node.list_items
+        ]
+
+
 # Dispatch table: bl_idname → handler(node, data)
 _NODE_SERIALIZERS: dict[str, callable] = {
     "GeometryNodeMenuSwitch": _handle_menu_switch,
@@ -128,6 +142,8 @@ _NODE_SERIALIZERS: dict[str, callable] = {
     "GeometryNodeSeparateBundle": _handle_bundle_node,
     "NodeCombineBundle": _handle_bundle_node,
     "NodeSeparateBundle": _handle_bundle_node,
+    "GeometryNodeFieldToList": _handle_list_items,
+    "GeometryNodeClosureToList": _handle_list_items,
 }
 
 # Closure types share the same handler

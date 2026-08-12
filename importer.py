@@ -849,6 +849,27 @@ def _configure_special_node(new_node, node_data: dict, node_type: str,
                     f"CaptureAttribute '{new_node.name}': could not set data_type: {exc}", level="DEBUG",
                 )
 
+    elif node_type in ("GeometryNodeFieldToList", "GeometryNodeClosureToList"):
+        # 5.2 list nodes: the output socket is named after the active
+        # list item, so the item set (name + socket type) must be
+        # recreated before links are wired.
+        items_data = node_data.get("list_items_data")
+        if items_data and hasattr(new_node, 'list_items'):
+            _reset_collection(new_node.list_items, tracker)
+            for itm in items_data:
+                dt = itm.get("socket_type", "FLOAT")
+                nm = itm.get("name", "Value")
+                attempt_create_item(new_node.list_items, dt, nm)
+            active_index = node_data.get("properties", {}).get("active_index", 0)
+            try:
+                new_node.active_index = int(active_index or 0)
+            except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+                tracker.record(
+                    f"{node_type} '{new_node.name}': could not set active_index: {exc}",
+                    level="DEBUG",
+                )
+        map_dynamic_sockets(node_data, new_node, zone_socket_remap, new_node.name)
+
     elif node_type == "NodeEvaluateClosure":
         for prop_name in ["input_items", "output_items"]:
             coll = getattr(new_node, prop_name, None)
