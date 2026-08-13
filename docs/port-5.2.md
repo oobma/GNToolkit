@@ -1,9 +1,11 @@
 # GNToolkit — Blender 5.2 LTS port research
 
-Status: **PORTED — the 0.2.1 codebase runs the full headless suite
-(180/180 checks) on both Blender 5.1.1 and 5.2.0 LTS with the SAME
-code.** This document records the research and the changes the port
-required so future maintenance does not repeat the investigation.
+Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
+the full headless suite on Blender 5.1.1 (**187/187 checks**) and
+5.2.0 LTS (**227/227 checks**, including the new-node E2E for the 25
+new instantiable 5.2 node classes and every GN socket type). This
+document records the research and the changes the port required so
+future maintenance does not repeat the investigation.
 
 Produced: 2026-08-11. Research phase ran the full headless suite
 (identical code) on 5.1.1 and 5.2.0 LTS and contrasted every failure
