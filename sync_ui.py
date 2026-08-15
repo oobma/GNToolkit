@@ -178,10 +178,9 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             picker_box.label(text="Use the search field to filter the group list:",
                              icon='VIEWZOOM')
             srow = picker_box.row(align=True)
-            srow.prop_search(state, "group_name", state, "items",
-                             text="", icon='VIEWZOOM')
+            srow.prop(state, "group_name", text="")
             import_row = srow.row()
-            import_row.enabled = bool(state.group_name)
+            import_row.enabled = bool(state.group_name) and state.group_name != "__NONE__"
             imp = import_row.operator("gn.sync_import_group", text="Import",
                                       icon='IMPORT')
             imp.filepath = state.filepath

@@ -787,31 +787,39 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     }
 
 
-class GN_ImportItem(bpy.types.PropertyGroup):
-    """One group name offered by the picker's native search widget."""
-    name: StringProperty()
+def _import_group_enum_items(self, context):
+    """EnumProperty items for the picker: groups + in-blend checkmark.
+
+    The callback reads the package through the mtime cache, so it stays
+    cheap even though it runs on every draw.
+    """
+    items = [("__NONE__", "Select a group…", "", 0, 0)]
+    package = _get_import_package(_import_package_cache, getattr(self, "filepath", ""))
+    for idx, gname in enumerate(sorted(package.get("groups", {})), 1):
+        exists = bpy.data.node_groups.get(gname) is not None
+        items.append((gname, gname,
+                      "Already in the .blend — only its missing dependencies "
+                      "will be imported" if exists else "Not in the .blend yet",
+                      'CHECKMARK' if exists else 'NODETREE',
+                      idx))
+    return items
 
 
 class GN_ImportState(bpy.types.PropertyGroup):
     """State of the panel-based import picker (Scene.gnt_import_state).
 
-    The group search uses Blender's native ``prop_search`` widget: its
-    popup filters live as you type (C-level widget, unlike RNA text
-    fields which only commit on Enter in Blender 5.x).
+    The group dropdown is a native enum menu: it can be filtered by
+    typing (searchable in Blender 5.x) and each item shows a checkmark
+    when the group already exists in the .blend.
     """
     open: BoolProperty(default=False)
     filepath: StringProperty()
-    group_name: StringProperty()
-    items: CollectionProperty(type=GN_ImportItem)
-
-
-def _fill_import_items(state) -> None:
-    """(Re)build the searchable group list from the selected package."""
-    state.items.clear()
-    package = _get_import_package(_import_package_cache, state.filepath)
-    for gname in sorted(package.get("groups", {})):
-        item = state.items.add()
-        item.name = gname
+    group_name: EnumProperty(
+        name="Group",
+        description="Node group to import from the selected JSON package",
+        items=_import_group_enum_items,
+        default=0,
+    )
 
 
 class GN_OT_SyncImportGroupClose(bpy.types.Operator):
@@ -822,9 +830,8 @@ class GN_OT_SyncImportGroupClose(bpy.types.Operator):
     def execute(self, context):
         state = context.scene.gnt_import_state
         state.open = False
-        state.group_name = ""
+        state.group_name = "__NONE__"
         state.filepath = ""
-        state.items.clear()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -847,9 +854,8 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
         state = context.scene.gnt_import_state
         state.filepath = self.filepath
-        state.group_name = ""
+        state.group_name = "__NONE__"
         state.open = True
-        _fill_import_items(state)
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -1064,7 +1070,6 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
 classes = (
     GN_CommitReviewChoice,
     GN_CommitReview,
-    GN_ImportItem,
     GN_ImportState,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
