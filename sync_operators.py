@@ -795,11 +795,20 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     }
 
 
+def _import_state_search_update(self, context):
+    """Redraw the UI on every keystroke so the picker filters live."""
+    try:
+        for area in context.screen.areas:
+            area.tag_redraw()
+    except Exception:
+        pass
+
+
 class GN_ImportState(bpy.types.PropertyGroup):
     """State of the panel-based import picker (Scene.gnt_import_state)."""
     open: BoolProperty(default=False)
     filepath: StringProperty()
-    search: StringProperty()
+    search: StringProperty(update=_import_state_search_update)
 
 
 class GN_OT_SyncImportGroupClearSearch(bpy.types.Operator):
