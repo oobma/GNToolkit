@@ -310,6 +310,36 @@ issues.
 
 ---
 
+## References between groups and the package
+
+Two principles drive everything below:
+
+- References between groups are stored **by name**
+  (`node_tree_reference`) — the package never embeds the referenced
+  group's content.
+- **Commit** (per-group) is **surgical**: it writes only the committed
+  group, never its dependencies. **Track to JSON… / Track Group** writes
+  the group **and its untracked dependencies** — the recommended path for
+  a new group that depends on others.
+
+| # | Situation (G = the group you commit, R = the referenced group) | On commit | On import elsewhere | What to do |
+|---|---|---|---|---|
+| 1 | R exists in the .blend but **not** in the package | Commit succeeds and shows **Synced**; the package is left with a **dangling reference** (no warning) | R's group node is created **without an assigned tree** → links into/out of it do not connect; the import picker warns "Unconnected refs" | Use **Track to JSON…** (includes R automatically) or add R to the package |
+| 2 | R in the package, .blend and package **match** | Commit succeeds | Resolves correctly | — |
+| 3 | R in the package, .blend and package **differ** | Commit succeeds (the package keeps the older version of R) | The reference resolves to the package's R; if the **interfaces** differ, socket warnings and links that do not connect are possible. R shows as divergent in Sync Issues | Resolve R's divergence (Pull / Keep JSON) when needed |
+| 4 | **New** group with dependencies | — | — | Use **Track to JSON… / Track Group** (writes the group + dependencies); Commit alone is not enough |
+
+Additional notes:
+
+- **Groups in the .blend that no book knows**: not a conflict and not an
+  error — they are simply invisible to the sync (untracked). "All synced N"
+  only speaks about the tracked groups.
+- The import picker always shows the plan preview before importing:
+  references that are external to the package are flagged as
+  STATUS_WARNING before anything is imported.
+
+---
+
 ## Troubleshooting
 
 **"Dangling links" message / pull aborted**
@@ -325,9 +355,9 @@ Fix: save, restart Blender, pull again.
 Collect `blender.exe.stacktrace.txt` / `crash.log` from Blender's config
 directory. Known mitigations already in place: external links are
 removed before a group's interface is rebuilt (and restored from a
-snapshot), zone pairs are created through a single pinned Node Editor
-session per tree, the depsgraph is flushed before the operator returns,
-and every rebuilt tree is validated for dangling links.
+snapshot), zone pairs are created directly via `pair_with_output` (no
+Node Editor area involved), the depsgraph is flushed before the operator
+returns, and every rebuilt tree is validated for dangling links.
 
 **The System Console shows nothing**
 
