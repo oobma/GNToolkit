@@ -174,6 +174,8 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         if state and state.open:
             layout.separator()
             picker_box = layout.box()
+            picker_box.label(text=f"Package: {os.path.basename(state.filepath)}",
+                             icon='PACKAGE')
             picker_box.label(text=state.filepath, icon='FILE')
             picker_box.label(text="Use the search field to filter the group list:",
                              icon='VIEWZOOM')
@@ -186,8 +188,15 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                                       icon='IMPORT')
             imp.filepath = state.filepath
             imp.group_name = state.group_name
+            track_row = picker_box.row(align=True)
+            track_row.enabled = bool(state.group_name) and \
+                bpy.data.node_groups.get(state.group_name) is not None
+            track_op = track_row.operator("gn.sync_import_group_track",
+                                          text="Track to JSON…", icon='LINKED')
+            track_op.group_name = state.group_name
             if state.group_name:
-                from .sync_operators import _compute_selection_plan
+                from .sync_operators import (_compute_selection_plan,
+                                             _tracked_elsewhere_notes)
                 plan = _compute_selection_plan(state)
                 if plan:
                     if plan["existing"]:
@@ -201,12 +210,17 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                             picker_box.label(text=f"  {name}", icon='NODETREE')
                     if plan["divergent"]:
                         picker_box.label(
-                            text=f"Differ from the package: {', '.join(plan['divergent'])}",
+                            text=f"Differ from {os.path.basename(state.filepath)}: "
+                                 f"{', '.join(plan['divergent'])}",
                             icon='ERROR')
                     if plan["external"]:
                         picker_box.label(
                             text=f"Unconnected refs: {', '.join(plan['external'])}",
                             icon='STATUS_WARNING')
+                    for name, book in _tracked_elsewhere_notes(state, plan):
+                        picker_box.label(
+                            text=f"{name} — tracked to: {book} (not this package)",
+                            icon='INFO')
                 else:
                     picker_box.label(text="Group not found in this package",
                                      icon='ERROR')

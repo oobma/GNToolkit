@@ -906,6 +906,48 @@ def _compute_selection_plan(state) -> dict | None:
     return plan
 
 
+def _divergence_parts(divergent, metadata, pkg_name=None) -> list:
+    """Actionable divergence hints: tracked vs untracked members.
+
+    Untracked groups need Track first (Track Group/Track All), tracked
+    ones align directly with Pull / Keep JSON.
+    """
+    from .sync_metadata import find_uuid_for_tree
+    tracked = []
+    untracked = []
+    for name in divergent:
+        tree = bpy.data.node_groups.get(name)
+        uid = find_uuid_for_tree(tree, metadata) if tree is not None else None
+        (tracked if uid else untracked).append(name)
+    base = "Divergent" + (f" vs {pkg_name}" if pkg_name else "")
+    parts = []
+    if untracked:
+        parts.append(f"{base}: {', '.join(untracked)} — not tracked yet; "
+                     "Track Group/Track All, then Pull to align")
+    if tracked:
+        parts.append(f"{base}: {', '.join(tracked)} — Pull or Keep JSON to align")
+    return parts
+
+
+def _tracked_elsewhere_notes(state, plan) -> list:
+    """Members tracked to a JSON different from the picker's package."""
+    import os
+    from .sync_metadata import find_uuid_for_tree, resolve_json_path
+    notes = []
+    for name in plan.get("existing", []):
+        tree = bpy.data.node_groups.get(name)
+        if tree is None:
+            continue
+        uid = find_uuid_for_tree(tree, sync_manager.metadata)
+        if not uid:
+            continue
+        info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+        jp = resolve_json_path(info.get("json_path", ""), sync_manager._blend_dir())
+        if jp and os.path.normpath(jp) != os.path.normpath(state.filepath):
+            notes.append((name, os.path.basename(jp)))
+    return notes
+
+
 class GN_OT_SyncImportGroupClose(bpy.types.Operator):
     bl_idname = "gn.sync_import_group_close"
     bl_label = "Close Import Picker"
@@ -1022,7 +1064,8 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
         if plan["existing"]:
             parts.append(f"{len(plan['existing'])} already existed (untouched)")
         if plan["divergent"]:
-            parts.append(f"Divergent: {', '.join(plan['divergent'])} — Track + Pull to align")
+            parts.extend(_divergence_parts(plan["divergent"], sync_manager.metadata,
+                                           os.path.basename(self.filepath)))
         if plan["external"]:
             parts.append(f"Unconnected refs: {', '.join(plan['external'])}")
         if tracker.has_errors:
@@ -1032,6 +1075,47 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
             msg += " — not tracked yet; use Track Group / Track All to sync"
         self.report({'WARNING'} if (plan["divergent"] or plan["external"]
                                     or tracker.has_errors) else {'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncImportGroupTrack(bpy.types.Operator, ExportHelper):
+    bl_idname = "gn.sync_import_group_track"
+    bl_label = "Track Imported Group to JSON…"
+    bl_description = ("Track the imported group (and its untracked dependencies) to a JSON "
+                      "package: the group is written into the book and becomes sync-tracked")
+    bl_options = {'REGISTER'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    group_name: StringProperty(
+        name="Group",
+        description="Node group to track",
+    )
+
+    def execute(self, context):
+        import os
+        from .sync_metadata import find_uuid_for_tree
+        if not self.filepath or not os.path.isfile(self.filepath):
+            self.report({'ERROR'}, "Choose a JSON package file first")
+            return {'CANCELLED'}
+        tree = bpy.data.node_groups.get(self.group_name)
+        if tree is None:
+            self.report({'ERROR'}, f"Group '{self.group_name}' not found in the .blend")
+            return {'CANCELLED'}
+        uid = find_uuid_for_tree(tree, sync_manager.metadata)
+        if uid:
+            info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+            self.report({'WARNING'},
+                        f"'{self.group_name}' is already tracked to "
+                        f"{info.get('json_path', '?')} — use Commit/Pull instead")
+            return {'CANCELLED'}
+        sync_manager.link_group(tree, self.filepath)
+        sync_manager.save()
+        for area in context.screen.areas:
+            area.tag_redraw()
+        self.report({'INFO'},
+                    f"Tracked '{self.group_name}' to {os.path.basename(self.filepath)}")
         return {'FINISHED'}
 
 
@@ -1179,6 +1263,7 @@ classes = (
     GN_OT_SyncImportModified,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,
+    GN_OT_SyncImportGroupTrack,
     GN_OT_SyncImportGroupClose,
     GN_OT_SyncCommitReview,
 )
