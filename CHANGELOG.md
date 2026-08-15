@@ -75,48 +75,45 @@ All notable changes to this project are documented in this file.
 
 ## Technical note: zone node pairing (Simulation/Repeat/Foreach/Closure)
 
-**Why `bpy.ops.node.add_zone` is the ONLY way to create zone pairs from Python
-(verified on Blender 5.1.1, 2026-08-08 — do not re-investigate).**
+**Zone pairs are created with `node.pair_with_output(output_node)` — a
+public RNA method on the zone INPUT subclasses — verified on Blender
+5.1.1 and 5.2.0 (2026-08-15). No operator, no Node Editor area; works
+headless.**
 
-The zone pairing (a zone Input node's `paired_output` pointer) cannot be
-established from Python except via the operator:
+The earlier investigation (2026-08-08) concluded that
+`bpy.ops.node.add_zone` was the only way to establish the pairing, because
+it only inspected *properties*: the input subclasses expose `paired_output`
+as read-only, the base `Node` and the output subclasses expose nothing.
+That conclusion was wrong — the pairing API is an **instance method**
+(`pair_with_output`), which was found by checking the RNA function table
+(`bl_rna.functions`) on all four zone input types in 5.1 and 5.2, and by
+cross-checking how Tree Clipper (`Algebraic-UG/tree_clipper`) imports
+zones in its 3-OS CI.
 
-- `bpy.types.Node` (base class) exposes **no** `paired_*` property at all.
-- The zone Input subclasses (`GeometryNodeRepeatInput`, `...SimulationInput`,
-  `...ForeachGeometryElementInput`, `NodeClosureInput`) expose a
-  `paired_output` property that is **read-only** (`is_readonly == True`).
-- The zone Output subclasses expose **no** pairing property.
-- There is no RNA setter, no hidden attribute, and no other API surface
-  that writes the pairing pointer.
+Current architecture (0.2.3):
 
-The operator itself is **negligibly cheap**: measured 0.4-0.7 ms per call
-(background mode, with a `temp_override` context + pinned node tree). All
-106 zones of the reference project cost ~74 ms total. The importer's zone
-creation is therefore NOT a performance bottleneck; the dominant import cost
-is the O(tree size) re-validation that Blender 5.1 performs on every
-socket/`links.new` mutation (see the Performance section below).
+- The importer creates **all** nodes via `nodes.new` (zone inputs and
+  outputs included), populates the zone output's dynamic items
+  (repeat_items/state_items/main+generation+input_items/input+output_items)
+  during creation, then — after every node exists and before defaults and
+  links — calls `input.pair_with_output(output)`. The input node's socket
+  set is complete right after pairing. Items live on the OUTPUT node (only
+  Repeat/Simulation mirror them onto the input). Legacy data without
+  pairing info leaves the nodes unpaired (created as regular nodes).
+- `run_add_zone_operator`, `ensure_zone_area`/`restore_zone_area`,
+  `begin_zone_session`/`end_zone_session`, the `_zone_session`/
+  `_zone_area_state` state and the operators' `finally` cleanup blocks
+  are **gone** — no Node Editor area is ever touched, which also removes
+  the "imports from layouts without the Node Editor silently drop zone
+  input nodes" failure mode.
+- The serialized format is unchanged (`zone_paired_node` by name) — no
+  migration, no hash change.
 
-Consequences for the code architecture (keep these):
-
-- `run_add_zone_operator()` must pin the target tree into a Node Editor
-  space (`space.pin = True; space.node_tree = nt`) and call the operator
-  inside `bpy.context.temp_override(...)` — the operator's poll() fails
-  without it.
-- `ensure_zone_area()` / `restore_zone_area()` exist because the operator
-  requires a Node Editor area in the current screen; without them, scripted
-  imports from a layout without the Node Editor silently drop all zone
-  input nodes. Background mode has a virtual screen (Blender 5.1), so the
-  fallback also works headless.
-- The "Batch Import" button lives in the Geometry Nodes editor so
-  interactive users naturally satisfy the context requirement.
-- Creating the nodes via `nodes.new(...)` without the operator does NOT
-  pair them (`paired_output` stays null) — zones created that way are not
-  functional zones.
-
-Blender 5.2 LTS and 5.3 (alpha) do NOT change this: neither release touches
-zone creation or the socket pairing API (5.2 only changed Geometry Nodes
-modifier properties and Compare/Random Value socket identifiers; 5.3 alpha
-has no node/socket Python API changes at all).
+The operator remains negligible-cheap (0.4-0.7 ms per call, ~74 ms for all
+106 zones of the reference project); the new path drops the context setup
+(pin/unpin + temp_override) entirely. The smoke suite now roundtrips all
+four zone types headless (T14b/T14c), including evaluation of a repeat
+zone through a NODES modifier.
 
 ## [0.2.2] - 2026-08-12 (updated 2026-08-13: roundtrip-fidelity fixes and the 5.2 new-node E2E)
 
