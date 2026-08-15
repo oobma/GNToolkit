@@ -14,7 +14,6 @@ from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProp
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
-from .importer import restore_zone_area, end_zone_session
 from .sync_manager import read_json_tolerant, sync_manager, SyncStatus
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
@@ -195,11 +194,7 @@ class GN_OT_SyncImport(bpy.types.Operator):
             return {'CANCELLED'}
 
         tracker = sync_manager.import_from_json(self.sync_uuid, context)
-        try:
-            sync_manager.save()
-        finally:
-            end_zone_session()
-            restore_zone_area()
+        sync_manager.save()
         # Force UI redraw so issue disappears immediately
         for area in context.screen.areas:
             area.tag_redraw()
@@ -331,7 +326,6 @@ class GN_OT_SyncResolve(bpy.types.Operator):
 
         sync_manager.resolve_conflict(self.sync_uuid, self.keep)
         sync_manager.save()
-        restore_zone_area()
         # Force UI redraw so issue disappears immediately
         for area in context.screen.areas:
             area.tag_redraw()
@@ -557,11 +551,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
         context.window_manager.progress_begin(0, len(tracked))
         try:
             result = sync_manager.import_all_modified(context)
-            try:
-                sync_manager.save()
-            finally:
-                end_zone_session()
-                restore_zone_area()
+            sync_manager.save()
             context.window_manager.progress_end()
             # Force UI redraw so issues disappear immediately
             for area in context.screen.areas:
@@ -574,8 +564,6 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                         + (f", {result.get('still_differ', 0)} still differ from JSON"
                            if result.get('still_differ') else ""))
         except Exception as e:
-            end_zone_session()
-            restore_zone_area()
             context.window_manager.progress_end()
             self.report({'ERROR'}, f"Pull failed: {e}")
             return {'CANCELLED'}
@@ -1036,26 +1024,22 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
 
         tracker = ImportErrorTracker()
         imported = []
-        try:
-            if bpy.data.node_groups.get(self.group_name) is None:
-                # Fresh import: the recursive importer pulls the whole
-                # missing dependency closure from the full package cache.
-                tree = import_node_tree_recursive(target_data, groups, {}, context, tracker)
+        if bpy.data.node_groups.get(self.group_name) is None:
+            # Fresh import: the recursive importer pulls the whole
+            # missing dependency closure from the full package cache.
+            tree = import_node_tree_recursive(target_data, groups, {}, context, tracker)
+            if tree is not None:
+                imported.append(self.group_name)
+        else:
+            # Skip mode: existing groups are never touched; only the
+            # missing closure members are imported.
+            for name in plan["missing"]:
+                entry = groups.get(name)
+                if entry is None:
+                    continue
+                tree = import_node_tree_recursive(entry, groups, {}, context, tracker)
                 if tree is not None:
-                    imported.append(self.group_name)
-            else:
-                # Skip mode: existing groups are never touched; only the
-                # missing closure members are imported.
-                for name in plan["missing"]:
-                    entry = groups.get(name)
-                    if entry is None:
-                        continue
-                    tree = import_node_tree_recursive(entry, groups, {}, context, tracker)
-                    if tree is not None:
-                        imported.append(name)
-        finally:
-            end_zone_session()
-            restore_zone_area()
+                    imported.append(name)
         _selection_plan_cache.clear()
 
         for area in context.screen.areas:

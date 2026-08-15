@@ -182,175 +182,6 @@ def map_dynamic_sockets(old_data, new_node, remap_dict, node_key):
 
 
 # ---------------------------------------------------------------------------
-# Zone creation via Blender operator
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Zone area helpers
-# ---------------------------------------------------------------------------
-
-_zone_area_state = {"area": None, "orig_type": None}
-
-# Pinned-area session shared by all add_zone calls of one tree rebuild:
-# one pin/restore per tree instead of per zone (less context churn and a
-# smaller interactive-session crash surface).
-_zone_session = {"active": False, "win": None, "area": None, "space": None,
-                 "region": None, "orig_tree": None, "orig_pin": None}
-
-
-def _find_node_editor():
-    for w in bpy.context.window_manager.windows:
-        for s in w.screen.areas:
-            if s.type == 'NODE_EDITOR':
-                return w, s
-    return None, None
-
-
-def begin_zone_session(nt):
-    """Pin a Node Editor area on *nt* for the duration of a tree rebuild.
-
-    All ``add_zone`` calls inside the rebuild reuse this single pinned
-    area instead of pinning/restoring per zone.  Returns True when a
-    session was started (pair with ``end_zone_session()``).
-    """
-    if _zone_session["active"]:
-        end_zone_session()
-    ensure_zone_area()
-    win, area = _find_node_editor()
-    if not area:
-        return False
-    space = area.spaces[0]
-    region = next((r for r in area.regions if r.type == 'WINDOW'), area.regions[-1])
-    _zone_session.update({
-        "active": True, "win": win, "area": area, "space": space, "region": region,
-        "orig_tree": getattr(space, 'node_tree', None),
-        "orig_pin": getattr(space, 'pin', False),
-    })
-    space.pin = True
-    space.node_tree = nt
-    return True
-
-
-def end_zone_session():
-    """Restore the area pinned by ``begin_zone_session()``."""
-    if not _zone_session["active"]:
-        return
-    space = _zone_session["space"]
-    try:
-        space.node_tree = _zone_session["orig_tree"]
-        space.pin = _zone_session["orig_pin"]
-    except Exception:
-        pass
-    _zone_session["active"] = False
-
-
-def ensure_zone_area():
-    """Make sure the current screen has a Node Editor area for zone creation.
-
-    Zone pairs are only created by ``bpy.ops.node.add_zone``, which requires
-    a Node Editor area. When the current screen has none (e.g. script-driven
-    imports from a layout without the Node Editor), temporarily converts an
-    existing area. Idempotent; pair with ``restore_zone_area()``.
-
-    Returns True if an area is available (created or existing). In
-    headless/background mode there is no screen at all, so zone pairs
-    cannot be created.
-    """
-    if _zone_area_state["area"] is not None:
-        return True
-    screen = bpy.context.screen
-    if screen is None:
-        return False
-    if any(a.type == 'NODE_EDITOR' for a in screen.areas):
-        return True
-    area = next((a for a in screen.areas if a.type not in ('TOPBAR', 'STATUSBAR')), None)
-    if area is None:
-        return False
-    _zone_area_state["area"] = area
-    _zone_area_state["orig_type"] = area.type
-    area.type = 'NODE_EDITOR'
-    return True
-
-
-def restore_zone_area():
-    """Restore the area type converted by ``ensure_zone_area()``."""
-    if _zone_area_state["area"] is not None:
-        try:
-            _zone_area_state["area"].type = _zone_area_state["orig_type"]
-        except Exception:
-            pass
-        _zone_area_state["area"] = None
-
-
-def run_add_zone_operator(nt, input_type, output_type, tracker: ImportErrorTracker):
-    """Create a zone pair (input+output nodes) using ``bpy.ops.node.add_zone``.
-
-    The operator requires an active Node Editor area with the target tree
-    pinned.  Inside a zone session (``begin_zone_session``) the session's
-    pinned area is reused; otherwise this function temporarily overrides
-    the context, runs the operator, and restores the original state.
-    """
-    session_active = _zone_session["active"]
-    if session_active:
-        win = _zone_session["win"]
-        area = _zone_session["area"]
-        region = _zone_session["region"]
-        space = _zone_session["space"]
-    else:
-        ensure_zone_area()
-        win = bpy.context.window
-        area = next((a for a in bpy.context.screen.areas if a.type == 'NODE_EDITOR'), None)
-        if not area:
-            for w in bpy.context.window_manager.windows:
-                for s in w.screen.areas:
-                    if s.type == 'NODE_EDITOR':
-                        area = s
-                        win = w
-                        break
-                if area:
-                    break
-        if not area:
-            return None, None
-        space = area.spaces[0]
-        region = next((r for r in area.regions if r.type == 'WINDOW'), area.regions[-1])
-        orig_tree = getattr(space, 'node_tree', None)
-        orig_pin = getattr(space, 'pin', False)
-        space.pin = True
-        space.node_tree = nt
-    try:
-        nodes_before = set(nt.nodes)
-        try:
-            with bpy.context.temp_override(window=win, area=area, region=region, space_data=space):
-                op_args = {
-                    'use_transform': False,
-                    'input_node_type': input_type,
-                    'output_node_type': output_type,
-                }
-                if input_type == 'GeometryNodeSimulationInput':
-                    op_args['add_default_geometry_link'] = True
-                bpy.ops.node.add_zone(**op_args)
-        except Exception as e:
-            tracker.record(f"Failed to create Zone {input_type}: {e}", level="CRITICAL ERROR")
-
-        added_nodes = list(set(nt.nodes) - nodes_before)
-        n_in = next((n for n in added_nodes if n.bl_idname == input_type), None)
-        n_out = next((n for n in added_nodes if n.bl_idname == output_type), None)
-        if n_in and n_out:
-            return n_in, n_out
-        sel = [n for n in nt.nodes if n.select and n not in nodes_before]
-        if len(sel) == 2:
-            n1, n2 = sel
-            if n1.bl_idname == input_type:
-                return n1, n2
-            elif n2.bl_idname == input_type:
-                return n2, n1
-    finally:
-        if not session_active:
-            space.node_tree = orig_tree
-            space.pin = orig_pin
-    return None, None
-
-
 # ---------------------------------------------------------------------------
 # Switch / menu item helpers
 # ---------------------------------------------------------------------------
@@ -717,86 +548,44 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
 
 
 # ---------------------------------------------------------------------------
-# Step 1 helper: Zone node creation
+# Step 1 helper: Zone output items
 # ---------------------------------------------------------------------------
 
-def _create_zone_nodes(ng, node_data: dict, data: dict, node_map: dict,
-                       processed_zone_nodes: set, zone_socket_remap: dict,
-                       tracker: ImportErrorTracker):
-    """Create a zone pair (input + output node) for zone-type nodes.
+def _populate_zone_output_items(node, node_data: dict, tracker: ImportErrorTracker) -> None:
+    """Recreate the dynamic items of a zone OUTPUT node.
 
-    Returns the new input node if created, or None.
+    Zone pairs are established later with ``pair_with_output()``; the
+    output's items must exist BEFORE the pairing so the input node's
+    sockets are complete right after it.
     """
-    node_name = node_data.get("name")
     node_type = node_data.get("type")
-    in_name = node_name
-    in_type = node_type
-    out_name = node_data.get("zone_paired_node")
-    out_data = next((n for n in data["nodes"] if n["name"] == out_name), None) if out_name else None
+    items_data = node_data.get("zone_items", [])
 
-    if not out_data:
-        return None
-
-    out_type = out_data["type"]
-    for n in ng.nodes:
-        n.select = False
-    n_in, n_out = run_add_zone_operator(ng, in_type, out_type, tracker)
-
-    if not n_in:
-        n_in = next(
-            (n for n in ng.nodes if n.bl_idname == in_type and n.name not in processed_zone_nodes), None
-        )
-    if not n_out:
-        n_out = next(
-            (n for n in ng.nodes if n.bl_idname == out_type and n.name not in processed_zone_nodes), None
-        )
-
-    if not (n_in and n_out):
-        return None
-
-    n_in.name = in_name
-    n_out.name = out_name
-    node_map[in_name] = n_in
-    node_map[out_name] = n_out
-    processed_zone_nodes.add(in_name)
-    processed_zone_nodes.add(out_name)
-
-    items_data = out_data.get("zone_items", [])
-
-    # 1. Repeat & Simulation
-    if in_type in ('GeometryNodeRepeatInput', 'GeometryNodeSimulationInput'):
-        prop_name = (
-            "repeat_items"
-            if in_type == 'GeometryNodeRepeatInput'
-            else ("state_items" if hasattr(n_out, "state_items") else "simulation_items")
-        )
-        coll = getattr(n_out, prop_name, None)
+    if node_type == "GeometryNodeRepeatOutput":
+        coll = getattr(node, "repeat_items", None)
         if coll is not None and isinstance(items_data, list):
             _reset_collection(coll, tracker)
             _populate_collection(coll, items_data, tracker)
-
-    # 2. For Each Geometry Element
-    elif in_type == 'GeometryNodeForeachGeometryElementInput':
-        for prop_name in ["main_items", "generation_items", "input_items"]:
-            coll = getattr(n_out, prop_name, None)
-            saved_list = out_data.get("zone_items", {}).get(prop_name, [])
+    elif node_type == "GeometryNodeSimulationOutput":
+        coll = getattr(node, "state_items",
+                       getattr(node, "simulation_items", None))
+        if coll is not None and isinstance(items_data, list):
+            _reset_collection(coll, tracker)
+            _populate_collection(coll, items_data, tracker)
+    elif node_type == "GeometryNodeForeachGeometryElementOutput":
+        for prop_name in ("main_items", "generation_items", "input_items"):
+            coll = getattr(node, prop_name, None)
+            saved_list = items_data.get(prop_name, []) if isinstance(items_data, dict) else []
             if coll is not None:
                 _reset_collection(coll, tracker)
                 _populate_collection(coll, saved_list, tracker)
-
-    # 3. Closure Zones
-    elif in_type == 'NodeClosureInput':
-        for prop_name in ["input_items", "output_items"]:
-            coll = getattr(n_out, prop_name, None)
-            saved_list = out_data.get("zone_items", {}).get(prop_name, [])
+    elif node_type == "NodeClosureOutput":
+        for prop_name in ("input_items", "output_items"):
+            coll = getattr(node, prop_name, None)
+            saved_list = items_data.get(prop_name, []) if isinstance(items_data, dict) else []
             if coll is not None:
                 _reset_collection(coll, tracker)
                 _populate_collection(coll, saved_list, tracker)
-
-    # POST-CREATION MAPPING
-    map_dynamic_sockets(node_data, n_in, zone_socket_remap, n_in.name)
-    map_dynamic_sockets(out_data, n_out, zone_socket_remap, n_out.name)
-    return n_in
 
 
 # ---------------------------------------------------------------------------
@@ -926,6 +715,13 @@ def _configure_special_node(new_node, node_data: dict, node_type: str,
                 attempt_create_item(coll, dt, nm)
 
             map_dynamic_sockets(node_data, new_node, zone_socket_remap, new_node.name)
+
+    elif node_type in ZONE_OUTPUTS:
+        # Zone output: recreate the dynamic items (repeat/state/foreach/
+        # closure) before the pairing phase establishes the pair — the
+        # input node's sockets are only complete after pairing.  The
+        # socket remap for zone nodes runs in the pairing phase.
+        _populate_zone_output_items(new_node, node_data, tracker)
 
 
 # ---------------------------------------------------------------------------
@@ -2138,27 +1934,9 @@ def _import_node_tree_gen(
     if group_interface_maps is not None:
         group_interface_maps[name] = interface_map
 
-    # Pin ONE Node Editor area for all zone creations of this rebuild
-    # (one pin/restore per tree instead of per zone).  The session is
-    # also replaced/cleaned by the operators' finally blocks if this
-    # generator is interrupted mid-way (modal cancellation).
-    zone_session_active = begin_zone_session(ng)
-
     # --- Step 1: Node creation ---
     node_map = {}
-    processed_zone_nodes = set()
     zone_socket_remap = {}
-
-    # Zone outputs whose paired input exists in the data. Such outputs are
-    # created together with their input via bpy.ops.node.add_zone; creating
-    # them through the normal path first would collide with the pair that
-    # the operator creates later (duplicate nodes on groups where the
-    # output entry precedes its input in the serialized order).
-    paired_output_names = {
-        nd.get("zone_paired_node")
-        for nd in data["nodes"]
-        if nd.get("type") in ZONE_INPUTS and nd.get("zone_paired_node")
-    }
 
     total_nodes = len(data["nodes"]) or 1
     for ni, node_data in enumerate(data["nodes"]):
@@ -2169,16 +1947,8 @@ def _import_node_tree_gen(
         node_type = node_data.get("type")
         new_node = None
 
-        if node_type in ZONE_INPUTS and node_name not in processed_zone_nodes:
-            new_node = _create_zone_nodes(
-                ng, node_data, data, node_map, processed_zone_nodes, zone_socket_remap, tracker
-            )
-
-        elif node_name in node_map:
+        if node_name in node_map:
             new_node = node_map[node_name]
-        elif node_type in ZONE_OUTPUTS and node_name in paired_output_names:
-            # Created later by _create_zone_nodes when its input is reached.
-            continue
         else:
             try:
                 new_node = ng.nodes.new(node_type)
@@ -2241,8 +2011,37 @@ def _import_node_tree_gen(
                 if ref_tree:
                     new_node.node_tree = ref_tree
 
-    if zone_session_active:
-        end_zone_session()
+    # --- Step 1.3: Zone pairing ---
+    # Zone pairs are established with pair_with_output() (a direct RNA
+    # call — no operator, no Node Editor area) once every node exists.
+    # The output's dynamic items were populated during creation, so the
+    # input node's socket set is complete right after pairing — before
+    # defaults and links run.  Legacy data without pairing info leaves
+    # the nodes unpaired (as standalone nodes).
+    for node_data in data["nodes"]:
+        node_type = node_data.get("type")
+        if node_type not in ZONE_INPUTS:
+            continue
+        n_in = node_map.get(node_data.get("name"))
+        if n_in is None:
+            continue
+        out_name = node_data.get("zone_paired_node")
+        n_out = node_map.get(out_name) if out_name else None
+        if n_out is not None:
+            try:
+                paired_ok = n_in.pair_with_output(n_out)
+            except Exception as exc:
+                paired_ok = False
+                tracker.record(f"Zone '{node_data.get('name')}': pair_with_output raised {exc}",
+                               level="WARN")
+            if not paired_ok:
+                tracker.record(f"Zone '{node_data.get('name')}': pair_with_output failed",
+                               level="WARN")
+        map_dynamic_sockets(node_data, n_in, zone_socket_remap, node_data.get("name"))
+        if n_out is not None:
+            out_data = next((nd for nd in data["nodes"] if nd["name"] == out_name), None)
+            if out_data is not None:
+                map_dynamic_sockets(out_data, n_out, zone_socket_remap, out_name)
 
     # --- Step 1.5: Frame parenting ---
     # Deferred until every node exists: the parent frame may be

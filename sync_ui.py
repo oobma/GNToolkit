@@ -19,7 +19,6 @@ from .geometry_validator import (
     ValidationIssue,
     format_issue_report,
 )
-from .importer import restore_zone_area
 from .sync_manager import sync_manager, SyncStatus
 from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
 from .sync_operators import _get_active_tree
@@ -504,7 +503,6 @@ class GN_OT_SyncResolveBlend(bpy.types.Operator):
     def execute(self, context):
         sync_manager.resolve_conflict(self.sync_uuid, "blend")
         sync_manager.save()
-        restore_zone_area()
         self.report({'INFO'}, "Conflict resolved — kept the .blend version")
         return {'FINISHED'}
 
@@ -520,7 +518,6 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
     def execute(self, context):
         sync_manager.resolve_conflict(self.sync_uuid, "json")
         sync_manager.save()
-        restore_zone_area()
         self.report({'INFO'}, "Conflict resolved — kept the JSON version")
         return {'FINISHED'}
 
