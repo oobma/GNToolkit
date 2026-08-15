@@ -139,8 +139,8 @@ def register():
     from .sync_operators import GN_CommitReview
     bpy.types.Scene.gnt_commit_review = bpy.props.PointerProperty(type=GN_CommitReview)
 
-    from .sync_operators import GN_PickRequest
-    bpy.types.WindowManager.gnt_import_pick = bpy.props.PointerProperty(type=GN_PickRequest)
+    from .sync_operators import GN_ImportState
+    bpy.types.Scene.gnt_import_state = bpy.props.PointerProperty(type=GN_ImportState)
 
     bpy.app.handlers.load_post.append(_on_load_post)
     bpy.app.handlers.save_post.append(_on_save_post)
@@ -158,7 +158,7 @@ def unregister():
 
     del bpy.types.Scene.gnt_sync_prefs
     del bpy.types.Scene.gnt_commit_review
-    del bpy.types.WindowManager.gnt_import_pick
+    del bpy.types.Scene.gnt_import_state
 
     for cls in reversed(_all_classes):
         bpy.utils.unregister_class(cls)
