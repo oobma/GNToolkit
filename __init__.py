@@ -136,6 +136,9 @@ def register():
     from .sync_ui import GN_SyncPrefs
     bpy.types.Scene.gnt_sync_prefs = bpy.props.PointerProperty(type=GN_SyncPrefs)
 
+    from .sync_operators import GN_CommitReview
+    bpy.types.Scene.gnt_commit_review = bpy.props.PointerProperty(type=GN_CommitReview)
+
     bpy.app.handlers.load_post.append(_on_load_post)
     bpy.app.handlers.save_post.append(_on_save_post)
     bpy.app.handlers.undo_post.append(_on_undo_post)
@@ -151,6 +154,7 @@ def unregister():
         _check_timer = None
 
     del bpy.types.Scene.gnt_sync_prefs
+    del bpy.types.Scene.gnt_commit_review
 
     for cls in reversed(_all_classes):
         bpy.utils.unregister_class(cls)

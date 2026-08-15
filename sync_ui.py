@@ -157,6 +157,9 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         batch_row2 = layout.row(align=True)
         batch_row2.operator("gn.sync_export_all", text="Commit All", icon='EXPORT')
 
+        review_row = layout.row(align=True)
+        review_row.operator("gn.sync_commit_review", text="Commit with Review…", icon='ACTION')
+
         check_row = layout.row(align=True)
         check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
         prefs = context.scene.gnt_sync_prefs

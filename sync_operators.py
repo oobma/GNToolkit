@@ -9,7 +9,7 @@ resolving, and checking the sync state of Geometry Node groups.
 from __future__ import annotations
 
 import bpy
-from bpy.props import StringProperty, EnumProperty
+from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
@@ -880,7 +880,131 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Commit with review (F4): per-group Keep JSON / Keep Blend / Skip
+# ---------------------------------------------------------------------------
+
+class GN_CommitReviewChoice(bpy.types.PropertyGroup):
+    """One tracked group waiting for a commit decision."""
+    sync_uuid: StringProperty()
+    blend_name: StringProperty()
+    is_conflict: BoolProperty(default=False)
+    choice: EnumProperty(
+        name="Action",
+        items=(
+            ('KEEP_BLEND', "Keep Blend", "Commit the .blend version into the JSON"),
+            ('KEEP_JSON', "Keep JSON", "Pull the JSON version into the .blend (discards local edits)"),
+            ('SKIP', "Skip", "Leave this group untouched"),
+        ),
+        default='KEEP_BLEND',
+    )
+
+
+class GN_CommitReview(bpy.types.PropertyGroup):
+    """Pending commit decisions (one per locally edited group)."""
+    items: CollectionProperty(type=GN_CommitReviewChoice)
+
+
+def _populate_commit_review() -> dict:
+    """Fill the scene review collection with the modified/conflicted groups.
+
+    Excludes ignored groups.  Returns ``{"modified": n, "conflicts": m}``.
+    """
+    from .sync_metadata import is_ignored
+    review = bpy.context.scene.gnt_commit_review
+    review.items.clear()
+    counts = {"modified": 0, "conflicts": 0}
+    statuses = sync_manager.check_all_statuses()
+    for uid, status in statuses.items():
+        if status not in (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT):
+            continue
+        if is_ignored(sync_manager.metadata, uid):
+            continue
+        info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+        item = review.items.add()
+        item.sync_uuid = uid
+        item.blend_name = info.get("blend_name", "?")
+        item.is_conflict = status == SyncStatus.CONFLICT
+        # Conflicts default to Skip: the JSON changed externally, so a
+        # force-commit overwrites it — that must be a conscious choice.
+        item.choice = 'SKIP' if item.is_conflict else 'KEEP_BLEND'
+        if item.is_conflict:
+            counts["conflicts"] += 1
+        else:
+            counts["modified"] += 1
+    return counts
+
+
+class GN_OT_SyncCommitReview(bpy.types.Operator):
+    bl_idname = "gn.sync_commit_review"
+    bl_label = "Commit with Review…"
+    bl_description = ("Review each locally edited group before committing: "
+                      "Keep JSON, Keep Blend or Skip")
+    bl_options = {'REGISTER'}
+
+    def invoke(self, context, event):
+        if not sync_manager.metadata.get("tracked_groups"):
+            self.report({'ERROR'}, "No groups tracked. Use 'Track All' or 'Track from Existing JSON' first.")
+            return {'CANCELLED'}
+        counts = _populate_commit_review()
+        if not context.scene.gnt_commit_review.items:
+            self.report({'INFO'}, "No locally edited groups to commit")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, context):
+        layout = self.layout
+        review = context.scene.gnt_commit_review
+        if not review.items:
+            layout.label(text="No groups to review", icon='INFO')
+            return
+        layout.label(text="Decide per group — unedited groups are ignored:", icon='QUESTION')
+        layout.separator()
+        for item in review.items:
+            box = layout.box()
+            row = box.row(align=True)
+            row.label(text=item.blend_name,
+                      icon='ERROR' if item.is_conflict else 'LIGHT')
+            row.prop(item, "choice", text="", expand=True)
+
+    def execute(self, context):
+        review = context.scene.gnt_commit_review
+        if not review.items:
+            return {'CANCELLED'}
+        committed = pulled = skipped = errors = 0
+        for item in review.items:
+            uid = item.sync_uuid
+            if not uid:
+                continue
+            if item.choice == 'SKIP':
+                skipped += 1
+                continue
+            if item.choice == 'KEEP_BLEND':
+                ok = sync_manager.export_to_json(uid, force=item.is_conflict)
+            else:
+                tracker = sync_manager.import_from_json(uid, context)
+                ok = not tracker.has_errors
+            if ok:
+                if item.choice == 'KEEP_BLEND':
+                    committed += 1
+                else:
+                    pulled += 1
+            else:
+                errors += 1
+        sync_manager.save()
+        review.items.clear()
+        for area in context.screen.areas:
+            area.tag_redraw()
+        msg = f"Committed {committed}, pulled {pulled}, skipped {skipped}"
+        if errors:
+            msg += f", {errors} failed"
+        self.report({'WARNING' if errors else 'INFO'}, msg)
+        return {'FINISHED'}
+
+
 classes = (
+    GN_CommitReviewChoice,
+    GN_CommitReview,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
     GN_OT_SyncUnlink,
@@ -897,4 +1021,5 @@ classes = (
     GN_OT_SyncExportModified,
     GN_OT_SyncImportModified,
     GN_OT_SyncImportGroup,
+    GN_OT_SyncCommitReview,
 )
