@@ -1,10 +1,13 @@
 # GNToolkit — Blender 5.2 LTS port research
 
 Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
-the full headless suite on Blender 5.1.1 (**187/187 checks**) and
-5.2.0 LTS (**227/227 checks**, including the new-node E2E for the 25
-new instantiable 5.2 node classes and every GN socket type). This
-document records the research and the changes the port required so
+the headless suites on Blender 5.1.1 and 5.2.0 LTS, including the
+new-node E2E for the 25 new instantiable 5.2 node classes and every GN
+socket type. The currently maintained suites are
+`tests/smoke_test_5.1.py` (**96 checks**, 5.1) and
+`tests/test_52_new_nodes_e2e.py` (**40 checks**, 5.2-only); the
+per-test table below reflects the suite state as of 2026-08-13.
+This document records the research and the changes the port required so
 future maintenance does not repeat the investigation.
 
 Produced: 2026-08-11. Research phase ran the full headless suite
@@ -12,9 +15,10 @@ Produced: 2026-08-11. Research phase ran the full headless suite
 with the official documentation; the implementation phase added the
 mapping rules and the modifier RNA path described below.
 
-Updated: 2026-08-13 (0.2.3) — the suite now also covers the **new 5.2
+Updated: 2026-08-13 — the suite now also covers the **new 5.2
 node set** (test #10, `test_52_new_nodes_e2e.py`); three roundtrip
-fidelity bugs found by that test were fixed (see §9).
+fidelity bugs found by that test were fixed (see §9, included in the
+0.2.2 release).
 
 ---
 
@@ -42,12 +46,16 @@ Pre-port (2026-08-11) the 5.2 failures were: smoke T11 (modifier RNA),
 e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
 one root cause (data-type-driven socket layouts) except the modifier RNA.
 
-**Current state (2026-08-13):** 187/187 checks on 5.1.1 and 227/227 on
-5.2.0 LTS (test #10 runs on 5.2 only), same code on both engines.
+**Current state (2026-08-13):** the maintained suites are
+`tests/smoke_test_5.1.py` (96 checks) and
+`tests/test_52_new_nodes_e2e.py` (40 checks, 5.2-only); the per-test
+table above reflects the suite state as of that date (test #1 was 41
+checks then — it grew to 96 with the 0.2.3 additions).
 
 ## What the port changed (implemented 2026-08-11)
 
-- **HASH_VERSION → 4** (`constants.py`). The canonical hash now applies
+- **HASH_VERSION → 4** (`constants.py`; current value is **5** after the
+  frame-parenting fix). The canonical hash now applies
   a version-independent *active-socket* rule to nodes whose socket
   layout follows the data type/mode/operation, drops engine-dependent
   UI properties, and collapses duplicated link tuples:
@@ -259,7 +267,7 @@ the 5.2 RNA (`modifier.properties.inputs[0].type`).
 3. Re-run suites 1–5, 7–8 on 5.2 → expect the Compare-related failures
    to disappear and the projects to converge (0 still differ). ✅ done
 4. **Modifier RNA path** (`operators.py`) — smoke T11. ✅ done
-5. Full suite green on both 5.1.1 and 5.2.0 (180/180 each). ✅ done
+5. Full suite green on both 5.1.1 and 5.2.0. ✅ done
 6. Update README Compatibility + this document. ✅ done
 
 ## 6. Known residual edge (not a port blocker)
@@ -303,7 +311,7 @@ against the isolated rebuild to isolate the trigger.
 - Commit changing the socket identifiers: `3a5cd7862b`
 - Commit changing the modifier API: `1561c1ea4a`
 
-## 9. New-node set verification (0.2.3, 2026-08-13)
+## 9. New-node set verification (2026-08-13, released in 0.2.2)
 
 Test #10 (`tests/test_52_new_nodes_e2e.py`, fixture
 `tests/gn52_all_nodes.blend` built by `tests/prepare_52_fixture.py`)
