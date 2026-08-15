@@ -34,15 +34,73 @@ bl_info = {
 # Persistent handlers for load/save synchronization
 # ---------------------------------------------------------------------------
 
+_check_timer: object = None
+
+
 @bpy.app.handlers.persistent
 def _on_load_post(scene):
     """Load sync metadata when a .blend file is opened."""
     try:
         sync_manager.load()
-        # Do NOT compute statuses on load — that's too expensive with 439 groups.
-        # The user can press "Refresh Status" when ready.
+        # Do NOT compute full statuses on load — tree hashing is too
+        # expensive with many groups.  A deferred JSON-side-only check
+        # (pure Python, chunked via timers) detects files that changed
+        # outside Blender and shows a non-intrusive notice.
+        _schedule_json_check()
     except Exception:
         pass
+
+
+def _schedule_json_check():
+    """Schedule the deferred JSON-side sync check shown after load."""
+    global _check_timer
+    if _check_timer is not None:
+        return
+    try:
+        if not sync_manager.metadata.get("tracked_groups"):
+            return
+        prefs = bpy.context.scene.gnt_sync_prefs
+        if not getattr(prefs, "check_on_load", True):
+            return
+    except Exception:
+        return
+
+    sync_manager.start_json_check()
+
+    def _tick():
+        global _check_timer
+        try:
+            done = sync_manager.step_json_check(200)
+        except Exception:
+            done = True
+        if not done:
+            return 0.05
+        _check_timer = None
+        report = sync_manager.load_report
+        if report:
+            n_changed = sum(1 for e in report.values()
+                            if e.get("status") == SyncStatus.JSON_MISSING)
+            msg = f"GNToolkit: {len(report)} group(s) out of sync with JSON"
+            if n_changed:
+                msg += f" ({n_changed} JSON file(s) missing)"
+
+            def _show_status(text=msg):
+                try:
+                    bpy.context.workspace.status_text_set(text)
+                except Exception:
+                    pass
+
+            def _hide_status():
+                try:
+                    bpy.context.workspace.status_text_set(None)
+                except Exception:
+                    pass
+
+            bpy.app.timers.register(_show_status, first_interval=0.1)
+            bpy.app.timers.register(_hide_status, first_interval=6.0)
+        return None
+
+    _check_timer = bpy.app.timers.register(_tick, first_interval=1.0)
 
 
 @bpy.app.handlers.persistent
@@ -84,6 +142,14 @@ def register():
 
 
 def unregister():
+    global _check_timer
+    if _check_timer is not None:
+        try:
+            bpy.app.timers.unregister(_check_timer)
+        except Exception:
+            pass
+        _check_timer = None
+
     del bpy.types.Scene.gnt_sync_prefs
 
     for cls in reversed(_all_classes):

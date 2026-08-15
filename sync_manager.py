@@ -214,6 +214,9 @@ class SyncManager:
         self._status_cache: dict[str, SyncStatus] = {}
         self._dirty: bool = False
         self._geometry_issues_cache: dict[str, list] = {}
+        self.load_report: dict[str, dict] = {}
+        self._json_check_remaining: list[tuple] = []
+        self._json_check_files: dict[str, tuple] = {}
 
     # --- Load / save -------------------------------------------------------
 
@@ -221,6 +224,7 @@ class SyncManager:
         self.metadata = load_sync_metadata()
         self._status_cache.clear()
         self._geometry_issues_cache.clear()
+        self.load_report.clear()
         self._dirty = False
         self._ensure_hash_version()
 
@@ -394,6 +398,7 @@ class SyncManager:
         if not tracked:
             self._status_cache = {}
             return self._status_cache
+        self._clear_load_report()
 
         # Group by JSON path to batch-read files
         json_data_cache: dict[str, tuple] = {}  # path -> (data_dict, mtime)
@@ -484,6 +489,83 @@ class SyncManager:
         self._status_cache = result
         return result
 
+    # --- Load-time JSON-side check -----------------------------------------
+
+    def start_json_check(self) -> None:
+        """Begin a chunked JSON-side check (called after a .blend load).
+
+        The JSON side is pure Python (no bpy), so the comparison can run
+        without touching the expensive tree hashing that full status
+        checks need.  Populates ``load_report`` with the groups whose
+        JSON changed (or went missing) outside Blender.
+        """
+        self._json_check_remaining = list(self.metadata.get("tracked_groups", {}).items())
+        self._json_check_files = {}
+        self.load_report.clear()
+
+    def step_json_check(self, limit: int = 100) -> bool:
+        """Process up to *limit* tracked groups on the JSON side only.
+
+        Uses the mtime fast path and per-group canonical hashes against
+        the stored baselines.  Returns True when the check is complete.
+        """
+        if not self._json_check_remaining:
+            return True
+        batch = self._json_check_remaining[:limit]
+        self._json_check_remaining = self._json_check_remaining[limit:]
+        blend_dir = self._blend_dir()
+
+        for uid, info in batch:
+            json_path = resolve_json_path(info.get("json_path", ""), blend_dir)
+            if not json_path or not os.path.isfile(json_path):
+                self.load_report[uid] = {
+                    "status": SyncStatus.JSON_MISSING,
+                    "blend_name": info.get("blend_name", "?"),
+                }
+                continue
+            last_mtime = info.get("last_json_mtime", 0.0)
+            try:
+                current_mtime = os.path.getmtime(json_path)
+            except OSError:
+                continue
+            if current_mtime <= last_mtime:
+                continue
+
+            entry = self._json_check_files.get(json_path)
+            if entry is None:
+                data = read_json_tolerant(json_path)
+                hashes = {}
+                if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
+                    for gname, gdata in data.get("node_groups", {}).items():
+                        hashes[gname] = canonical_hash_from_json_data(gdata)
+                self._json_check_files[json_path] = (data, hashes)
+            else:
+                data, hashes = entry
+
+            blend_name = info.get("blend_name", "")
+            json_hash = hashes.get(blend_name)
+            if json_hash is None:
+                if isinstance(data, dict) and "nodes" in data:
+                    json_hash = canonical_hash_from_json_data(data)
+                else:
+                    self.load_report[uid] = {
+                        "status": SyncStatus.JSON_MISSING,
+                        "blend_name": blend_name,
+                    }
+                    continue
+            last_json_hash = info.get("last_json_hash", "")
+            if last_json_hash and json_hash == last_json_hash:
+                continue
+            self.load_report[uid] = {
+                "status": SyncStatus.JSON_MODIFIED,
+                "blend_name": blend_name,
+            }
+        return not self._json_check_remaining
+
+    def _clear_load_report(self) -> None:
+        """Drop the load-time notice once an authoritative check/sync runs."""
+        self.load_report.clear()
+
     # --- Linking / unlinking -----------------------------------------------
 
     def link_group(self, tree, json_path: str) -> str:
@@ -496,6 +578,7 @@ class SyncManager:
         If the JSON file already exists, it reads it and updates the
         entry in-place to preserve other groups in the unified package.
         """
+        self._clear_load_report()
         sync_uuid = generate_uuid()
         store_uuid_on_tree(tree, sync_uuid)
 
@@ -619,6 +702,7 @@ class SyncManager:
         info = get_tracked_group(self.metadata, sync_uuid)
         if info is None:
             return
+        self._clear_load_report()
         remove_tracked_group(self.metadata, sync_uuid)
         blend_name = info.get("blend_name", "")
         tree = bpy.data.node_groups.get(blend_name)
@@ -965,6 +1049,7 @@ class SyncManager:
         Also updates the hashes of all other tracked groups that share
         the same JSON file (cascade update).
         """
+        self._clear_load_report()
         info = get_tracked_group(self.metadata, sync_uuid)
         if info is None:
             tracker = ImportErrorTracker()
@@ -1291,6 +1376,7 @@ class SyncManager:
         After export, updates hashes for ALL tracked groups sharing
         the same JSON file (cascade update).
         """
+        self._clear_load_report()
         info = get_tracked_group(self.metadata, sync_uuid)
         if info is None:
             return False

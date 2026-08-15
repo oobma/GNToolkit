@@ -159,6 +159,9 @@ class GN_PT_SyncPanel(bpy.types.Panel):
 
         check_row = layout.row(align=True)
         check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
+        prefs = context.scene.gnt_sync_prefs
+        check_row.prop(prefs, "check_on_load", text="", icon='PLUGIN',
+                       toggle=True, expand=True)
 
         remotes = _json_remotes(tracked)
         if remotes:
@@ -175,6 +178,19 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                 reveal_op.json_path = abs_path
 
         has_cache = bool(sync_manager._status_cache)
+
+        load_report = sync_manager.load_report
+        if load_report:
+            n_changed = sum(1 for e in load_report.values()
+                            if e.get("status") == SyncStatus.JSON_MISSING)
+            layout.separator()
+            warn_row = layout.row(align=True)
+            warn_row.label(text=f"{len(load_report)} group(s) out of sync with JSON",
+                           icon='FILE_REFRESH')
+            if n_changed:
+                warn_row.label(text=f"({n_changed} file(s) missing)", icon='FILE')
+            warn_row.operator("gn.sync_check", text="", icon='FILE_REFRESH')
+
         if has_cache:
             layout.separator()
             summary = sync_manager.get_status_summary()
@@ -250,8 +266,9 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             return
 
         has_cache = bool(sync_manager._status_cache)
+        load_report = sync_manager.load_report
 
-        if not has_cache:
+        if not has_cache and not load_report:
             layout.label(text=f"{len(tracked)} groups tracked", icon='NODETREE')
             layout.label(text="Click 'Refresh Status' to check", icon='INFO')
             layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
@@ -260,7 +277,7 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
         summary = sync_manager.get_status_summary()
         n_total = sum(v for k, v in summary.items() if k != "ignored")
         n_synced = summary.get("synced", 0)
-        n_issues = n_total - n_synced
+        n_issues = n_total - n_synced + len(sync_manager.load_report)
         n_ignored = summary.get("ignored", 0)
 
         header_row = layout.row()
@@ -331,7 +348,10 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
 
     def _build_filtered_list(self, prefs):
         items = []
-        for uid, status in sync_manager._status_cache.items():
+        statuses = dict(sync_manager._status_cache)
+        for uid, entry in sync_manager.load_report.items():
+            statuses.setdefault(uid, entry.get("status"))
+        for uid, status in statuses.items():
             if status == SyncStatus.SYNCED:
                 continue
 
@@ -463,6 +483,12 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
     )
     show_ignored = bpy.props.BoolProperty(
         name="Show Ignored", default=False,
+    )
+    check_on_load = bpy.props.BoolProperty(
+        name="Check JSON on open",
+        description="After loading a .blend, compare the JSON hashes in the background "
+                    "and show a notice when files changed outside Blender",
+        default=True,
     )
 
 
