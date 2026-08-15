@@ -738,14 +738,6 @@ def _get_import_package(cache: dict, filepath: str) -> dict:
     return plan
 
 
-def _filter_group_names(groups, needle: str) -> list:
-    """Filter group names by case-insensitive substring (any position)."""
-    if not needle:
-        return list(groups)
-    low = needle.lower()
-    return [g for g in groups if low in g.lower()]
-
-
 # Module-level cache for the picker panel (draw() runs on every redraw;
 # keyed by path + mtime via _get_import_package).
 _import_package_cache: dict = {}
@@ -795,97 +787,31 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     }
 
 
-def _import_state_search_update(self, context):
-    """Redraw the UI when the picker search changes (programmatic sets)."""
-    try:
-        for area in context.screen.areas:
-            area.tag_redraw()
-    except Exception:
-        pass
-
-
-def _listen_decision(event_type: str, value: str, search: str, n_matches: int) -> str:
-    """Map a modal keyboard event to a picker action.
-
-    Returns ``'append' | 'backspace' | 'esc_clear' | 'cancel' |
-    'import_single' | 'idle'``.
-    """
-    if event_type == 'TEXT_INPUT':
-        return 'append' if value else 'idle'
-    if event_type == 'BACK_SPACE':
-        return 'backspace'
-    if event_type == 'ESC':
-        return 'esc_clear' if search else 'cancel'
-    if event_type == 'CONFIRM':
-        return 'import_single' if n_matches == 1 else 'idle'
-    return 'idle'
+class GN_ImportItem(bpy.types.PropertyGroup):
+    """One group name offered by the picker's native search widget."""
+    name: StringProperty()
 
 
 class GN_ImportState(bpy.types.PropertyGroup):
-    """State of the panel-based import picker (Scene.gnt_import_state)."""
+    """State of the panel-based import picker (Scene.gnt_import_state).
+
+    The group search uses Blender's native ``prop_search`` widget: its
+    popup filters live as you type (C-level widget, unlike RNA text
+    fields which only commit on Enter in Blender 5.x).
+    """
     open: BoolProperty(default=False)
     filepath: StringProperty()
-    search: StringProperty(update=_import_state_search_update)
+    group_name: StringProperty()
+    items: CollectionProperty(type=GN_ImportItem)
 
 
-class GN_OT_SyncImportGroupListen(bpy.types.Operator):
-    """Modal keyboard listener for the import picker.
-
-    Panel text fields in Blender 5.x only commit their RNA value on
-    Enter/blur, so live filtering needs an operator that receives
-    TEXT_INPUT events directly (the same mechanism as node.add_search).
-    """
-    bl_idname = "gn.sync_import_group_listen"
-    bl_label = "Import Picker (keyboard)"
-    bl_options = {'INTERNAL', 'REGISTER'}
-
-    def invoke(self, context, event):
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
-
-    def modal(self, context, event):
-        state = context.scene.gnt_import_state
-        if not state or not state.open:
-            return {'CANCELLED'}
-        decision = _listen_decision(event.type, event.unicode, state.search,
-                                    len(_filter_group_names(
-                                        sorted(_get_import_package(
-                                            _import_package_cache, state.filepath
-                                        ).get("groups", {})), state.search)))
-        if decision == 'append':
-            state.search += event.unicode
-        elif decision == 'backspace':
-            state.search = state.search[:-1]
-        elif decision == 'esc_clear':
-            state.search = ""
-        elif decision == 'cancel':
-            state.open = False
-            state.search = ""
-            state.filepath = ""
-            return {'CANCELLED'}
-        elif decision == 'import_single':
-            single = _filter_group_names(
-                sorted(_get_import_package(_import_package_cache, state.filepath)
-                       .get("groups", {})), state.search)
-            if len(single) == 1:
-                bpy.ops.gn.sync_import_group('EXEC_DEFAULT',
-                                             filepath=state.filepath,
-                                             group_name=single[0])
-        if context.area:
-            context.area.tag_redraw()
-        return {'RUNNING_MODAL'}
-
-
-class GN_OT_SyncImportGroupClearSearch(bpy.types.Operator):
-    bl_idname = "gn.sync_import_group_clear_search"
-    bl_label = "Clear Search"
-    bl_options = {'INTERNAL'}
-
-    def execute(self, context):
-        context.scene.gnt_import_state.search = ""
-        for area in context.screen.areas:
-            area.tag_redraw()
-        return {'FINISHED'}
+def _fill_import_items(state) -> None:
+    """(Re)build the searchable group list from the selected package."""
+    state.items.clear()
+    package = _get_import_package(_import_package_cache, state.filepath)
+    for gname in sorted(package.get("groups", {})):
+        item = state.items.add()
+        item.name = gname
 
 
 class GN_OT_SyncImportGroupClose(bpy.types.Operator):
@@ -896,8 +822,9 @@ class GN_OT_SyncImportGroupClose(bpy.types.Operator):
     def execute(self, context):
         state = context.scene.gnt_import_state
         state.open = False
-        state.search = ""
+        state.group_name = ""
         state.filepath = ""
+        state.items.clear()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -920,9 +847,9 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
         state = context.scene.gnt_import_state
         state.filepath = self.filepath
-        state.search = ""
+        state.group_name = ""
         state.open = True
-        bpy.ops.gn.sync_import_group_listen('INVOKE_DEFAULT')
+        _fill_import_items(state)
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -1137,6 +1064,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
 classes = (
     GN_CommitReviewChoice,
     GN_CommitReview,
+    GN_ImportItem,
     GN_ImportState,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
@@ -1155,8 +1083,6 @@ classes = (
     GN_OT_SyncImportModified,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,
-    GN_OT_SyncImportGroupListen,
-    GN_OT_SyncImportGroupClearSearch,
     GN_OT_SyncImportGroupClose,
     GN_OT_SyncCommitReview,
 )

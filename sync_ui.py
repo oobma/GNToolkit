@@ -175,29 +175,19 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             layout.separator()
             picker_box = layout.box()
             picker_box.label(text=state.filepath, icon='FILE')
-            from .sync_operators import _get_import_package, _filter_group_names, _import_package_cache
-            package = _get_import_package(_import_package_cache, state.filepath)
+            picker_box.label(text="Use the search field to filter the group list:",
+                             icon='VIEWZOOM')
             srow = picker_box.row(align=True)
-            srow.label(text=state.search or "Type to search…", icon='VIEWZOOM')
-            if state.search:
-                srow.operator("gn.sync_import_group_clear_search", text="", icon='X')
-            all_groups = sorted(package.get("groups", {}))
-            groups = _filter_group_names(all_groups, state.search)
-            if state.search:
-                picker_box.label(text=f"{len(all_groups)} groups — {len(groups)} match",
-                                 icon='FILTER')
-            for gname in groups[:40]:
-                r = picker_box.row(align=True)
-                op = r.operator("gn.sync_import_group", text=gname, icon='NODETREE')
-                op.filepath = state.filepath
-                op.group_name = gname
-                if bpy.data.node_groups.get(gname) is not None:
-                    r.label(text="in blend", icon='CHECKMARK')
-            if len(groups) > 40:
-                picker_box.label(text=f"... {len(groups) - 40} more — refine the search",
-                                 icon='INFO')
-            if not groups:
-                picker_box.label(text="No groups match the search", icon='INFO')
+            srow.prop_search(state, "group_name", state.items, "name",
+                             text="", icon='VIEWZOOM')
+            import_row = srow.row()
+            import_row.enabled = bool(state.group_name)
+            imp = import_row.operator("gn.sync_import_group", text="Import",
+                                      icon='IMPORT')
+            imp.filepath = state.filepath
+            imp.group_name = state.group_name
+            picker_box.label(text="Existing groups are never touched — only missing "
+                                  "dependencies are imported.", icon='INFO')
             picker_box.row(align=True).operator("gn.sync_import_group_close",
                                                 text="Close Picker", icon='X')
 
