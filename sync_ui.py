@@ -167,7 +167,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                        toggle=True, expand=True)
 
         import_row = layout.row(align=True)
-        import_row.operator("gn.sync_import_group", text="Import Group from JSON…",
+        import_row.operator("gn.sync_import_group_file", text="Import Group from JSON…",
                             icon='IMPORT')
 
         remotes = _json_remotes(tracked)

@@ -843,16 +843,38 @@ class GN_OT_SyncImportGroupPick(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
+class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
+    bl_idname = "gn.sync_import_group_file"
+    bl_label = "Import Group from JSON…"
+    bl_description = ("Pick a JSON package and import one group plus its missing "
+                      "dependencies. Groups already present in the .blend are never touched.")
+    bl_options = {'REGISTER'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        import os
+        if not self.filepath or not os.path.isfile(self.filepath):
+            self.report({'ERROR'}, f"JSON file not found: {self.filepath}")
+            return {'CANCELLED'}
+        # Enter the picker through invoke so the modal popup (which
+        # captures the keyboard) is shown.
+        bpy.ops.gn.sync_import_group('INVOKE_DEFAULT', filepath=self.filepath)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncImportGroup(bpy.types.Operator):
     bl_idname = "gn.sync_import_group"
     bl_label = "Import Group from JSON"
     bl_description = ("Import one node group plus its missing dependencies from a JSON "
                       "package. Groups already present in the .blend are never touched.")
     bl_options = {'REGISTER', 'UNDO'}
 
-    filename_ext = ".json"
-    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
-
+    filepath: StringProperty(
+        name="Package",
+        description="JSON package to import from",
+    )
     group_name: StringProperty(
         name="Group",
         description="Node group to import from the selected JSON package",
@@ -879,7 +901,7 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
         layout = self.layout
         layout.label(text=self.filepath, icon='FILE')
         row = layout.row(align=True)
-        row.label(text=self.search or "Type to search…", icon='VIEWZOOM')
+        row.prop(self, "search", text="", icon='VIEWZOOM')
         if self.search:
             op = row.operator("gn.sync_import_group_pick", text="", icon='X')
             op.clear_search = True
@@ -903,18 +925,19 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
         if not groups:
             layout.label(text="No groups match the search", icon='INFO')
         layout.separator()
-        layout.label(text="Type to filter — Esc clears, Enter imports a single match",
+        layout.label(text="Type directly to filter — Esc clears, Enter imports a single match",
                      icon='INFO')
 
     def invoke(self, context, event):
-        if not self.filepath:
-            context.window_manager.fileselect_add(self)
-            return {'RUNNING_MODAL'}
-        return self._open_picker(context)
-
-    def _open_picker(self, context):
+        import os
+        if not self.filepath or not os.path.isfile(self.filepath):
+            self.report({'ERROR'}, "Select a JSON package file first")
+            return {'CANCELLED'}
+        # Modal without invoke_popup: the draw() is shown as a popup by
+        # Blender itself and the operator captures the keyboard (the same
+        # mechanism as node.add_search).
         context.window_manager.modal_handler_add(self)
-        return context.window_manager.invoke_popup(self, width=560)
+        return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
         pick = context.window_manager.gnt_import_pick
@@ -962,7 +985,8 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
             self.report({'ERROR'}, "Select a JSON package file first")
             return {'CANCELLED'}
         if not self.group_name:
-            return self._open_picker(context)
+            self.report({'ERROR'}, "Pick a group from the list first")
+            return {'CANCELLED'}
 
         package = self._plan()
         groups = package.get("groups", {})
@@ -1163,5 +1187,6 @@ classes = (
     GN_OT_SyncImportModified,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupPick,
+    GN_OT_SyncImportGroupFile,
     GN_OT_SyncCommitReview,
 )
