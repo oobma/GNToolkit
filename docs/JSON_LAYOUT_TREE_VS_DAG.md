@@ -7,8 +7,8 @@ the GNToolkit JSON storage, compared with the current unified-package model.
 
 **JSON data model:** a single unified package file (`node_groups` keyed by
 group name plus `modifiers`), where cross-group references are stored **by
-name** (`node_tree_reference`, serializer.py:225). A "Use Folder Structure"
-export already exists (operators.py:50), but it is a **flat** layout
+name** (`node_tree_reference`, serializer.py:241). A "Use Folder Structure"
+export already exists (operators.py:131), but it is a **flat** layout
 (`NodeGroups/` + `Modifiers/`) and a one-shot snapshot without sync.
 
 **Sync model (`.gntsync`):** each tracked group has a UUID, a `json_path`
@@ -16,11 +16,11 @@ export already exists (operators.py:50), but it is a **flat** layout
 fast-path. The dependency graph is already resolved in both directions:
 
 - `get_tree_dependencies()` — transitive closure of a tree
-  (socket_utils.py:168).
+  (socket_utils.py:184).
 - `all_graph` (group → dependencies) and `rev_graph` (dependency → parents),
-  built during the pull (sync_manager.py:1899-1919).
+  built during the pull (sync_manager.py:1994-2005).
 - **Topological order** (Kahn) to rebuild dependencies before parents
-  (sync_manager.py:1986-2001), with cycle tolerance.
+  (sync_manager.py:2072-2087), with cycle tolerance.
 
 **Key point:** change detection (per-group canonical hashing) is
 **independent of where a file lives**. The graph and hash infrastructure
