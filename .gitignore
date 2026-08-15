@@ -17,5 +17,8 @@ AGENTS.md
 # Local tooling (install-sync hook script — kept out of the public repo)
 tools/
 
+# Personal comprehension notes (kitchen-analogy manual — not part of the addon)
+internal-docs/
+
 # Local test assets and scripts (not part of the addon)
 tests/
