@@ -719,9 +719,11 @@ def _load_import_package(filepath: str) -> dict:
 def _get_import_package(cache: dict, filepath: str) -> dict:
     """Return the parsed package for *filepath*, re-reading only on change.
 
-    The dialog's draw() runs on every UI redraw, and parsing a 439-group
+    The picker's draw() runs on every UI redraw, and parsing a 439-group
     package takes ~a second — so the result is cached keyed by (path,
-    mtime).  *cache* is a plain dict owned by the caller.
+    mtime).  *cache* is a plain dict owned by the caller.  The cached
+    plan also carries the per-group in-blend map (see
+    ``_ensure_import_exists``).
     """
     import os
     mtime = None
@@ -734,8 +736,26 @@ def _get_import_package(cache: dict, filepath: str) -> dict:
     if cached is not None and cached.get("filepath") == filepath and cached.get("mtime") == mtime:
         return cached
     plan = _load_import_package(filepath)
+    plan["exists"] = {}
+    plan["ng_len"] = -1
     cache["plan"] = plan
     return plan
+
+
+def _ensure_import_exists(plan: dict) -> None:
+    """Refresh the in-blend map of the package without per-draw lookups.
+
+    Querying ``bpy.data.node_groups`` for 439 names on every draw is the
+    picker's cost driver; instead the map is rebuilt only when the node
+    group count changes (importing through the picker bumps it).
+    """
+    ng_len = len(bpy.data.node_groups)
+    if plan.get("ng_len") == ng_len:
+        return
+    groups = plan.get("groups", {})
+    plan["exists"] = {gname: bpy.data.node_groups.get(gname) is not None
+                      for gname in groups}
+    plan["ng_len"] = ng_len
 
 
 # Module-level cache for the picker panel (draw() runs on every redraw;
@@ -790,17 +810,20 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
 def _import_group_enum_items(self, context):
     """EnumProperty items for the picker: groups + in-blend checkmark.
 
-    The callback reads the package through the mtime cache, so it stays
-    cheap even though it runs on every draw.
+    The callback reads the package through the mtime cache and the
+    in-blend map through ``_ensure_import_exists`` (O(1) per draw), so
+    it stays cheap even though it runs on every redraw.
     """
     items = [("__NONE__", "Select a group…", "", 0, 0)]
-    package = _get_import_package(_import_package_cache, getattr(self, "filepath", ""))
-    for idx, gname in enumerate(sorted(package.get("groups", {})), 1):
-        exists = bpy.data.node_groups.get(gname) is not None
+    plan = _get_import_package(_import_package_cache, getattr(self, "filepath", ""))
+    _ensure_import_exists(plan)
+    exists = plan.get("exists", {})
+    for idx, gname in enumerate(sorted(plan.get("groups", {})), 1):
+        in_blend = exists.get(gname, False)
         items.append((gname, gname,
                       "Already in the .blend — only its missing dependencies "
-                      "will be imported" if exists else "Not in the .blend yet",
-                      'CHECKMARK' if exists else 'NODETREE',
+                      "will be imported" if in_blend else "Not in the .blend yet",
+                      'CHECKMARK' if in_blend else 'NODETREE',
                       idx))
     return items
 
