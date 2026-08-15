@@ -2,6 +2,77 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.3] - 2026-08-15
+
+### Added
+
+- **Deterministic JSON serialization (F1).** Node entries are emitted in
+  name order (per-node item collections also sorted by name), so
+  renaming/reordering produces minimal, stable git diffs and re-exporting
+  an unchanged group is byte-identical (roundtrip verified by the smoke
+  test). Links and interface items keep their creation order: link order
+  is functional (some volatile 5.2 nodes change their socket layout while
+  links are being made) and a NODES modifier requires the first interface
+  output to be geometry.
+- **Check on open (F2).** After loading a .blend, a deferred JSON-side
+  check (pure Python, chunked via timers — no tree hashing at load)
+  compares the package hashes against the stored baselines and shows a
+  non-intrusive notice ("N group(s) out of sync with JSON", status bar +
+  Sync panel + issues list). Toggleable via the `check_on_load` pref
+  (plug icon next to Refresh Status).
+- **Selective group import (F3).** "Import Group from JSON…" imports one
+  group plus its missing dependency closure from any JSON package:
+  - Panel picker with Blender's native search widget (`prop_search`),
+    a plan preview under the field (CHECKMARK in-blend / NODETREE to
+    import / ERROR divergent / STATUS_WARNING external refs) and a
+    "Track to JSON…" button that tracks the selected group to a package
+    of your choice (no active-tree dependency).
+  - Existing groups are **never overwritten** (skip mode); aligning
+    existing groups goes through Track + Pull / Keep JSON.
+  - Divergence detection ignores the socket records of group nodes whose
+    reference is not in the package (unverifiable noise).
+  - Live refresh pump redraws the picker every 0.5s while open, so a JSON
+    edit on disk shows up in under a second.
+- **Commit with Review (F4).** "Commit with Review…" lists every locally
+  edited group (conflicts default to Skip) and applies a per-group
+  decision: Keep JSON / Keep Blend / Skip.
+- Test packages (tests/, gitignored): `test_package_icons.json` (the four
+  picker icon states) and `test_package_search.json` (40 groups for
+  search testing).
+
+### Fixed
+
+- **`GN_SyncPrefs` properties were silently unregistered**: the assignment
+  syntax (`prop = bpy.props.X()`) registers nothing on Blender 4.x/5.x —
+  converted to the annotation syntax (regression guard added to the smoke
+  test).
+- **`UILayout.prop_search` argument shape**: `search_data` must be the
+  owning object with the collection property name, not the collection.
+- **EnumProperty items with icons require 5-tuples** (id, name, desc,
+  icon, number) on Blender 5.x — the 4-tuple is rejected.
+- **Icon enums**: `WARNING` was removed from the UI icon set in 5.2
+  (now `STATUS_WARNING`); `WindowManager.invoke_confirm` keeps the small
+  enum where `WARNING` is valid. The two must not be mixed.
+- **Picker performance**: the in-blend map and the package parse are
+  cached (mtime/group-count keyed) — drawing the picker over a 439-group
+  package costs ~0.3 ms instead of ~600 ms per redraw.
+- **Divergent status spurious for external references**: group nodes whose
+  reference is not in the package carry socket records that depend on
+  whatever tree is attached at import time; the picker's divergence
+  check drops them.
+- **Track Group report** now includes the tree name and the destination
+  package; UI strings no longer leak internal jargon.
+- **`bpy.app.timers.register` returns None in script/background
+  contexts** — the refresh pump tracks its registration with a flag,
+  never with the handle.
+
+### Tests
+
+- Smoke suite (Blender 5.1): 96 checks (deterministic roundtrip, minimal
+  rename diff, JSON-side check, selective import, zone pairs via
+  `add_zone`, commit review, picker states).
+- New-node E2E (Blender 5.2): 40 checks (unchanged).
+
 ## Technical note: zone node pairing (Simulation/Repeat/Foreach/Closure)
 
 **Why `bpy.ops.node.add_zone` is the ONLY way to create zone pairs from Python
