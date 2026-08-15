@@ -701,14 +701,49 @@ def _load_import_package(filepath: str) -> dict:
     import os
     data = None
     groups = {}
+    mtime = None
     if filepath and os.path.isfile(filepath):
+        try:
+            mtime = os.path.getmtime(filepath)
+        except OSError:
+            mtime = None
         data = read_json_tolerant(filepath)
         if isinstance(data, dict):
             if data.get("type") == "GN_UNIFIED_PACKAGE":
                 groups = data.get("node_groups", {})
             elif "nodes" in data:
                 groups = {data.get("name", "?"): data}
-    return {"filepath": filepath, "data": data, "groups": groups}
+    return {"filepath": filepath, "mtime": mtime, "data": data, "groups": groups}
+
+
+def _get_import_package(cache: dict, filepath: str) -> dict:
+    """Return the parsed package for *filepath*, re-reading only on change.
+
+    The dialog's draw() runs on every UI redraw, and parsing a 439-group
+    package takes ~a second — so the result is cached keyed by (path,
+    mtime).  *cache* is a plain dict owned by the caller.
+    """
+    import os
+    mtime = None
+    if filepath and os.path.isfile(filepath):
+        try:
+            mtime = os.path.getmtime(filepath)
+        except OSError:
+            mtime = None
+    cached = cache.get("plan")
+    if cached is not None and cached.get("filepath") == filepath and cached.get("mtime") == mtime:
+        return cached
+    plan = _load_import_package(filepath)
+    cache["plan"] = plan
+    return plan
+
+
+def _filter_group_names(groups, needle: str) -> list:
+    """Filter group names by case-insensitive substring (any position)."""
+    if not needle:
+        return list(groups)
+    low = needle.lower()
+    return [g for g in groups if low in g.lower()]
 
 
 def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
@@ -775,19 +810,21 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
     )
 
     def _plan(self):
-        plan = _load_import_package(self.filepath)
-        self._import_plan_cache = plan
-        return plan
+        if not hasattr(self, "_import_plan_cache"):
+            self._import_plan_cache = {}
+        return _get_import_package(self._import_plan_cache, self.filepath)
 
     def draw(self, context):
         layout = self.layout
         layout.label(text=self.filepath, icon='FILE')
         layout.prop(self, "search", text="", icon='VIEWZOOM')
         layout.separator()
-        groups = sorted(self._plan().get("groups", {}))
+        package = self._plan()
+        all_groups = sorted(package.get("groups", {}))
+        groups = _filter_group_names(all_groups, self.search)
         if self.search:
-            needle = self.search.lower()
-            groups = [g for g in groups if needle in g.lower()]
+            layout.label(text=f"{len(all_groups)} groups — {len(groups)} match",
+                         icon='FILTER')
         for gname in groups[:40]:
             exists = bpy.data.node_groups.get(gname) is not None
             row = layout.row(align=True)
