@@ -796,12 +796,53 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
 
 
 def _import_state_search_update(self, context):
-    """Redraw the UI on every keystroke so the picker filters live."""
+    """Redraw the UI on search changes so the picker filters live."""
+    global _import_state_search_ticks
+    _import_state_search_ticks += 1
     try:
         for area in context.screen.areas:
             area.tag_redraw()
     except Exception:
         pass
+
+
+_import_state_search_ticks: int = 0
+_import_pick_pump: object = None
+_import_pick_last_seen: str = ""
+
+
+def _ensure_import_pick_pump() -> None:
+    """Start (once) a timer that refreshes the panel while the picker is open.
+
+    Some Blender builds only commit panel text fields on Enter/blur, so
+    the picker also refreshes from a timer that watches the live value.
+    """
+    global _import_pick_pump, _import_pick_last_seen
+    if _import_pick_pump is not None:
+        return
+    try:
+        state = bpy.context.scene.gnt_import_state
+        _import_pick_last_seen = state.search if state else ""
+    except Exception:
+        pass
+
+    def _pump():
+        global _import_pick_pump, _import_pick_last_seen
+        try:
+            state = bpy.context.scene.gnt_import_state
+            if not state or not state.open:
+                _import_pick_pump = None
+                return None
+            if state.search != _import_pick_last_seen:
+                _import_pick_last_seen = state.search
+                for area in bpy.context.screen.areas:
+                    area.tag_redraw()
+        except Exception:
+            _import_pick_pump = None
+            return None
+        return 0.1
+
+    _import_pick_pump = bpy.app.timers.register(_pump, first_interval=0.1)
 
 
 class GN_ImportState(bpy.types.PropertyGroup):
@@ -857,30 +898,7 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
         state.filepath = self.filepath
         state.search = ""
         state.open = True
-        for area in context.screen.areas:
-            area.tag_redraw()
-        return {'FINISHED'}
-
-
-class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
-    bl_idname = "gn.sync_import_group_file"
-    bl_label = "Import Group from JSON…"
-    bl_description = ("Pick a JSON package and import one group plus its missing "
-                      "dependencies. Groups already present in the .blend are never touched.")
-    bl_options = {'REGISTER'}
-
-    filename_ext = ".json"
-    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
-
-    def execute(self, context):
-        import os
-        if not self.filepath or not os.path.isfile(self.filepath):
-            self.report({'ERROR'}, f"JSON file not found: {self.filepath}")
-            return {'CANCELLED'}
-        state = context.scene.gnt_import_state
-        state.filepath = self.filepath
-        state.search = ""
-        state.open = True
+        _ensure_import_pick_pump()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
