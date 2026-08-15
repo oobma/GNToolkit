@@ -206,7 +206,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                     if plan["external"]:
                         picker_box.label(
                             text=f"Unconnected refs: {', '.join(plan['external'])}",
-                            icon='WARNING')
+                            icon='STATUS_WARNING')
                 else:
                     picker_box.label(text="Group not found in this package",
                                      icon='ERROR')

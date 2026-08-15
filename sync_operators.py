@@ -154,7 +154,7 @@ class GN_OT_SyncUnlinkAll(bpy.types.Operator):
                 f"All {n} tracked groups will lose their tracking metadata.\n\n"
                 "The JSON files and the node trees are kept."
             ),
-            icon='WARNING',
+            icon='STATUS_WARNING',
         )
 
     def execute(self, context):
@@ -541,7 +541,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                     f"permanently overwritten with the JSON version.\n\n"
                     f"Are you sure you want to continue?"
                 ),
-                icon='WARNING',
+                icon='STATUS_WARNING',
             )
         return self.execute(context)
 
