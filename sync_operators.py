@@ -796,9 +796,7 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
 
 
 def _import_state_search_update(self, context):
-    """Redraw the UI on search changes so the picker filters live."""
-    global _import_state_search_ticks
-    _import_state_search_ticks += 1
+    """Redraw the UI when the picker search changes (programmatic sets)."""
     try:
         for area in context.screen.areas:
             area.tag_redraw()
@@ -806,43 +804,21 @@ def _import_state_search_update(self, context):
         pass
 
 
-_import_state_search_ticks: int = 0
-_import_pick_pump: object = None
-_import_pick_last_seen: str = ""
+def _listen_decision(event_type: str, value: str, search: str, n_matches: int) -> str:
+    """Map a modal keyboard event to a picker action.
 
-
-def _ensure_import_pick_pump() -> None:
-    """Start (once) a timer that refreshes the panel while the picker is open.
-
-    Some Blender builds only commit panel text fields on Enter/blur, so
-    the picker also refreshes from a timer that watches the live value.
+    Returns ``'append' | 'backspace' | 'esc_clear' | 'cancel' |
+    'import_single' | 'idle'``.
     """
-    global _import_pick_pump, _import_pick_last_seen
-    if _import_pick_pump is not None:
-        return
-    try:
-        state = bpy.context.scene.gnt_import_state
-        _import_pick_last_seen = state.search if state else ""
-    except Exception:
-        pass
-
-    def _pump():
-        global _import_pick_pump, _import_pick_last_seen
-        try:
-            state = bpy.context.scene.gnt_import_state
-            if not state or not state.open:
-                _import_pick_pump = None
-                return None
-            if state.search != _import_pick_last_seen:
-                _import_pick_last_seen = state.search
-                for area in bpy.context.screen.areas:
-                    area.tag_redraw()
-        except Exception:
-            _import_pick_pump = None
-            return None
-        return 0.1
-
-    _import_pick_pump = bpy.app.timers.register(_pump, first_interval=0.1)
+    if event_type == 'TEXT_INPUT':
+        return 'append' if value else 'idle'
+    if event_type == 'BACK_SPACE':
+        return 'backspace'
+    if event_type == 'ESC':
+        return 'esc_clear' if search else 'cancel'
+    if event_type == 'CONFIRM':
+        return 'import_single' if n_matches == 1 else 'idle'
+    return 'idle'
 
 
 class GN_ImportState(bpy.types.PropertyGroup):
@@ -850,6 +826,54 @@ class GN_ImportState(bpy.types.PropertyGroup):
     open: BoolProperty(default=False)
     filepath: StringProperty()
     search: StringProperty(update=_import_state_search_update)
+
+
+class GN_OT_SyncImportGroupListen(bpy.types.Operator):
+    """Modal keyboard listener for the import picker.
+
+    Panel text fields in Blender 5.x only commit their RNA value on
+    Enter/blur, so live filtering needs an operator that receives
+    TEXT_INPUT events directly (the same mechanism as node.add_search).
+    """
+    bl_idname = "gn.sync_import_group_listen"
+    bl_label = "Import Picker (keyboard)"
+    bl_options = {'INTERNAL', 'REGISTER'}
+
+    def invoke(self, context, event):
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        state = context.scene.gnt_import_state
+        if not state or not state.open:
+            return {'CANCELLED'}
+        decision = _listen_decision(event.type, event.unicode, state.search,
+                                    len(_filter_group_names(
+                                        sorted(_get_import_package(
+                                            _import_package_cache, state.filepath
+                                        ).get("groups", {})), state.search)))
+        if decision == 'append':
+            state.search += event.unicode
+        elif decision == 'backspace':
+            state.search = state.search[:-1]
+        elif decision == 'esc_clear':
+            state.search = ""
+        elif decision == 'cancel':
+            state.open = False
+            state.search = ""
+            state.filepath = ""
+            return {'CANCELLED'}
+        elif decision == 'import_single':
+            single = _filter_group_names(
+                sorted(_get_import_package(_import_package_cache, state.filepath)
+                       .get("groups", {})), state.search)
+            if len(single) == 1:
+                bpy.ops.gn.sync_import_group('EXEC_DEFAULT',
+                                             filepath=state.filepath,
+                                             group_name=single[0])
+        if context.area:
+            context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
 
 
 class GN_OT_SyncImportGroupClearSearch(bpy.types.Operator):
@@ -898,7 +922,7 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
         state.filepath = self.filepath
         state.search = ""
         state.open = True
-        _ensure_import_pick_pump()
+        bpy.ops.gn.sync_import_group_listen('INVOKE_DEFAULT')
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -1131,6 +1155,7 @@ classes = (
     GN_OT_SyncImportModified,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,
+    GN_OT_SyncImportGroupListen,
     GN_OT_SyncImportGroupClearSearch,
     GN_OT_SyncImportGroupClose,
     GN_OT_SyncCommitReview,

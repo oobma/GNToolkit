@@ -178,7 +178,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             from .sync_operators import _get_import_package, _filter_group_names, _import_package_cache
             package = _get_import_package(_import_package_cache, state.filepath)
             srow = picker_box.row(align=True)
-            srow.prop(state, "search", text="", icon='VIEWZOOM')
+            srow.label(text=state.search or "Type to search…", icon='VIEWZOOM')
             if state.search:
                 srow.operator("gn.sync_import_group_clear_search", text="", icon='X')
             all_groups = sorted(package.get("groups", {}))
