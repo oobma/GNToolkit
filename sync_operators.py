@@ -773,12 +773,14 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     groups that are not in the package.  Returns None when the group is
     not in the package.
     """
-    from .hash_utils import canonical_hash_from_tree, canonical_hash_from_json_data
+    from .hash_utils import canonicalize_node_tree_data
     from .importer import json_group_closure
+    from .serializer import serialize_node_tree
 
     if group_name not in groups:
         return None
     ordered, external = json_group_closure(groups, group_name)
+    external_set = set(external)
     existing = []
     missing = []
     divergent = []
@@ -792,9 +794,21 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
         if entry is None:
             continue
         try:
-            tree_hash = canonical_hash_from_tree(tree)
-            json_hash = canonical_hash_from_json_data(entry)
-            if tree_hash != json_hash:
+            # Group nodes whose reference is NOT in the package carry
+            # socket records that depend on whatever tree is attached at
+            # import time — not verifiable content, so they are dropped
+            # from the divergence comparison.
+            def _canon_stripped(raw):
+                canon = canonicalize_node_tree_data(raw)
+                for nd in canon.get("nodes", []):
+                    if (nd.get("type") == "GeometryNodeGroup"
+                            and nd.get("node_tree_reference") in external_set):
+                        nd.pop("inputs", None)
+                        nd.pop("outputs", None)
+                return canon
+            tree_canon = _canon_stripped(serialize_node_tree(tree))
+            json_canon = _canon_stripped(entry)
+            if tree_canon != json_canon:
                 divergent.append(name)
         except Exception:
             pass
@@ -835,18 +849,20 @@ def _fill_import_items(state) -> None:
 
 
 # Preview of the selected group's import plan, keyed by
-# (filepath, group_name, node-group count) so it is computed once per
-# selection instead of on every draw.
+# (filepath, package mtime, group_name, node-group count) so it is
+# computed once per selection instead of on every draw.  The mtime makes
+# a JSON edit on disk refresh the preview (e.g. to test divergence).
 _selection_plan_cache: dict = {}
 
 
 def _compute_selection_plan(state) -> dict | None:
     """Return the cached closure plan shown under the search field."""
-    key = (state.filepath, state.group_name, len(bpy.data.node_groups))
+    package = _get_import_package(_import_package_cache, state.filepath)
+    key = (state.filepath, package.get("mtime"), state.group_name,
+           len(bpy.data.node_groups))
     cached = _selection_plan_cache.get(key)
     if cached is not None:
         return cached
-    package = _get_import_package(_import_package_cache, state.filepath)
     plan = _compute_import_plan(package.get("groups", {}), state.group_name)
     if plan is None:
         return None
@@ -866,6 +882,7 @@ class GN_OT_SyncImportGroupClose(bpy.types.Operator):
         state.group_name = ""
         state.filepath = ""
         state.items.clear()
+        _selection_plan_cache.clear()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -891,6 +908,7 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
         state.group_name = ""
         state.open = True
         _fill_import_items(state)
+        _selection_plan_cache.clear()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -957,6 +975,7 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
         finally:
             end_zone_session()
             restore_zone_area()
+        _selection_plan_cache.clear()
 
         for area in context.screen.areas:
             area.tag_redraw()
