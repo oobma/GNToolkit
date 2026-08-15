@@ -1999,6 +1999,40 @@ def _final_menu_defaults_pass(ng, data: dict, interface_map: dict,
 # Main import logic
 # ---------------------------------------------------------------------------
 
+def json_group_closure(groups: dict, start: str) -> tuple[list[str], list[str]]:
+    """Return the transitive dependency closure of a JSON group.
+
+    Walks ``node_tree_reference`` links across the package *groups* (a
+    unified ``node_groups`` dict or a single-group cache) depth-first,
+    so the returned list orders dependencies before the groups that use
+    them (post-order).  The second return value lists referenced groups
+    that are NOT in the package — external references that cannot be
+    imported and will be left unconnected.
+    """
+    ordered: list[str] = []
+    external: list[str] = []
+    visited: set[str] = set()
+
+    def _visit(name: str) -> None:
+        if name in visited:
+            return
+        visited.add(name)
+        gdata = groups.get(name)
+        if gdata is None:
+            external.append(name)
+            return
+        for node in gdata.get("nodes", []):
+            if node.get("type") != "GeometryNodeGroup":
+                continue
+            ref = node.get("node_tree_reference")
+            if ref and ref != name:
+                _visit(ref)
+        ordered.append(name)
+
+    _visit(start)
+    return ordered, external
+
+
 def import_node_tree_recursive(
     data: dict,
     json_cache: dict,

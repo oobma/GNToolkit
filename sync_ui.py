@@ -163,6 +163,10 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         check_row.prop(prefs, "check_on_load", text="", icon='PLUGIN',
                        toggle=True, expand=True)
 
+        import_row = layout.row(align=True)
+        import_row.operator("gn.sync_import_group", text="Import Group from JSON…",
+                            icon='IMPORT', invoke_default=True)
+
         remotes = _json_remotes(tracked)
         if remotes:
             layout.separator()

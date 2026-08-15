@@ -692,6 +692,194 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 # Registration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Operator: selective group import with dependency closure (F3)
+# ---------------------------------------------------------------------------
+
+def _load_import_package(filepath: str) -> dict:
+    """Read a JSON package into (data, groups) with a single disk read."""
+    import os
+    data = None
+    groups = {}
+    if filepath and os.path.isfile(filepath):
+        data = read_json_tolerant(filepath)
+        if isinstance(data, dict):
+            if data.get("type") == "GN_UNIFIED_PACKAGE":
+                groups = data.get("node_groups", {})
+            elif "nodes" in data:
+                groups = {data.get("name", "?"): data}
+    return {"filepath": filepath, "data": data, "groups": groups}
+
+
+def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
+    """Analyse what importing *group_name* over *groups* would do.
+
+    Returns ``{"ordered", "existing", "missing", "divergent",
+    "external"}`` — the closure (dependencies first), the members
+    already present in the .blend, the missing ones, the existing ones
+    whose .blend version differs from the package, and the referenced
+    groups that are not in the package.  Returns None when the group is
+    not in the package.
+    """
+    from .hash_utils import canonical_hash_from_tree, canonical_hash_from_json_data
+    from .importer import json_group_closure
+
+    if group_name not in groups:
+        return None
+    ordered, external = json_group_closure(groups, group_name)
+    existing = []
+    missing = []
+    divergent = []
+    for name in ordered:
+        tree = bpy.data.node_groups.get(name)
+        if tree is None:
+            missing.append(name)
+            continue
+        existing.append(name)
+        entry = groups.get(name)
+        if entry is None:
+            continue
+        try:
+            tree_hash = canonical_hash_from_tree(tree)
+            json_hash = canonical_hash_from_json_data(entry)
+            if tree_hash != json_hash:
+                divergent.append(name)
+        except Exception:
+            pass
+    return {
+        "ordered": ordered,
+        "existing": existing,
+        "missing": missing,
+        "divergent": divergent,
+        "external": external,
+    }
+
+
+class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
+    bl_idname = "gn.sync_import_group"
+    bl_label = "Import Group from JSON"
+    bl_description = ("Import one node group plus its missing dependencies from a JSON "
+                      "package. Groups already present in the .blend are never touched.")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    group_name: StringProperty(
+        name="Group",
+        description="Node group to import from the selected JSON package",
+    )
+    search: StringProperty(
+        name="Search",
+        description="Filter the package groups by name",
+    )
+
+    def _plan(self):
+        plan = _load_import_package(self.filepath)
+        self._import_plan_cache = plan
+        return plan
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text=self.filepath, icon='FILE')
+        layout.prop(self, "search", text="", icon='VIEWZOOM')
+        layout.separator()
+        groups = sorted(self._plan().get("groups", {}))
+        if self.search:
+            needle = self.search.lower()
+            groups = [g for g in groups if needle in g.lower()]
+        for gname in groups[:40]:
+            exists = bpy.data.node_groups.get(gname) is not None
+            row = layout.row(align=True)
+            op = row.operator(
+                "gn.sync_import_group", text=gname,
+                icon='INFO' if exists else 'NODETREE',
+            )
+            op.filepath = self.filepath
+            op.group_name = gname
+            if exists:
+                row.label(text="in blend", icon='CHECKMARK')
+        if len(groups) > 40:
+            layout.label(text=f"... {len(groups) - 40} more — refine the search", icon='INFO')
+        if not groups:
+            layout.label(text="No groups match the search", icon='INFO')
+        layout.separator()
+        layout.label(text="Existing groups are never touched — only missing "
+                          "dependencies are imported.", icon='INFO')
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            context.window_manager.fileselect_add(self)
+            return {'RUNNING_MODAL'}
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        import os
+        from .error_tracker import ImportErrorTracker
+        from .importer import import_node_tree_recursive
+
+        if not self.filepath or not os.path.isfile(self.filepath):
+            self.report({'ERROR'}, "Select a JSON package file first")
+            return {'CANCELLED'}
+        if not self.group_name:
+            return context.window_manager.invoke_props_dialog(self)
+
+        package = self._plan()
+        groups = package.get("groups", {})
+        target_data = groups.get(self.group_name)
+        if target_data is None:
+            self.report({'ERROR'}, f"Group '{self.group_name}' not found in the package")
+            return {'CANCELLED'}
+        plan = _compute_import_plan(groups, self.group_name)
+        if plan is None:
+            self.report({'ERROR'}, f"Group '{self.group_name}' not found in the package")
+            return {'CANCELLED'}
+
+        tracker = ImportErrorTracker()
+        imported = []
+        try:
+            if bpy.data.node_groups.get(self.group_name) is None:
+                # Fresh import: the recursive importer pulls the whole
+                # missing dependency closure from the full package cache.
+                tree = import_node_tree_recursive(target_data, groups, {}, context, tracker)
+                if tree is not None:
+                    imported.append(self.group_name)
+            else:
+                # Skip mode: existing groups are never touched; only the
+                # missing closure members are imported.
+                for name in plan["missing"]:
+                    entry = groups.get(name)
+                    if entry is None:
+                        continue
+                    tree = import_node_tree_recursive(entry, groups, {}, context, tracker)
+                    if tree is not None:
+                        imported.append(name)
+        finally:
+            end_zone_session()
+            restore_zone_area()
+
+        for area in context.screen.areas:
+            area.tag_redraw()
+
+        parts = []
+        if imported:
+            parts.append(f"Imported {len(imported)}: {', '.join(imported)}")
+        if plan["existing"]:
+            parts.append(f"{len(plan['existing'])} already existed (untouched)")
+        if plan["divergent"]:
+            parts.append(f"Divergent: {', '.join(plan['divergent'])} — Track + Pull to align")
+        if plan["external"]:
+            parts.append(f"Unconnected refs: {', '.join(plan['external'])}")
+        if tracker.has_errors:
+            parts.append(f"{tracker.warn_count} import warning(s) — check console")
+        msg = " — ".join(parts) or "Nothing to import"
+        if imported:
+            msg += " — not tracked yet; use Track Group / Track All to sync"
+        self.report({'WARNING'} if (plan["divergent"] or plan["external"]
+                                    or tracker.has_errors) else {'INFO'}, msg)
+        return {'FINISHED'}
+
+
 classes = (
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
@@ -708,4 +896,5 @@ classes = (
     GN_OT_SyncExportAll,
     GN_OT_SyncExportModified,
     GN_OT_SyncImportModified,
+    GN_OT_SyncImportGroup,
 )
