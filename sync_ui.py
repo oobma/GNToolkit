@@ -471,27 +471,31 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 class GN_SyncPrefs(bpy.types.PropertyGroup):
-    """Persistent preferences for the issues panel."""
+    """Persistent preferences for the issues panel.
 
-    show_blend_modified = bpy.props.BoolProperty(
+    NOTE: properties must use the annotation syntax (``name: bpy.props.X``)
+    — Blender 4.x/5.x silently ignores the assignment syntax.
+    """
+
+    show_blend_modified: bpy.props.BoolProperty(
         name="Show Edited Locally", default=True,
     )
-    show_json_modified = bpy.props.BoolProperty(
+    show_json_modified: bpy.props.BoolProperty(
         name="Show Changed in JSON", default=True,
     )
-    show_conflict = bpy.props.BoolProperty(
+    show_conflict: bpy.props.BoolProperty(
         name="Show Conflict", default=True,
     )
-    show_orphan = bpy.props.BoolProperty(
+    show_orphan: bpy.props.BoolProperty(
         name="Show Missing in Blend", default=True,
     )
-    show_json_missing = bpy.props.BoolProperty(
+    show_json_missing: bpy.props.BoolProperty(
         name="Show JSON File Missing", default=True,
     )
-    show_ignored = bpy.props.BoolProperty(
+    show_ignored: bpy.props.BoolProperty(
         name="Show Ignored", default=False,
     )
-    check_on_load = bpy.props.BoolProperty(
+    check_on_load: bpy.props.BoolProperty(
         name="Check JSON on open",
         description="After loading a .blend, compare the JSON hashes in the background "
                     "and show a notice when files changed outside Blender",
