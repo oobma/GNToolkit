@@ -746,6 +746,32 @@ def _filter_group_names(groups, needle: str) -> list:
     return [g for g in groups if low in g.lower()]
 
 
+def _apply_search_keystroke(search: str, event_type: str, unicode: str) -> str:
+    """Return *search* after a keyboard event (TEXT_INPUT / BACK_SPACE)."""
+    if event_type == 'TEXT_INPUT' and unicode:
+        return search + unicode
+    if event_type == 'BACK_SPACE' and search:
+        return search[:-1]
+    return search
+
+
+def _modal_decision(event_type: str, unicode: str, search: str, n_matches: int) -> str:
+    """Map a modal keyboard event to an action.
+
+    Returns ``'append' | 'backspace' | 'esc_clear' | 'cancel' |
+    'import_single' | 'idle'``.
+    """
+    if event_type == 'TEXT_INPUT':
+        return 'append' if unicode else 'idle'
+    if event_type == 'BACK_SPACE':
+        return 'backspace'
+    if event_type == 'ESC':
+        return 'esc_clear' if search else 'cancel'
+    if event_type == 'CONFIRM':
+        return 'import_single' if n_matches == 1 else 'idle'
+    return 'idle'
+
+
 def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     """Analyse what importing *group_name* over *groups* would do.
 
@@ -790,6 +816,33 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     }
 
 
+class GN_PickRequest(bpy.types.PropertyGroup):
+    """Cross-instance request from the popup rows to the modal picker."""
+    filepath: StringProperty()
+    group_name: StringProperty()
+    clear_search: BoolProperty(default=False)
+
+
+class GN_OT_SyncImportGroupPick(bpy.types.Operator):
+    bl_idname = "gn.sync_import_group_pick"
+    bl_label = "Pick Import Group"
+    bl_description = "Request the import picker to select this group (or clear its search)"
+    bl_options = {'INTERNAL'}
+
+    filepath: StringProperty()
+    group_name: StringProperty()
+    clear_search: BoolProperty(default=False)
+
+    def execute(self, context):
+        pick = context.window_manager.gnt_import_pick
+        if self.clear_search:
+            pick.clear_search = True
+        else:
+            pick.filepath = self.filepath
+            pick.group_name = self.group_name
+        return {'FINISHED'}
+
+
 class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.sync_import_group"
     bl_label = "Import Group from JSON"
@@ -814,41 +867,91 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
             self._import_plan_cache = {}
         return _get_import_package(self._import_plan_cache, self.filepath)
 
+    def _matches(self):
+        package = self._plan()
+        return _filter_group_names(sorted(package.get("groups", {})), self.search)
+
+    def _single_match(self):
+        matches = self._matches()
+        return matches[0] if len(matches) == 1 else None
+
     def draw(self, context):
         layout = self.layout
         layout.label(text=self.filepath, icon='FILE')
-        layout.prop(self, "search", text="", icon='VIEWZOOM')
+        row = layout.row(align=True)
+        row.label(text=self.search or "Type to search…", icon='VIEWZOOM')
+        if self.search:
+            op = row.operator("gn.sync_import_group_pick", text="", icon='X')
+            op.clear_search = True
         layout.separator()
-        package = self._plan()
-        all_groups = sorted(package.get("groups", {}))
-        groups = _filter_group_names(all_groups, self.search)
+        all_groups = sorted(self._plan().get("groups", {}))
+        groups = self._matches()
         if self.search:
             layout.label(text=f"{len(all_groups)} groups — {len(groups)} match",
                          icon='FILTER')
         for gname in groups[:40]:
             exists = bpy.data.node_groups.get(gname) is not None
-            row = layout.row(align=True)
-            op = row.operator(
-                "gn.sync_import_group", text=gname,
-                icon='INFO' if exists else 'NODETREE',
-            )
+            r = layout.row(align=True)
+            op = r.operator("gn.sync_import_group_pick", text=gname,
+                            icon='INFO' if exists else 'NODETREE')
             op.filepath = self.filepath
             op.group_name = gname
             if exists:
-                row.label(text="in blend", icon='CHECKMARK')
+                r.label(text="in blend", icon='CHECKMARK')
         if len(groups) > 40:
             layout.label(text=f"... {len(groups) - 40} more — refine the search", icon='INFO')
         if not groups:
             layout.label(text="No groups match the search", icon='INFO')
         layout.separator()
-        layout.label(text="Existing groups are never touched — only missing "
-                          "dependencies are imported.", icon='INFO')
+        layout.label(text="Type to filter — Esc clears, Enter imports a single match",
+                     icon='INFO')
 
     def invoke(self, context, event):
         if not self.filepath:
             context.window_manager.fileselect_add(self)
             return {'RUNNING_MODAL'}
-        return context.window_manager.invoke_props_dialog(self)
+        return self._open_picker(context)
+
+    def _open_picker(self, context):
+        context.window_manager.modal_handler_add(self)
+        return context.window_manager.invoke_popup(self, width=560)
+
+    def modal(self, context, event):
+        pick = context.window_manager.gnt_import_pick
+        if pick and pick.group_name:
+            self.filepath = pick.filepath or self.filepath
+            self.group_name = pick.group_name
+            pick.filepath = ""
+            pick.group_name = ""
+            return {'FINISHED'}
+        if pick and pick.clear_search:
+            pick.clear_search = False
+            self.search = ""
+            if context.area:
+                context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        decision = _modal_decision(event.type, event.unicode, self.search,
+                                   len(self._matches()))
+        if decision == 'append':
+            self.search = _apply_search_keystroke(self.search, 'TEXT_INPUT', event.unicode)
+            if context.area:
+                context.area.tag_redraw()
+        elif decision == 'backspace':
+            self.search = _apply_search_keystroke(self.search, 'BACK_SPACE', "")
+            if context.area:
+                context.area.tag_redraw()
+        elif decision == 'esc_clear':
+            self.search = ""
+            if context.area:
+                context.area.tag_redraw()
+        elif decision == 'cancel':
+            return {'CANCELLED'}
+        elif decision == 'import_single':
+            single = self._single_match()
+            if single:
+                self.group_name = single
+                return {'FINISHED'}
+        return {'RUNNING_MODAL'}
 
     def execute(self, context):
         import os
@@ -859,7 +962,7 @@ class GN_OT_SyncImportGroup(bpy.types.Operator, ImportHelper):
             self.report({'ERROR'}, "Select a JSON package file first")
             return {'CANCELLED'}
         if not self.group_name:
-            return context.window_manager.invoke_props_dialog(self)
+            return self._open_picker(context)
 
         package = self._plan()
         groups = package.get("groups", {})
@@ -1042,6 +1145,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
 classes = (
     GN_CommitReviewChoice,
     GN_CommitReview,
+    GN_PickRequest,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
     GN_OT_SyncUnlink,
@@ -1058,5 +1162,6 @@ classes = (
     GN_OT_SyncExportModified,
     GN_OT_SyncImportModified,
     GN_OT_SyncImportGroup,
+    GN_OT_SyncImportGroupPick,
     GN_OT_SyncCommitReview,
 )
