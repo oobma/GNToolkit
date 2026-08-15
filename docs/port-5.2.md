@@ -4,7 +4,7 @@ Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
 the headless suites on Blender 5.1.1 and 5.2.0 LTS, including the
 new-node E2E for the 25 new instantiable 5.2 node classes and every GN
 socket type. The currently maintained suites are
-`tests/smoke_test_5.1.py` (**96 checks**, 5.1) and
+`tests/smoke_test_5.1.py` (**99 checks**, 5.1) and
 `tests/test_52_new_nodes_e2e.py` (**40 checks**, 5.2-only); the
 per-test table below reflects the suite state as of 2026-08-13.
 This document records the research and the changes the port required so
@@ -47,7 +47,7 @@ e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
 one root cause (data-type-driven socket layouts) except the modifier RNA.
 
 **Current state (2026-08-13):** the maintained suites are
-`tests/smoke_test_5.1.py` (96 checks) and
+`tests/smoke_test_5.1.py` (99 checks) and
 `tests/test_52_new_nodes_e2e.py` (40 checks, 5.2-only); the per-test
 table above reflects the suite state as of that date (test #1 was 41
 checks then — it grew to 96 with the 0.2.3 additions).

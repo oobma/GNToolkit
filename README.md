@@ -53,7 +53,7 @@ file is the RNA (working cache).
 ## Compatibility
 
 Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0; the maintained
-suites are `tests/smoke_test_5.1.py` — 96 checks — and
+suites are `tests/smoke_test_5.1.py` — 99 checks — and
 `tests/test_52_new_nodes_e2e.py` — 40 checks, 5.2-only). The 5.2 port
 details are recorded in [docs/port-5.2.md](docs/port-5.2.md). What the
 port required:

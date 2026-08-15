@@ -65,10 +65,16 @@ All notable changes to this project are documented in this file.
 - **`bpy.app.timers.register` returns None in script/background
   contexts** — the refresh pump tracks its registration with a flag,
   never with the handle.
+- **Zone pairs are created with `pair_with_output()`** — a public RNA
+  method on the zone input nodes, no operator and no Node Editor area
+  (works headless). The importer's `add_zone` machinery (`run_add_zone_operator`,
+  `ensure_zone_area`/`restore_zone_area`, zone sessions) was removed
+  (~300 lines); all four zone types roundtrip headless (T14b/T14c).
+  See the Technical note below.
 
 ### Tests
 
-- Smoke suite (Blender 5.1): 96 checks (deterministic roundtrip, minimal
+- Smoke suite (Blender 5.1): 99 checks (deterministic roundtrip, minimal
   rename diff, JSON-side check, selective import, zone pairs via
   `add_zone`, commit review, picker states).
 - New-node E2E (Blender 5.2): 40 checks (unchanged).
