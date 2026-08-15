@@ -6,7 +6,7 @@ gn_toolkit.constants — All constants and immutable sets for the addon.
 # Canonical addon version — single source of truth.
 # Reflected in bl_info (__init__.py), exported JSON files, the sidecar
 # metadata file, and UI labels.
-ADDON_VERSION = "0.2.2"
+ADDON_VERSION = "0.2.3"
 
 # Marker written to unified JSON packages. Written for user inspection
 # only; importers never read it.
