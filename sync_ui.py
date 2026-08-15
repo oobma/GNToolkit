@@ -217,9 +217,9 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                         picker_box.label(
                             text=f"Unconnected refs: {', '.join(plan['external'])}",
                             icon='STATUS_WARNING')
-                    for name, book in _tracked_elsewhere_notes(state, plan):
+                    for name, other_pkg in _tracked_elsewhere_notes(state, plan):
                         picker_box.label(
-                            text=f"{name} — tracked to: {book} (not this package)",
+                            text=f"{name} — tracked to: {other_pkg} (not this package)",
                             icon='INFO')
                 else:
                     picker_box.label(text="Group not found in this package",

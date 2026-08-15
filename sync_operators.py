@@ -9,6 +9,7 @@ resolving, and checking the sync state of Geometry Node groups.
 from __future__ import annotations
 
 import bpy
+import os
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
@@ -90,7 +91,9 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
         try:
             sync_uuid = sync_manager.link_group(tree, self.filepath)
             sync_manager.save()
-            self.report({'INFO'}, f"Now tracking '{tree.name}' (UUID: {sync_uuid[:8]}...)")
+            self.report({'INFO'},
+                        f"Now tracking '{tree.name}' to {os.path.basename(self.filepath)} "
+                        f"(UUID: {sync_uuid[:8]}...)")
         except Exception as e:
             self.report({'ERROR'}, f"Failed to link: {e}")
             return {'CANCELLED'}
@@ -1082,7 +1085,7 @@ class GN_OT_SyncImportGroupTrack(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_import_group_track"
     bl_label = "Track Imported Group to JSON…"
     bl_description = ("Track the imported group (and its untracked dependencies) to a JSON "
-                      "package: the group is written into the book and becomes sync-tracked")
+                      "package: the group is written into the JSON and becomes sync-tracked")
     bl_options = {'REGISTER'}
 
     filename_ext = ".json"
