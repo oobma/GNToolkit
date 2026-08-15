@@ -11,6 +11,7 @@ from __future__ import annotations
 import bpy
 import json
 import os
+import time
 import traceback
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, BoolProperty
@@ -315,6 +316,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     _current_name = ""
     _groups_done = 0
     _total_groups = 0
+    _start_time: float = 0.0
 
     def draw(self, context):
         self.layout.prop(self, "apply_modifiers")
@@ -381,6 +383,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
 
         context.window_manager.progress_begin(0, 100)
         context.window_manager.progress_update(0)
+        self._start_time = time.perf_counter()
         self._timer = context.window_manager.event_timer_add(0.02, window=context.window)
         context.window.cursor_modal_set('WAIT')
 
@@ -440,9 +443,11 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             # apply modifiers and finish.
             if self._current_gen is None and not self._group_names:
                 self._process_modifiers(context)
-                msg = "Package import finished successfully."
+                elapsed = time.perf_counter() - self._start_time
+                msg = f"Package import finished successfully in {elapsed:.1f}s."
                 if self._tracker and self._tracker.has_errors:
-                    msg = f"Package import finished with {self._tracker.warn_count} warnings (Check Console)."
+                    msg = (f"Package import finished in {elapsed:.1f}s with "
+                           f"{self._tracker.warn_count} warnings (Check Console).")
                     self.report({'WARNING'}, msg)
                 else:
                     self.report({'INFO'}, msg)
