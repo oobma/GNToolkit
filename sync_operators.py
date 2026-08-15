@@ -852,32 +852,35 @@ def _fill_import_items(state) -> None:
 # events, so a JSON edit on disk would not show until the mouse moves.
 # A lightweight timer redraws the areas every 0.5s while open (and
 # stops itself when the picker closes).  The draw itself stays cached —
-# no file reads or hashing unless the file actually changed.
-_picker_pump: object = None
+# no file reads or hashing unless the file actually changed.  The
+# registration is tracked with a flag: ``bpy.app.timers.register`` may
+# return None (background/script contexts), so the handle is unusable.
+_picker_pump_active: bool = False
 
 
 def _ensure_picker_pump() -> None:
     """Start (once) the picker refresh timer; stops when it closes."""
-    global _picker_pump
-    if _picker_pump is not None:
+    global _picker_pump_active
+    if _picker_pump_active:
         return
 
     def _pump():
-        global _picker_pump
+        global _picker_pump_active
         try:
             state = bpy.context.scene.gnt_import_state
             if not state or not state.open:
-                _picker_pump = None
+                _picker_pump_active = False
                 return None
             for win in bpy.context.window_manager.windows:
                 for area in win.screen.areas:
                     area.tag_redraw()
         except Exception:
-            _picker_pump = None
+            _picker_pump_active = False
             return None
         return 0.5
 
-    _picker_pump = bpy.app.timers.register(_pump, first_interval=0.5)
+    bpy.app.timers.register(_pump, first_interval=0.5)
+    _picker_pump_active = True
 
 
 # Preview of the selected group's import plan, keyed by
