@@ -13,12 +13,25 @@ file is the RNA (working cache).
   and NODES modifier setups to/from a single JSON package, with in-place
   update of existing groups on import.
 - **Export active group** with its full dependency chain.
+- **Deterministic JSON serialization**: nodes are emitted in name order,
+  so renaming/reordering produces minimal, stable git diffs, and
+  re-exporting an unchanged group is byte-identical.
 - **DNA/RNA sync**: track any node group against a JSON file and detect
   changes on both sides with canonical hashing.
+- **Check on open**: after loading a .blend, a background JSON-side check
+  shows a non-intrusive notice when JSON files changed outside Blender
+  (toggleable).
 - **Status detection** per group: Synced, Edited Locally, Changed in JSON,
   Conflict, Missing in Blend, Untracked, JSON File Missing.
 - **Sync operations**: Track (start), Commit Modified, Pull from JSON,
   Commit All, Refresh Status.
+- **Selective group import**: pick one group from a JSON package and
+  import it plus its missing dependency closure — searchable native
+  picker with a plan preview (in-blend / to-import / divergent /
+  external refs); existing groups are never overwritten; track-to-JSON
+  built in.
+- **Commit with Review**: decide per group (Keep JSON / Keep Blend /
+  Skip) before committing locally edited groups.
 - **JSON remotes visibility**: the Sync panel always shows where each group
   is tracked — the active group's JSON (`Active: name → file.json`) and a
   list of all tracked JSON files with group counts, copy-path and
@@ -39,10 +52,11 @@ file is the RNA (working cache).
 
 ## Compatibility
 
-Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0, full suite
-187/187 checks on 5.1.1 and 227/227 on 5.2.0, same code; the 5.2-only
-new-node E2E adds 40 checks). The 5.2 port details are recorded in
-[docs/port-5.2.md](docs/port-5.2.md). What the port required:
+Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0; the maintained
+suites are `tests/smoke_test_5.1.py` — 96 checks — and
+`tests/test_52_new_nodes_e2e.py` — 40 checks, 5.2-only). The 5.2 port
+details are recorded in [docs/port-5.2.md](docs/port-5.2.md). What the
+port required:
 
 - Geometry Nodes modifier inputs/outputs: version-gated between the
   legacy custom properties (`modifier["identifier"]`) and the 5.2 RNA
@@ -50,7 +64,7 @@ new-node E2E adds 40 checks). The 5.2 port details are recorded in
 - Data-type-driven node sockets (Compare, Random Value, Boolean Math
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
-  and 5.2 produce identical fingerprints (HASH_VERSION 4) and projects
+  and 5.2 produce identical fingerprints (HASH_VERSION 5) and projects
   track across versions without noise.
 
 ## Installation
@@ -59,7 +73,7 @@ new-node E2E adds 40 checks). The 5.2 port details are recorded in
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.2.2.zip`).
+   `GNToolkit-v0.2.3.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    downloaded zip (the zip contains the `ADNRNAGNTOOLKIT/` addon folder).
 3. Enable **"GNToolkit"** in the list.
@@ -128,6 +142,44 @@ files missing from disk).
 Sync metadata is stored in a sidecar file next to the .blend
 (`<project>.blend.gntsync`) and saved automatically on file save.
 
+### Selective import (one group + its dependencies)
+
+**Import Group from JSON…** picks a package and opens a searchable picker
+in the Sync panel:
+
+1. Use the search field (native Blender search widget) to find a group;
+   the plan preview under the field shows what will happen:
+   - **CHECKMARK** — already in the .blend (never touched),
+   - **NODETREE** — will be imported (missing dependencies included),
+   - **ERROR** — exists in the .blend but differs from the package
+     (align it with Track + Pull / Keep JSON),
+   - **STATUS_WARNING** — referenced but not in this package.
+2. **Import** imports the group plus its missing dependency closure.
+   Existing groups are never overwritten; the picker stays open to
+   import several groups in a row.
+3. **Track to JSON…** writes the selected group (and its untracked
+   dependencies) into a package of your choice and starts tracking it —
+   no active-tree dependency.
+4. **Close Picker** closes it. A live refresh redraws the picker every
+   0.5s, so JSON edits on disk show up within a second.
+
+### Commit with Review
+
+**Commit with Review…** lists every locally edited group (conflicts
+default to **Skip**) and applies your per-group decision:
+
+- **Keep Blend** — commit the .blend version into the JSON,
+- **Keep JSON** — pull the JSON version into the .blend,
+- **Skip** — leave the group untouched.
+
+### Check on open
+
+With **check_on_load** enabled (plug icon next to Refresh Status), after
+opening a .blend the addon compares the JSON hashes in the background
+and shows a non-intrusive notice when files changed outside Blender —
+status bar message, a warning row in the Sync panel and entries in the
+Sync Issues list. Use **Pull** on those groups to apply the JSON changes.
+
 ## How it works
 
 | Term | Meaning |
@@ -174,10 +226,13 @@ links and tree properties — enough to fully reconstruct the group.
 
 | File | Role |
 |---|---|
+| `constants.py` | Versions, shared constants and skip-lists |
 | `serializer.py` | Export: node trees → JSON-safe dictionaries |
 | `importer.py` | Import: JSON → node trees (recursive reconstruction) |
 | `codec.py` | Value conversion between Blender and JSON |
 | `hash_utils.py` | Canonical SHA-256 hashing |
+| `error_tracker.py` | Import error/warning accounting |
+| `socket_utils.py` | Robust socket lookup and dependency graph |
 | `sync_manager.py` | State detection, batch operations, lock handling |
 | `sync_metadata.py` | Sidecar file and UUID tracking |
 | `sync_operators.py` | Sync operators (track, commit, pull, resolve, ...) |
