@@ -233,6 +233,19 @@ def serialize_node(node, skip_output_defaults: bool = False):
     if handler:
         handler(node, data)
 
+    # Deterministic output ordering for the per-node item collections
+    # (name-based, matching the canonical hash).
+    for coll_name in ("zone_items", "menu_items_data", "capture_items_data",
+                      "list_items_data", "bundle_items_data"):
+        coll = data.get(coll_name)
+        if isinstance(coll, dict):
+            data[coll_name] = {
+                k: sorted(v, key=lambda x: x.get("name", ""))
+                for k, v in coll.items()
+            }
+        elif coll:
+            data[coll_name] = sorted(coll, key=lambda x: x.get("name", ""))
+
     # Paired zone node detection
     if hasattr(node, 'paired_output') and node.paired_output:
         data["zone_paired_node"] = node.paired_output.name
@@ -378,6 +391,15 @@ def serialize_node_tree(tree):
                 if "enum_items" in i_data:
                     s_data["enum_items"] = i_data["enum_items"]
                 data["inputs" if s_data["in_out"] == 'INPUT' else "outputs"].append(s_data)
+
+        # Interface items keep Blender's items_tree order: the order of
+        # the OUTPUT sockets is runtime semantics (a NODES modifier
+        # requires the FIRST output to be geometry, and modifier input
+        # keys are positional).  The importer creates items in this same
+        # order, so a roundtrip is byte-identical without sorting.
+        for it in data["interface_items"]:
+            if it.get("enum_items"):
+                it["enum_items"] = sorted(it["enum_items"], key=lambda x: x.get("name", ""))
     else:
         for inp in tree.inputs:
             data["inputs"].append({
@@ -394,6 +416,8 @@ def serialize_node_tree(tree):
                 "type": out.type,
                 "bl_idname": out.bl_idname,
             })
+        data["inputs"].sort(key=lambda s: s.get("name", ""))
+        data["outputs"].sort(key=lambda s: s.get("name", ""))
 
     for node in tree.nodes:
         data["nodes"].append(serialize_node(node, skip_output_defaults=tree.type == 'GEOMETRY'))
@@ -406,6 +430,15 @@ def serialize_node_tree(tree):
             "to_socket_id": link.to_socket.identifier,
             "to_socket_name": link.to_socket.name,
         })
+
+    # Deterministic output ordering for the node list (name-based,
+    # mirroring the canonical hash) so that re-exporting an unchanged
+    # group produces a stable git diff and a rename only moves the
+    # renamed block.  Links and interface items keep their creation
+    # order: some volatile nodes change their socket layout while links
+    # are being made, so link order is functional, and a NODES modifier
+    # requires the first interface output to be geometry.
+    data["nodes"].sort(key=lambda n: n.get("name", ""))
 
     data["tree_properties"] = {}
     for prop in tree.bl_rna.properties:
