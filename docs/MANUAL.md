@@ -8,7 +8,7 @@ layer converges cleanly. Each step describes **what to do** and **what
 should happen**; do not move to the next step until the current one
 completes as described.
 
-Applies to GNToolkit 0.2.2 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
+Applies to GNToolkit 0.2.3 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
 5.2.0; the same code and the same workflow run on both).
 
 ---
@@ -35,7 +35,7 @@ Applies to GNToolkit 0.2.2 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
 
 **What should happen**
 
-- The panel shows **GNToolkit 0.2.2**.
+- The panel shows **GNToolkit 0.2.3**.
 - No addon import errors appear in the System Console
   (Window → Toggle System Console).
 
@@ -233,6 +233,80 @@ discards the session (Blender asks for confirmation).
 The sync never hides un-repaired divergence: groups whose rebuild could
 not reproduce the JSON keep a divergent baseline and remain listed as
 issues.
+
+---
+
+## Additional workflow 1 — Selective import (one group + dependencies)
+
+**What to do**
+
+1. In the Sync panel, click **Import Group from JSON…** and select a JSON
+   package.
+2. In the picker that appears in the panel, use the search field (native
+   Blender search widget) to find a group.
+3. Select the group and inspect the **plan preview** under the field:
+   - CHECKMARK: already in the .blend (not touched),
+   - NODETREE: will be imported (missing dependencies included),
+   - ERROR: exists in the .blend but differs from the package,
+   - STATUS_WARNING: referenced but not in this package.
+4. Click **Import** to import the group plus its missing dependencies.
+5. If you want the imported group tracked, click **Track to JSON…** and
+   choose the destination package (the group is written into it and
+   becomes sync-tracked — the other groups in the package are kept).
+6. Click **Close Picker** when done.
+
+**What should happen**
+
+- Only the selected group and its missing dependency closure appear;
+  isolated package groups are not imported.
+- Groups already in the .blend are listed under "Already in the .blend
+  (not touched)" — they are **never overwritten** by the picker.
+- The report shows the imported groups and any warnings (divergent
+  members, unconnected external refs).
+- The picker refreshes live: editing the package JSON on disk while the
+  picker is open updates the preview within a second.
+
+---
+
+## Additional workflow 2 — Commit with Review
+
+**What to do**
+
+1. Edit one or more groups locally in the .blend.
+2. Click **Commit with Review…** in the Sync panel.
+3. For each listed group choose: **Keep Blend** (commit the .blend
+   version into the JSON), **Keep JSON** (pull the JSON version into the
+   .blend) or **Skip** (leave it untouched). Conflicts default to Skip.
+4. Click OK to apply.
+
+**What should happen**
+
+- Only locally edited groups appear in the dialog — unedited groups are
+  ignored.
+- The report shows the applied decisions
+  ("Committed N, pulled M, skipped K").
+- Groups with unedited content stay untouched and synced.
+
+---
+
+## Additional workflow 3 — Check on open
+
+**What to do**
+
+1. With the addon enabled, save the .blend and close it.
+2. Edit a tracked JSON file outside Blender (e.g. change a default value)
+   and save it.
+3. Reopen the .blend.
+
+**What should happen**
+
+- Within a couple of seconds a non-intrusive notice appears:
+  "GNToolkit: N group(s) out of sync with JSON" (status bar, a warning
+  row in the Sync panel and entries in the Sync Issues list).
+- Open the Sync Issues list: the affected groups appear as
+  **Changed in JSON** — use **Pull** to apply the JSON changes.
+- The plug icon next to **Refresh Status** toggles this check
+  (`check_on_load` pref). When disabled, no notice is shown on open.
 
 ---
 
