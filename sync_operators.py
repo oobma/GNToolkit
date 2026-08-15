@@ -807,42 +807,52 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     }
 
 
-def _import_group_enum_items(self, context):
-    """EnumProperty items for the picker: groups + in-blend checkmark.
-
-    The callback reads the package through the mtime cache and the
-    in-blend map through ``_ensure_import_exists`` (O(1) per draw), so
-    it stays cheap even though it runs on every redraw.
-    """
-    items = [("__NONE__", "Select a group…", "", 0, 0)]
-    plan = _get_import_package(_import_package_cache, getattr(self, "filepath", ""))
-    _ensure_import_exists(plan)
-    exists = plan.get("exists", {})
-    for idx, gname in enumerate(sorted(plan.get("groups", {})), 1):
-        in_blend = exists.get(gname, False)
-        items.append((gname, gname,
-                      "Already in the .blend — only its missing dependencies "
-                      "will be imported" if in_blend else "Not in the .blend yet",
-                      'CHECKMARK' if in_blend else 'NODETREE',
-                      idx))
-    return items
+class GN_ImportItem(bpy.types.PropertyGroup):
+    """One group name offered by the picker's native search widget."""
+    name: StringProperty()
 
 
 class GN_ImportState(bpy.types.PropertyGroup):
     """State of the panel-based import picker (Scene.gnt_import_state).
 
-    The group dropdown is a native enum menu: it can be filtered by
-    typing (searchable in Blender 5.x) and each item shows a checkmark
-    when the group already exists in the .blend.
+    The group search uses Blender's native ``prop_search`` widget (its
+    popup filters live as you type) and the in-blend markers are shown
+    in the plan preview under the field.
     """
     open: BoolProperty(default=False)
     filepath: StringProperty()
-    group_name: EnumProperty(
-        name="Group",
-        description="Node group to import from the selected JSON package",
-        items=_import_group_enum_items,
-        default=0,
-    )
+    group_name: StringProperty()
+    items: CollectionProperty(type=GN_ImportItem)
+
+
+def _fill_import_items(state) -> None:
+    """(Re)build the searchable group list from the selected package."""
+    state.items.clear()
+    package = _get_import_package(_import_package_cache, state.filepath)
+    for gname in sorted(package.get("groups", {})):
+        item = state.items.add()
+        item.name = gname
+
+
+# Preview of the selected group's import plan, keyed by
+# (filepath, group_name, node-group count) so it is computed once per
+# selection instead of on every draw.
+_selection_plan_cache: dict = {}
+
+
+def _compute_selection_plan(state) -> dict | None:
+    """Return the cached closure plan shown under the search field."""
+    key = (state.filepath, state.group_name, len(bpy.data.node_groups))
+    cached = _selection_plan_cache.get(key)
+    if cached is not None:
+        return cached
+    package = _get_import_package(_import_package_cache, state.filepath)
+    plan = _compute_import_plan(package.get("groups", {}), state.group_name)
+    if plan is None:
+        return None
+    _selection_plan_cache.clear()
+    _selection_plan_cache[key] = plan
+    return plan
 
 
 class GN_OT_SyncImportGroupClose(bpy.types.Operator):
@@ -853,8 +863,9 @@ class GN_OT_SyncImportGroupClose(bpy.types.Operator):
     def execute(self, context):
         state = context.scene.gnt_import_state
         state.open = False
-        state.group_name = "__NONE__"
+        state.group_name = ""
         state.filepath = ""
+        state.items.clear()
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -877,8 +888,9 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
         state = context.scene.gnt_import_state
         state.filepath = self.filepath
-        state.group_name = "__NONE__"
+        state.group_name = ""
         state.open = True
+        _fill_import_items(state)
         for area in context.screen.areas:
             area.tag_redraw()
         return {'FINISHED'}
@@ -1093,6 +1105,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
 classes = (
     GN_CommitReviewChoice,
     GN_CommitReview,
+    GN_ImportItem,
     GN_ImportState,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,

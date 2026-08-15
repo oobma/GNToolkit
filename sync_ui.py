@@ -178,13 +178,38 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             picker_box.label(text="Use the search field to filter the group list:",
                              icon='VIEWZOOM')
             srow = picker_box.row(align=True)
-            srow.prop(state, "group_name", text="")
+            srow.prop_search(state, "group_name", state, "items",
+                             text="", icon='VIEWZOOM')
             import_row = srow.row()
-            import_row.enabled = bool(state.group_name) and state.group_name != "__NONE__"
+            import_row.enabled = bool(state.group_name)
             imp = import_row.operator("gn.sync_import_group", text="Import",
                                       icon='IMPORT')
             imp.filepath = state.filepath
             imp.group_name = state.group_name
+            if state.group_name:
+                from .sync_operators import _compute_selection_plan
+                plan = _compute_selection_plan(state)
+                if plan:
+                    if plan["existing"]:
+                        picker_box.label(text="Already in the .blend (not touched):",
+                                         icon='INFO')
+                        for name in plan["existing"]:
+                            picker_box.label(text=f"  {name}", icon='CHECKMARK')
+                    if plan["missing"]:
+                        picker_box.label(text="Will be imported:", icon='IMPORT')
+                        for name in plan["missing"]:
+                            picker_box.label(text=f"  {name}", icon='NODETREE')
+                    if plan["divergent"]:
+                        picker_box.label(
+                            text=f"Differ from the package: {', '.join(plan['divergent'])}",
+                            icon='ERROR')
+                    if plan["external"]:
+                        picker_box.label(
+                            text=f"Unconnected refs: {', '.join(plan['external'])}",
+                            icon='WARNING')
+                else:
+                    picker_box.label(text="Group not found in this package",
+                                     icon='ERROR')
             picker_box.label(text="Existing groups are never touched — only missing "
                                   "dependencies are imported.", icon='INFO')
             picker_box.row(align=True).operator("gn.sync_import_group_close",
