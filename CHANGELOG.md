@@ -2,6 +2,89 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased] - 2026-09-08
+
+### Added
+
+- **Folder workflow (per-group JSON files as full sync participants).**
+  The "Use Folder Structure" export (`NodeGroups/` + `Modifiers/`) is no
+  longer a one-shot snapshot — it round-trips through the sync layer:
+  - **Track Folder…** (`gn.sync_link_folder`): picks any file inside an
+    exported folder (the `NodeGroups/` subfolder is detected) and tracks
+    every group found in the JSONs against its own file — read-only,
+    per-group hashes, `depends_on` edges recorded in a second pass,
+    `linked/skipped/errors` report. Accepts standalone and one-group
+    package files (mixed folders work).
+  - **Track from Existing JSON** accepts single-group exports: a file
+    with `nodes` + `name` tracks that one group (same normalization the
+    F3 picker already had). Modifier exports and unrecognizable JSONs
+    get clear error messages naming the file and the expected shapes.
+  - **Import Package/Folder** (`gn.import_batch_json`): picking any file
+    inside a folder export recreates the whole folder — groups
+    (dependency-first via the shared interface maps) and modifiers
+    (`Apply Modifiers` is now **on by default**; modifiers attach to
+    existing objects with matching names, as before). The loader
+    (`load_package_sources`) handles package files, standalone files and
+    folders, including one-group packages produced by a commit.
+  - **Write-back to standalone exports**: `export_to_json`/`export_all`/
+    `export_all_modified`/`link_group` normalize a standalone single-group
+    file into a one-group `GN_UNIFIED_PACKAGE` on the first commit
+    (previously a `KeyError` — committing to a per-group export failed).
+- **Encoding robustness**: JSON reads accept UTF-8 with or without BOM
+  (`utf-8-sig`) and a non-UTF-8 file (e.g. saved as ANSI/Windows-1252 by
+  an editor) no longer crashes with a raw traceback — the tolerant reader
+  returns None and the operators report a clear, actionable message
+  ("not valid UTF-8 — re-save it as UTF-8…") via the new
+  `json_read_failure_reason()` classifier (encoding / json / io). The
+  status-check hash reader got the same hardening.
+- **Collapsible panel lists**: the Sync panel's JSON files list (one row
+  per tracked file — hundreds after a folder workflow) and the Sync
+  Issues list are collapsible via disclosure toggles; JSON files default
+  collapsed.
+- **Import diagnostics**: skipped links (endpoint not in the node map)
+  are recorded as DEBUG records, and the wiring WARNs include the
+  resolution flags.
+
+### Fixed
+
+- **Links into group nodes with duplicated socket names were lost,
+  silently and order-dependently.** When a dependency was not rebuilt in
+  the same pass, wiring fell back to name-only socket lookup; interfaces
+  can carry duplicated names (e.g. two "Switch Target End"), so both
+  links of a pair landed on the FIRST socket and the second `links.new`
+  silently replaced the first (a socket takes one incoming link). The
+  importer now resolves such sockets **positionally**: the node's
+  serialized socket order mirrors the referenced interface, so the index
+  disambiguates the duplicates exactly (`_positional_group_socket`, with
+  a name sanity check and fallback to the previous path). Recreation of
+  the 439-group reference project from a folder export is now
+  **439/439 byte-identical** (nodes, links and canonical hashes) on
+  5.1.1 and 5.2.0 — previously 8 groups lost 1-4 links.
+- **`ImportErrorTracker.has_errors`/`warn_count` semantics** are
+  unchanged, but the recreation suite now proves the roundtrip: the
+  previous "headless imports lose links" known issue is closed by the
+  positional fix above.
+- **Folder import skipped committed per-group files**: a standalone file
+  that had been committed (converted to a one-group package) lost its
+  top-level `name`, so the folder loader skipped it (4 of 5 groups).
+  `load_package_sources` merges `node_groups` from package-shaped files
+  in the folder.
+
+### Tests
+
+- Smoke suite (Blender 5.1): **114 checks** (+T8b standalone write-back,
+  T8c folder loader, T8d duplicated-socket regression, T8 encoding
+  checks). New-node E2E (Blender 5.2): 40 checks (unchanged).
+- Reproduction suite `tests/repro_folder_flow.py` (24 checks on 5.1 and 5.2):
+  the full folder workflow — export by folders, per-group track, commit
+  to a standalone file, folder batch track, master package track,
+  folder recreation with modifiers, non-UTF-8 guard.
+- Recreation suite `tests/recreate_from_folder_test.py` (out-of-battery,
+  run manually): exports all 439 groups of the reference project by
+  folders, resets to an empty file and reimports everything from the
+  folder — verifying counts, canonical hashes and dependency closure
+  (113-group chain resolved deps-first). Passes 9/9 on 5.1.1 and 5.2.0.
+
 ## [0.2.3] - 2026-08-15
 
 ### Added
@@ -526,10 +609,9 @@ write time. Mitigations applied:
   functionally faithful (node/link counts, socket values and connections
   verified on a 439-group project), but interface socket identifiers may be
   assigned in a different order than the original (e.g. `Socket_0`/`Socket_1`
-  swapped) and Reroute node widths reset to Blender's default. This can make
-  a freshly imported group briefly report BLEND_MODIFIED against its JSON;
-  the sync system self-heals by storing the new hash as the baseline. Found
-  via the headless smoke test against the real project file.
+  swapped) and Reroute node widths reset to Blender's default. *(Resolved in
+  0.2.4: the recreation suite proves canonical-hash-identical roundtrips;
+  identifier reordering remains cosmetic and hash-excluded.)*
 - **Zone input nodes are only recreated when the serialized data carries
   pairing info.** Data exported by this addon does; older JSON files and
   hand-built trees (e.g. the smoke test's tiny zone nodes, created via
@@ -537,9 +619,9 @@ write time. Mitigations applied:
   virtual screen, so screen availability is never the blocker — see the
   "Technical note: zone node pairing" at the top of this file.
 - **Batch imports run from a headless/background session lose some links in
-  groups that reference other node groups** (pre-existing; identical in the
-  pre-refactor code). GUI batch imports (the normal workflow) reproduce all
-  25,437 links of the reference project exactly.
+  groups that reference other node groups** *(Resolved in 0.2.4 by the
+  positional group-socket resolution — see the Unreleased section above:
+  439/439 groups recreate identically headless.)*
 
 Remaining known characteristic: very large node trees (hundreds of nodes)
 still import slowly because of the per-mutation tree re-validation in
@@ -549,11 +631,11 @@ avoided from Python.
 ### Findings from the real-project e2e suite (439 groups, real deps)
 
 - **Link fidelity on roundtrip**: links into/out of group-reference nodes
-  can land on swapped sockets when a dependency's interface identifiers
+  could land on swapped sockets when a dependency's interface identifiers
   are reordered during import (counts preserved; 8 of 85 links on
-  `SP - NURBS Patch Meshing`). A pull that rebuilds such a group can
-  legitimately mark its parent groups BLEND_MODIFIED (their link
-  identifiers change), which Commit Modified then publishes.
+  `SP - NURBS Patch Meshing`). *(Resolved in 0.2.4 — the positional
+  group-socket resolution recreates every link exactly; 439/439 groups
+  hash-identical from a folder export.)*
 - **Blender drops zero-user node groups on save** (verified with pure
   Blender): a package imported into a fresh file and saved without
   references keeps only groups referenced by other groups; leaf groups

@@ -12,10 +12,18 @@ file is the RNA (working cache).
 - **JSON package snapshots**: export/import of all Geometry Nodes groups
   and NODES modifier setups to/from a single JSON package, with in-place
   update of existing groups on import.
+- **Folder workflow**: the per-group folder export (`NodeGroups/` +
+  `Modifiers/`) round-trips end to end — track every file of a folder in
+  one click (**Track Folder…**), commit changes back to per-group files,
+  and recreate a whole folder export with **Import Package/Folder**
+  (modifiers applied by default to existing objects with matching names).
 - **Export active group** with its full dependency chain.
 - **Deterministic JSON serialization**: nodes are emitted in name order,
   so renaming/reordering produces minimal, stable git diffs, and
   re-exporting an unchanged group is byte-identical.
+- **Robust JSON reading**: UTF-8 with or without BOM; a file saved in a
+  different encoding (e.g. ANSI) is reported with a clear "re-save as
+  UTF-8" message instead of crashing.
 - **DNA/RNA sync**: track any node group against a JSON file and detect
   changes on both sides with canonical hashing.
 - **Check on open**: after loading a .blend, a background JSON-side check
@@ -32,10 +40,10 @@ file is the RNA (working cache).
   built in.
 - **Commit with Review**: decide per group (Keep JSON / Keep Blend /
   Skip) before committing locally edited groups.
-- **JSON remotes visibility**: the Sync panel always shows where each group
+- **JSON files visibility**: the Sync panel always shows where each group
   is tracked — the active group's JSON (`Active: name → file.json`) and a
-  list of all tracked JSON files with group counts, copy-path and
-  Reveal-in-Explorer buttons, and an error icon when a file is missing.
+  collapsible list of all tracked JSON files with group counts, copy-path
+  and Reveal-in-Explorer buttons, and an error icon when a file is missing.
 - **Conflict resolution**: keep the .blend or the JSON version
   with a single click.
 - **External connection preservation**: links from parent groups survive
@@ -53,7 +61,7 @@ file is the RNA (working cache).
 ## Compatibility
 
 Blender **4.0 – 5.2 LTS** (tested on 5.1.1 and 5.2.0; the maintained
-suites are `tests/smoke_test_5.1.py` — 99 checks — and
+suites are `tests/smoke_test_5.1.py` — 114 checks — and
 `tests/test_52_new_nodes_e2e.py` — 40 checks, 5.2-only). The 5.2 port
 details are recorded in [docs/port-5.2.md](docs/port-5.2.md). What the
 port required:
@@ -99,14 +107,36 @@ port required:
 
 1. In the Node Editor sidebar → **GN Tools**, use:
    - **Export Package** — writes every Geometry Nodes group and modifier
-     setup to a single JSON package (or a folder structure).
+     setup to a single JSON package, or one file per group when **Use
+     Folder Structure** is enabled (`NodeGroups/` + `Modifiers/` folders).
    - **Export Active Group** — exports the active group plus its
      dependencies.
-   - **Import Package** — reconstructs all groups (and modifiers) from
-     JSON. With **Update existing groups** checked, groups that already
-     exist in the file are rebuilt in place from the JSON (modifiers
-     referencing them and external links are preserved); unchecked
-     (default), existing groups are left untouched.
+   - **Import Package/Folder** — reconstructs all groups (and modifiers)
+     from JSON. Pick the package file, or **any file inside a folder
+     export** to recreate the whole folder (dependencies resolved
+     automatically, dependency-first). With **Update existing groups**
+     checked, groups that already exist in the file are rebuilt in place
+     from the JSON (modifiers referencing them and external links are
+     preserved); unchecked (default), existing groups are left untouched.
+     **Apply Modifiers** (on by default) attaches the stored modifiers to
+     existing objects with matching names.
+
+### Folder workflow (per-group files as sync participants)
+
+A project exported with **Use Folder Structure** is a folder of
+one-file-per-group JSONs that the sync layer treats like a repository:
+
+1. **Export Package** with folder structure → `NodeGroups/*.json` +
+   `Modifiers/*.json`.
+2. **Track Folder…** (Sync panel): pick any file inside the export —
+   every group found in the folder is tracked against its own file
+   (dependency edges recorded; already-tracked groups are skipped).
+3. Work normally: **Commit** writes each edited group back to its own
+   file (a per-group file becomes a one-group package on the first
+   commit — all readers accept both shapes), **Pull** restores them.
+4. Recreate the project elsewhere with **Import Package/Folder** (pick
+   any file in the folder) — or use **Track from Existing JSON**, which
+   also accepts a single-group export file.
 
 ### Sync (git-style vocabulary)
 
@@ -120,9 +150,12 @@ The sync layer tracks groups between the JSON (source of truth) and the
      group gets a UUID stored on the node tree. The JSON is updated
      surgically: entries that have no counterpart in the .blend
      (e.g. groups removed locally) are preserved.
+   - **Track Folder…** — track every group found in a folder export
+     (one file per group); see the folder workflow above.
    - **Track from Existing JSON** — start tracking using an existing JSON
      as the source of truth; the JSON is read only and **NOT modified**.
-     Use this after an **Import Package** when the JSON is already
+     Accepts a unified package or a single-group export file. Use this
+     after an **Import Package/Folder** when the JSON is already
      authoritative. (Equivalent to `git clone`.)
 2. **Refresh Status** — computes the sync state of every tracked group.
 3. Resolve issues with the per-group buttons:
@@ -134,10 +167,11 @@ The sync layer tracks groups between the JSON (source of truth) and the
      are kept.
 
 The Sync panel keeps the linked files visible: the top line shows the
-active group's JSON (**Active: name → file.json**), and a **JSON remotes**
-list below the actions shows every tracked JSON file (full resolved path,
-group count, copy-path and Reveal-in-Explorer buttons; an error icon marks
-files missing from disk).
+active group's JSON (**Active: name → file.json**), and a collapsible
+**JSON files** list below the actions shows every tracked JSON file
+(full resolved path, group count, copy-path and Reveal-in-Explorer
+buttons; an error icon marks files missing from disk) — collapsed by
+default, since a folder workflow can produce one file per group.
 
 Sync metadata is stored in a sidecar file next to the .blend
 (`<project>.blend.gntsync`) and saved automatically on file save.

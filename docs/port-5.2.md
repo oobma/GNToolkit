@@ -4,7 +4,7 @@ Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
 the headless suites on Blender 5.1.1 and 5.2.0 LTS, including the
 new-node E2E for the 25 new instantiable 5.2 node classes and every GN
 socket type. The currently maintained suites are
-`tests/smoke_test_5.1.py` (**99 checks**, 5.1) and
+`tests/smoke_test_5.1.py` (**114 checks**, 5.1) and
 `tests/test_52_new_nodes_e2e.py` (**40 checks**, 5.2-only); the
 per-test table below reflects the suite state as of 2026-08-13.
 This document records the research and the changes the port required so
@@ -17,8 +17,15 @@ mapping rules and the modifier RNA path described below.
 
 Updated: 2026-08-13 — the suite now also covers the **new 5.2
 node set** (test #10, `test_52_new_nodes_e2e.py`); three roundtrip
-fidelity bugs found by that test were fixed (see §9, included in the
+fidelity bugs found by that test were fixed (see §10, included in the
 0.2.2 release).
+
+Updated: 2026-09-08 — the smoke suite grew to **114 checks** with the
+0.2.4 additions (encoding tolerance, standalone write-back, folder
+loader, duplicated-socket regression), and the recreation suite
+(`tests/recreate_from_folder_test.py`) verifies a full folder round-trip
+of the 439-group reference project **byte-identically on 5.1.1 and
+5.2.0** (see the Unreleased section of the CHANGELOG).
 
 ---
 
@@ -46,11 +53,12 @@ Pre-port (2026-08-11) the 5.2 failures were: smoke T11 (modifier RNA),
 e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
 one root cause (data-type-driven socket layouts) except the modifier RNA.
 
-**Current state (2026-08-13):** the maintained suites are
-`tests/smoke_test_5.1.py` (99 checks) and
+**Current state (2026-09-08):** the maintained suites are
+`tests/smoke_test_5.1.py` (114 checks) and
 `tests/test_52_new_nodes_e2e.py` (40 checks, 5.2-only); the per-test
-table above reflects the suite state as of that date (test #1 was 41
-checks then — it grew to 96 with the 0.2.3 additions).
+table above reflects the suite state as of 2026-08-13 (test #1 was 41
+checks then — it grew to 96 with the 0.2.3 additions and to 114 with
+the 0.2.4 additions).
 
 ## What the port changed (implemented 2026-08-11)
 
@@ -95,9 +103,10 @@ checks then — it grew to 96 with the 0.2.3 additions).
   link wiring (the fix machinery of 0.2.1: pre-unlink, zone session,
   depsgraph flush, dangling-link guard) — the pull converges, is
   idempotent, and reports residual divergence honestly.
-- **Zone pairing** (`bpy.ops.node.add_zone`, `paired_output`): no change
-  in 5.2, including headless background mode (virtual screens still
-  provide Node Editor areas). All zone checks pass.
+- **Zone pairing** (`node.pair_with_output()` — direct RNA, no operator,
+  no Node Editor area): no change in 5.2, including headless background
+  mode. All zone checks pass. (The 0.2.3 zone rework replaced the older
+  `bpy.ops.node.add_zone` machinery; see the CHANGELOG technical note.)
 - Hash migration, sidecar, text-block fallback, save-relativize.
 - 3.5.x-style importer tolerances (name+type socket fallback).
 
@@ -280,7 +289,7 @@ tolerates this single group. If it reappears on other files, compare
 the batch context (shared interface maps / pre-unlink / zone session)
 against the isolated rebuild to isolate the trigger.
 
-## 6. Repro scripts (kept for reference)
+## 7. Repro scripts (kept for reference)
 
 - Compare/Random Value socket layout probe (both engines):
   create `FunctionNodeCompare`/`FunctionNodeRandomValue` in a temp
@@ -291,17 +300,18 @@ against the isolated rebuild to isolate the trigger.
   count `FunctionNodeCompare` nodes, group by mode/operation/
   data_type, and count links by `to_socket_id` (exact numbers in §3.3).
 
-## 7. Things NOT to re-investigate
+## 8. Things NOT to re-investigate
 
-- Zone pairing (`add_zone`/`paired_output`): unchanged in 5.2 — see
-  CHANGELOG "Technical note: zone node pairing" (verified on 5.1.1;
-  the 5.2 suite runs all zone checks green, including headless).
+- Zone pairing (`node.pair_with_output()` on the zone input subclasses):
+  unchanged in 5.2 — see CHANGELOG "Technical note: zone node pairing"
+  (verified on 5.1.1; the 5.2 suite runs all zone checks green,
+  including headless).
 - Background-mode virtual screens: still present in 5.2.
 - `mode`/`operation` enums of Compare: identical in 5.1 and 5.2.
 - The sync machinery itself is 5.2-faithful (measured): the only
   content-level gaps are the two node layouts and the modifier RNA.
 
-## 8. Key URLs
+## 9. Key URLs
 
 - 5.2 release notes: https://www.blender.org/download/releases/5-2/
 - 5.2 Python API changelog:
@@ -311,7 +321,7 @@ against the isolated rebuild to isolate the trigger.
 - Commit changing the socket identifiers: `3a5cd7862b`
 - Commit changing the modifier API: `1561c1ea4a`
 
-## 9. New-node set verification (2026-08-13, released in 0.2.2)
+## 10. New-node set verification (2026-08-13, released in 0.2.2)
 
 Test #10 (`tests/test_52_new_nodes_e2e.py`, fixture
 `tests/gn52_all_nodes.blend` built by `tests/prepare_52_fixture.py`)

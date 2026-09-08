@@ -3,6 +3,18 @@
 Technical report on the feasibility of a dependency-based folder layout for
 the GNToolkit JSON storage, compared with the current unified-package model.
 
+> **Update (2026-09-08, GNToolkit 0.2.4):** several items this report
+> listed as "Missing" are now implemented. Folder exports are full sync
+> participants: **Track Folder…** links every group to its own file
+> (per-group `json_path` + `depends_on` edges), **Track from Existing
+> JSON** accepts single-group files, per-file commits write back to
+> standalone files (normalized to one-group packages), and
+> **Import Package/Folder** merges a whole folder into one cache for
+> dependency-first recreation (verified 439/439 hash-identical).
+> Still open: the layout policy for a dependency-based hierarchy
+> (duplication vs `_shared/`), multi-parent `_shared/` conventions, and
+> rename cascades — those conclusions below remain valid.
+
 ## 1. Current state
 
 **JSON data model:** a single unified package file (`node_groups` keyed by

@@ -41,13 +41,13 @@ Applies to GNToolkit 0.2.3 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
 
 ---
 
-## Step 2 — New file + Import Package (baseline)
+## Step 2 — New file + Import Package/Folder (baseline)
 
 **What to do**
 
 1. File → New → General (clean file).
-2. In the GN Tools tab, use **Import Package** (the full-package batch
-   import) and select the **baseline JSON**.
+2. In the GN Tools tab, use **Import Package/Folder** (the full-package
+   batch import) and select the **baseline JSON**.
 3. Wait for the import to finish (a couple of minutes on large
    projects; progress is shown in the status bar).
 
@@ -97,6 +97,11 @@ discards the session (Blender asks for confirmation).
    truth — typically the baseline, possibly with deliberate changes).
 3. Wait for the tracking to finish (seconds).
 
+> The operator accepts a **unified package** or a **single-group export**
+> (one file from a folder export — the group is tracked against that
+> file). For tracking a whole folder export in one click, use
+> **Track Folder…** instead (see "Folder workflow" below).
+
 **What should happen**
 
 - A message reports the tracked groups, e.g.
@@ -123,8 +128,9 @@ discards the session (Blender asks for confirmation).
 
 - The panel shows a summary: **Total / Synced / To pull** (and other
   issue buckets).
-- The **Sync Issues** list shows one entry per divergent group with the
-  state **Changed in JSON**.
+- The **Sync Issues** panel shows one entry per divergent group with the
+  state **Changed in JSON** (the list is collapsible via its header
+  triangle; likewise the **JSON files** list in the Sync panel).
 - Each issue row provides per-group actions: **Pull**, **Ignore**
   (and Commit / Keep JSON / Keep Blend for other states).
 
@@ -310,6 +316,41 @@ issues.
 
 ---
 
+## Additional workflow 4 — Folder export round-trip (one file per group)
+
+The folder export ("Export Package" with **Use Folder Structure**) is a
+full sync participant: every group lives in its own `NodeGroups/*.json`
+file and modifiers in `Modifiers/*.json`.
+
+**What to do**
+
+1. In the GN Tools tab, run **Export Package** with **Use Folder
+   Structure** enabled and choose a directory.
+2. In the Sync panel, click **Track Folder…** and select **any file
+   inside the exported folder** (the `NodeGroups/` subfolder is detected
+   automatically).
+3. Work and commit normally: **Commit** (per-group or batch) writes each
+   edited group back to **its own file** — a per-group file becomes a
+   one-group package on the first commit; both shapes are interchangeable
+   for every reader.
+4. To recreate the project elsewhere: **Import Package/Folder** and pick
+   any file inside the folder — every group is imported (dependency-first)
+   and the stored modifiers are attached to existing objects with matching
+   names (**Apply Modifiers** is on by default).
+
+**What should happen**
+
+- Track Folder reports the linked/skipped counts; every group shows
+  **Synced** right after tracking.
+- The Sync panel's **JSON files** list shows one row per file (collapsed
+  by default — use the triangle to expand it).
+- Recreation reproduces the project exactly: node/link counts and
+  canonical hashes are identical, dependencies are resolved first, and
+  groups that already exist in the target file are skipped (unless
+  **Update existing groups** is checked).
+
+---
+
 ## References between groups and the package
 
 Two principles drive everything below:
@@ -341,6 +382,14 @@ Additional notes:
 ---
 
 ## Troubleshooting
+
+**"…is not valid UTF-8 — re-save it as UTF-8…" when tracking/importing**
+
+The JSON file was saved by an external tool in a different encoding
+(e.g. Notepad "ANSI"/Windows-1252). The addon reads UTF-8 (with or
+without BOM) and refuses to guess, because a wrong guess would silently
+corrupt the source of truth. Fix: open the file in a text editor and
+re-save it as UTF-8 (most editors: File → Save As → UTF-8), then retry.
 
 **"Dangling links" message / pull aborted**
 
