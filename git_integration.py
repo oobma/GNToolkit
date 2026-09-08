@@ -242,8 +242,7 @@ def refresh_git_state(fetch=False):
     """Rebuild the panel cache: per-repo status + conflict flags.
 
     With fetch=True every repo's remote is fetched first (silently), so
-    ``behind`` reflects the shared repository as-is when opening a file
-    (the "morning chef" for the shared shelf)."""
+    ``behind`` reflects the shared repository as-is when opening a file."""
     global _state_cache
     _state_cache = {"available": git_available(), "repos": {}, "conflicts": []}
     if not _state_cache["available"]:
