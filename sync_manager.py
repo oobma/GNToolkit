@@ -238,6 +238,27 @@ def json_read_failure_reason(json_path: str) -> str | None:
     return None
 
 
+def _ensure_package_shape(data: dict) -> dict:
+    """Wrap a standalone single-group export into the unified package shape.
+
+    The write paths operate on ``node_groups``; standalone files ('Export
+    package' with folder structure) carry the group at the top level
+    instead. This normalizes them so the first write-back converts the
+    file into a one-group package, which every reader (sync, F3 picker,
+    batch import) already understands.
+    """
+    if (isinstance(data, dict) and "node_groups" not in data
+            and "nodes" in data and data.get("name")):
+        return {
+            "version": ADDON_VERSION,
+            "type": "GN_UNIFIED_PACKAGE",
+            "export_method": PACKAGE_EXPORT_METHOD,
+            "node_groups": {data["name"]: data},
+            "modifiers": [],
+        }
+    return data
+
+
 class SyncManager:
     """Orchestrates DNA/RNA synchronization state and actions."""
 
@@ -637,6 +658,9 @@ class SyncManager:
                 "node_groups": {},
                 "modifiers": [],
             }
+
+        # Normalize standalone single-group exports to package shape
+        master_data = _ensure_package_shape(master_data)
 
         # Serialize ONLY the primary tree (no full dependency chain)
         master_data["node_groups"][tree.name] = serialize_node_tree(tree)
@@ -1457,6 +1481,9 @@ class SyncManager:
                     "modifiers": [],
                 }
 
+            # Normalize standalone single-group exports to package shape
+            master_data = _ensure_package_shape(master_data)
+
             # Serialize ONLY the modified group (no dependency chain)
             master_data["node_groups"][blend_name] = serialize_node_tree(tree)
             serialized_dict = {blend_name: master_data["node_groups"][blend_name]}
@@ -1841,6 +1868,9 @@ class SyncManager:
                         "modifiers": [],
                     }
 
+                # Normalize standalone single-group exports to package shape
+                master_data = _ensure_package_shape(master_data)
+
                 # Update only the tracked groups in-place
                 serialized_dict = {}
                 for g_name, g_tree in groups_to_export.items():
@@ -1959,6 +1989,9 @@ class SyncManager:
                 if master_data is None:
                     errors += len(uids)
                     continue
+
+                # Normalize standalone single-group exports to package shape
+                master_data = _ensure_package_shape(master_data)
 
                 # Serialize and update only the modified groups
                 serialized_dict = {}

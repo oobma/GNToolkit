@@ -442,6 +442,138 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
 
 
 # ---------------------------------------------------------------------------
+# Operator: Track all groups from a folder of per-group exports
+# ---------------------------------------------------------------------------
+
+class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
+    bl_idname = "gn.sync_link_folder"
+    bl_label = "Track All from Folder"
+    bl_description = ("Track every per-group JSON export found in a folder ('Export package' "
+                      "with folder structure): pick any file inside the exported folder, and "
+                      "each JSON whose group exists in the .blend is tracked against its own "
+                      "file. The JSONs are read only and are NOT modified")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        from .socket_utils import get_tree_dependencies
+        from .sync_metadata import (
+            generate_uuid, add_tracked_group, store_uuid_on_tree,
+            make_json_path_relative,
+        )
+        from .hash_utils import (
+            canonical_hash_from_tree, canonical_hash_from_json_group,
+            canonical_hash_from_json_path,
+        )
+
+        chosen = self.filepath
+        if not chosen:
+            self.report({'ERROR'}, "Select any file inside the exported folder")
+            return {'CANCELLED'}
+
+        scan_dir = os.path.dirname(chosen)
+        ng_dir = os.path.join(scan_dir, "NodeGroups")
+        if os.path.isdir(ng_dir):
+            scan_dir = ng_dir
+
+        try:
+            files = sorted(
+                os.path.join(scan_dir, f) for f in os.listdir(scan_dir)
+                if f.lower().endswith(".json")
+            )
+        except OSError:
+            self.report({'ERROR'}, f"Cannot read folder: {scan_dir}")
+            return {'CANCELLED'}
+        if not files:
+            self.report({'ERROR'}, f"No JSON files found in '{scan_dir}'")
+            return {'CANCELLED'}
+
+        if not sync_manager.metadata.get("tracked_groups"):
+            sync_manager.metadata = {
+                "version": ADDON_VERSION,
+                "tracked_groups": {},
+            }
+
+        # First pass: tracking entries for every group with a matching tree
+        linked_by_name: dict[str, str] = {}
+        skipped = 0
+        errors = 0
+        for fp in files:
+            data = read_json_tolerant(fp)
+            if data is None:
+                reason = json_read_failure_reason(fp)
+                if reason == "encoding":
+                    self.report({'ERROR'},
+                                f"'{os.path.basename(fp)}' is not valid UTF-8 — "
+                                "re-save it as UTF-8 and retry")
+                else:
+                    self.report({'ERROR'}, f"Failed to read '{os.path.basename(fp)}'")
+                errors += 1
+                continue
+            if not isinstance(data, dict):
+                errors += 1
+                continue
+            groups = data.get("node_groups", {})
+            if not groups and "nodes" in data and data.get("name"):
+                groups = {data["name"]: data}
+            if not groups:
+                skipped += 1
+                continue
+
+            for gname in groups:
+                tree = bpy.data.node_groups.get(gname)
+                if tree is None:
+                    skipped += 1
+                    continue
+                if get_uuid_from_tree(tree) or find_uuid_for_tree(tree, sync_manager.metadata):
+                    skipped += 1
+                    continue
+
+                uid = generate_uuid()
+                blend_hash = canonical_hash_from_tree(tree)
+                json_hash = canonical_hash_from_json_group(fp, gname)
+                if json_hash is None:
+                    json_hash = canonical_hash_from_json_path(fp)
+                mtime = os.path.getmtime(fp)
+                stored_path = make_json_path_relative(fp, sync_manager._blend_dir())
+                add_tracked_group(
+                    sync_manager.metadata, uid, gname, stored_path,
+                    blend_hash, json_hash, mtime,
+                )
+                store_uuid_on_tree(tree, uid)
+                linked_by_name[gname] = uid
+
+        # Second pass: dependency edges (mirrors Track All's two-pass logic)
+        for gname, uid in linked_by_name.items():
+            tree = bpy.data.node_groups.get(gname)
+            if tree is None:
+                continue
+            dep_uuids = []
+            for dep_name in get_tree_dependencies(tree):
+                dep_tree = bpy.data.node_groups.get(dep_name)
+                if dep_tree is not None:
+                    dep_uid = get_uuid_from_tree(dep_tree)
+                    if dep_uid and dep_uid != uid:
+                        dep_uuids.append(dep_uid)
+            info = sync_manager.metadata.get("tracked_groups", {}).get(uid)
+            if info is not None:
+                info["depends_on"] = dep_uuids
+
+        sync_manager._dirty = True
+        sync_manager.save()
+        sync_manager.invalidate_cache()
+
+        msg = (f"Tracked {len(linked_by_name)} group(s) from folder, "
+               f"{skipped} skipped (already tracked or not in .blend)")
+        if errors:
+            msg += f", {errors} unreadable file(s)"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: Commit all groups (batch)
 # ---------------------------------------------------------------------------
 
@@ -1290,6 +1422,7 @@ classes = (
     GN_OT_SyncCheck,
     GN_OT_SyncLinkDeps,
     GN_OT_SyncLinkAll,
+    GN_OT_SyncLinkFolder,
     GN_OT_SyncExportAll,
     GN_OT_SyncExportModified,
     GN_OT_SyncImportModified,

@@ -135,6 +135,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("gn.sync_link", text="Track Group", icon='LINKED')
         row.operator("gn.sync_link_all", text="Track All", icon='FILE_TICK')
+        row.operator("gn.sync_link_folder", text="Track Folder…", icon='FILE_FOLDER')
 
         if not tracked:
             layout.separator()
