@@ -72,9 +72,10 @@ def repos_for_tracked(metadata=None):
 
     if metadata is None:
         metadata = sync_manager.metadata
+    blend_dir = sync_manager._blend_dir()
     repos = {}
     for entry in metadata.get("tracked_groups", {}).values():
-        abs_path = resolve_json_path(entry.get("json_path", ""))
+        abs_path = resolve_json_path(entry.get("json_path", ""), blend_dir)
         if not abs_path or not os.path.exists(abs_path):
             continue
         root = find_git_repo(abs_path)
@@ -104,12 +105,12 @@ def repo_status(repo_root):
             upstream = up_part.split(" ")[0].strip()
             if "[ahead" in up_part:
                 try:
-                    ahead = int(up_part.split("[ahead ")[1].split(",")[0])
+                    ahead = int(up_part.split("[ahead ")[1].split("]")[0].split(",")[0])
                 except (ValueError, IndexError):
                     ahead = 0
             if "[behind" in up_part:
                 try:
-                    behind = int(up_part.split("[behind ")[1].split("]")[0])
+                    behind = int(up_part.split("[behind ")[1].split("]")[0].split(",")[0])
                 except (ValueError, IndexError):
                     behind = 0
     changed = [line[3:].strip() for line in lines[1:] if len(line) >= 4 and line[3:].strip()]
@@ -150,7 +151,7 @@ def git_commit(repo_root, message, paths):
     """Stage ONLY *paths* (tracked JSONs) and commit. Returns (ok, detail)."""
     if not git_available():
         return False, "Git not found — install Git and restart Blender"
-    rel = [os.path.relpath(p, repo_root) for p in paths]
+    rel = [os.path.relpath(p, repo_root).replace(os.sep, "/") for p in paths]
     rc, out, err = _git(["add", "--"] + rel, repo_root)
     if rc != 0:
         return False, (err or out).strip() or "git add failed"
@@ -219,7 +220,7 @@ def refresh_git_state():
         st["name"] = os.path.basename(root.rstrip("\\/")) or root
         st["tracked_changed"] = []
         for p in paths:
-            rel = os.path.relpath(p, root)
+            rel = os.path.relpath(p, root).replace(os.sep, "/")
             if rel in st["changed"]:
                 st["tracked_changed"].append(rel)
         _state_cache["repos"][root] = st

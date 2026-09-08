@@ -406,7 +406,7 @@ class GN_OT_GitCommit(bpy.types.Operator):
         all_paths = repos_for_tracked().get(self.repo, [])
         changed_paths = []
         for p in all_paths:
-            rel = os.path.relpath(p, self.repo)
+            rel = os.path.relpath(p, self.repo).replace(os.sep, "/")
             if rel in st["changed"]:
                 changed_paths.append(p)
         if not changed_paths:
