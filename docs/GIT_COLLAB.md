@@ -15,6 +15,60 @@ addon never reimplements version control and never runs its own server.
 Credentials are whatever the user already configured for git
 (credential manager, SSH keys, …).
 
+## Local repo or web repo — same thing
+
+The addon never talks to a server: **Git Sync** and the manual flow
+just run `git pull` / `git push` against whatever remote the repository
+is configured with. That remote can be:
+
+- a local folder or bare repo (`C:\backups\gntoolkit.git`),
+- a network share,
+- a web host — GitHub, GitLab, Bitbucket, Gitea, …
+
+Nothing changes in the addon. The only difference is how git itself
+reaches and authenticates against the remote. If `git push` works from
+your terminal, it works from the panel.
+
+### Going from local to GitHub (one-time setup)
+
+1. **Create an empty repository** on GitHub (no README, no license —
+   or you will have to merge unrelated histories). Note the HTTPS URL:
+   `https://github.com/<user>/<repo>.git`.
+2. In the folder that already holds your exported JSONs and is already
+   a git repository:
+   ```
+   git remote add origin https://github.com/<user>/<repo>.git
+   git push -u origin main
+   ```
+3. The first push opens the **Git Credential Manager** window (browser):
+   sign in to GitHub once, authorize, and Windows stores the token —
+   every later sync works without asking.
+
+From then on, the Collaboration panel's **Git Sync** pushes and pulls
+from GitHub exactly as it did from the local remote, and your
+colleagues just run:
+
+```
+git clone https://github.com/<user>/<repo>.git
+```
+
+### HTTPS vs SSH
+
+- **HTTPS** (recommended): zero setup beyond the one-time credential
+  manager sign-in above.
+- **SSH**: add your key on GitHub and use
+  `git@github.com:<user>/<repo>.git`. Git handles the key — the addon
+  never sees any credentials.
+
+### Two gotchas before sharing a repo
+
+- **Save the .blend before tracking** — JSON paths are stored relative
+  to the .blend, so the file must exist on disk first.
+- **Keep the .blend out of the repo** (add it to `.gitignore`): JSONs
+  are the shared source of truth; the .blend is personal working state.
+  The addon never stages or pushes the .blend, but your own git
+  commands might.
+
 ## Manual flow (works with any Git client)
 
 1. **Export** the project with **Export Package → Use Folder Structure**
