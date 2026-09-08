@@ -315,7 +315,7 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'GN Tools'
-    bl_order = 3
+    bl_order = 4
 
     @classmethod
     def poll(cls, context):
@@ -542,6 +542,136 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Panel 2.5: Collaboration (thin git transport)
+# ---------------------------------------------------------------------------
+
+def _draw_git_log_box(box, entries):
+    for e in entries:
+        row = box.row(align=True)
+        row.label(text=f"{e['date']} · {e['author'][:24]}", icon='DOT')
+        row.label(text=e['subject'])
+
+
+class GN_PT_CollaborationPanel(bpy.types.Panel):
+    """Git transport for the tracked JSON files."""
+
+    bl_label = "Collaboration"
+    bl_idname = "GN_PT_CollaborationPanel"
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'GN Tools'
+    bl_order = 3
+
+    @classmethod
+    def poll(cls, context):
+        metadata = sync_manager.metadata
+        tracked = metadata.get("tracked_groups", {})
+        return bool(tracked)
+
+    def draw(self, context):
+        from .git_integration import (
+            get_git_state, refresh_git_state, git_log, find_git_repo,
+        )
+
+        layout = self.layout
+        prefs = context.scene.gnt_sync_prefs
+
+        state = get_git_state()
+        if not state:
+            state = refresh_git_state()
+
+        if not state.get("available"):
+            layout.label(text="Git not found — install Git and restart",
+                         icon='ERROR')
+            return
+
+        repos = state.get("repos", {})
+        if not repos:
+            layout.label(text="Tracked JSONs are not inside a git repository",
+                         icon='INFO')
+            layout.label(text="Init one with your git client, then refresh",
+                         icon='INFO')
+            return
+
+        for root, st in sorted(repos.items()):
+            box = layout.box()
+            head = box.row(align=True)
+            if st["tracked_changed"]:
+                icon = 'FILE_REFRESH'
+            elif st["ahead"] or st["behind"]:
+                icon = 'NETWORK_DRIVE'
+            else:
+                icon = 'CHECKMARK'
+            head.label(text=f"Repo: {st['name']}", icon=icon)
+            parts = []
+            if st["tracked_changed"]:
+                parts.append(f"{len(st['tracked_changed'])} to commit")
+            if st["ahead"]:
+                parts.append(f"ahead {st['ahead']}")
+            if st["behind"]:
+                parts.append(f"behind {st['behind']}")
+            head.label(text=" · ".join(parts) if parts else "clean")
+
+            actions = box.row(align=True)
+            commit_op = actions.operator("gn.git_commit", text="Git Commit…",
+                                         icon='EXPORT')
+            commit_op.repo = root
+            sync_op = actions.operator("gn.git_sync", text="Git Sync",
+                                       icon='FILE_REFRESH')
+            sync_op.repo = root
+            reveal_op = actions.operator("gn.git_reveal_repo", text="",
+                                         icon='FOLDER_REDIRECT')
+            reveal_op.repo = root
+
+        for path in state.get("conflicts", []):
+            row = layout.row(align=True)
+            row.label(text=f"Merge conflict: {os.path.basename(path)}",
+                      icon='ERROR')
+            reveal_op = row.operator("gn.sync_reveal_json_path", text="Reveal")
+            reveal_op.json_path = path
+        if state.get("conflicts"):
+            layout.label(text="Resolve the conflicts with your git client",
+                         icon='INFO')
+
+        if len(repos) == 1:
+            repo_box = layout.box()
+            repo_head = repo_box.row(align=True)
+            repo_head.prop(prefs, "expand_git_repo_log", text="", emboss=False,
+                           icon='DISCLOSURE_TRI_DOWN'
+                           if prefs.expand_git_repo_log
+                           else 'DISCLOSURE_TRI_RIGHT')
+            repo_head.label(text="Repository history", icon='TIME')
+            if prefs.expand_git_repo_log:
+                entries = git_log(next(iter(repos)), None, 10)
+                if entries:
+                    _draw_git_log_box(repo_box, entries)
+                else:
+                    repo_box.label(text="No commits yet", icon='INFO')
+
+        active = _active_tracked_json(context)
+        if active:
+            tree_name, _json_base, json_path = active
+            root = find_git_repo(json_path)
+            if root:
+                act_box = layout.box()
+                act_head = act_box.row(align=True)
+                act_head.prop(prefs, "expand_git_active_log", text="",
+                              emboss=False,
+                              icon='DISCLOSURE_TRI_DOWN'
+                              if prefs.expand_git_active_log
+                              else 'DISCLOSURE_TRI_RIGHT')
+                act_head.label(text=f"Active: {tree_name} — history",
+                               icon='NODETREE')
+                if prefs.expand_git_active_log:
+                    entries = git_log(root, os.path.relpath(json_path, root), 10)
+                    if entries:
+                        _draw_git_log_box(act_box, entries)
+                    else:
+                        act_box.label(text="No commits for this file",
+                                      icon='INFO')
+
+
+# ---------------------------------------------------------------------------
 # Preferences PropertyGroup
 # ---------------------------------------------------------------------------
 
@@ -581,6 +711,16 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
         description="List each out-of-sync group with its actions",
         default=True,
     )
+    expand_git_repo_log: bpy.props.BoolProperty(
+        name="Show Repository History",
+        description="List the latest commits of the git repository",
+        default=False,
+    )
+    expand_git_active_log: bpy.props.BoolProperty(
+        name="Show Active Group History",
+        description="List the latest commits of the active group's JSON file",
+        default=False,
+    )
     check_on_load: bpy.props.BoolProperty(
         name="Check JSON on open",
         description="After loading a .blend, compare the JSON hashes in the background "
@@ -601,7 +741,7 @@ class GN_PT_GeometryIssuesPanel(bpy.types.Panel):
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'GN Tools'
-    bl_order = 4
+    bl_order = 5
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
@@ -706,6 +846,7 @@ class GN_OT_ValidateGeometry(bpy.types.Operator):
 classes = (
     GN_PT_SyncPanel,
     GN_PT_IssuesPanel,
+    GN_PT_CollaborationPanel,
     GN_PT_GeometryIssuesPanel,
     GN_OT_SyncResolveBlend,
     GN_OT_SyncResolveJSON,

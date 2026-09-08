@@ -6,6 +6,32 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Collaboration panel (thin Git transport).** A new "Collaboration"
+  panel (between Sync and Sync Issues) turns any git repository holding
+  tracked JSONs into a collaboration backend — Git stays the authority
+  for history, merge and credentials, the addon only drives the CLI
+  (`git_integration.py`):
+  - One row per detected repository (walking up from the tracked JSONs
+    to the nearest `.git`): repo name, state (`clean` / `N to commit` /
+    `ahead N` / `behind N` from `git status --porcelain -b`), and
+    **Git Commit…** / **Git Sync** / **Reveal** buttons.
+  - **Git Commit…** (dialog with a message field) stages **only the
+    tracked JSON files that changed** — never `git add -A`, never the
+    .blend.
+  - **Git Sync** = `git pull --ff-only` + `git push`: remote changes
+    arrive only when the branch is simply behind (no automatic merge,
+    ever); diverged versions are refused with a clear message. After a
+    clean sync the status cache is invalidated so JSON-side changes show
+    up as "Changed in JSON" immediately.
+  - **Merge-conflict detection**: `json_read_failure_reason` gained a
+    `'conflict'` reason; tracking/importing a conflicted JSON reports
+    "has merge conflicts — resolve them with your git client" and the
+    panel lists conflicted files with a Reveal button.
+  - **History** (collapsible): the repository's latest commits and the
+    active group's file history (10 entries each).
+  - State refreshes on load, on Refresh Status and after every Git
+    operation (cached — no subprocess per redraw); "Git not found" and
+    "not a git repository" states are reported with guidance.
 - **Folder workflow (per-group JSON files as full sync participants).**
   The "Use Folder Structure" export (`NodeGroups/` + `Modifiers/`) is no
   longer a one-shot snapshot — it round-trips through the sync layer:
@@ -72,9 +98,13 @@ All notable changes to this project are documented in this file.
 
 ### Tests
 
-- Smoke suite (Blender 5.1): **114 checks** (+T8b standalone write-back,
-  T8c folder loader, T8d duplicated-socket regression, T8 encoding
-  checks). New-node E2E (Blender 5.2): 40 checks (unchanged).
+- Smoke suite (Blender 5.1): **129 checks** (+T8 encoding checks, T8b
+  standalone write-back, T8c folder loader, T8d duplicated-socket
+  regression, T8e git transport — 15 checks over a real temporary
+  repository: status/commit/log/sync-fast-forward/divergence-refusal/
+  conflict markers, with a bare local remote; skipped with a warning
+  when git is not installed). New-node E2E (Blender 5.2): 40 checks
+  (unchanged).
 - Reproduction suite `tests/repro_folder_flow.py` (24 checks on 5.1 and 5.2):
   the full folder workflow — export by folders, per-group track, commit
   to a standalone file, folder batch track, master package track,

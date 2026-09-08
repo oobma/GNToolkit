@@ -360,6 +360,115 @@ class GN_OT_SyncCheck(bpy.types.Operator):
         else:
             self.report({'WARNING'},
                         f"{n_issues} of {len(statuses)} groups need attention")
+        try:
+            from .git_integration import refresh_git_state
+            refresh_git_state()
+        except Exception:
+            pass
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Operators: Git transport (thin layer over the git CLI)
+# ---------------------------------------------------------------------------
+
+class GN_OT_GitCommit(bpy.types.Operator):
+    bl_idname = "gn.git_commit"
+    bl_label = "Git Commit"
+    bl_description = ("Commit the tracked JSON files that changed to the local git "
+                      "repository — only files managed by this addon are staged")
+    bl_options = {'REGISTER'}
+
+    repo: StringProperty(name="Repository")
+    message: StringProperty(
+        name="Message",
+        description="Commit message (single line, like git commit -m)",
+        default="Update node groups",
+    )
+
+    def invoke(self, context, event):
+        if not self.repo or not os.path.isdir(self.repo):
+            self.report({'ERROR'}, "Repository not found")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(self, width=400)
+
+    def execute(self, context):
+        from .git_integration import (
+            repo_status, git_commit, repos_for_tracked, invalidate_git_state,
+        )
+        if not self.repo or not os.path.isdir(self.repo):
+            self.report({'ERROR'}, "Repository not found")
+            return {'CANCELLED'}
+        st = repo_status(self.repo)
+        if not st.get("ok"):
+            self.report({'ERROR'}, f"Git: {st.get('error', 'unknown error')}")
+            return {'CANCELLED'}
+        all_paths = repos_for_tracked().get(self.repo, [])
+        changed_paths = []
+        for p in all_paths:
+            rel = os.path.relpath(p, self.repo)
+            if rel in st["changed"]:
+                changed_paths.append(p)
+        if not changed_paths:
+            self.report({'INFO'}, "Nothing to commit — no tracked JSON changed")
+            return {'CANCELLED'}
+        ok, detail = git_commit(self.repo,
+                                self.message.strip() or "Update node groups",
+                                changed_paths)
+        invalidate_git_state()
+        if not ok:
+            self.report({'ERROR'}, f"Git commit failed: {detail}")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Committed {len(changed_paths)} file(s)")
+        return {'FINISHED'}
+
+
+class GN_OT_GitSync(bpy.types.Operator):
+    bl_idname = "gn.git_sync"
+    bl_label = "Git Sync"
+    bl_description = ("Bring remote changes (fast-forward only — never an automatic "
+                      "merge) and push local commits")
+    bl_options = {'REGISTER'}
+
+    repo: StringProperty(name="Repository")
+
+    def execute(self, context):
+        from .git_integration import git_sync, invalidate_git_state
+        if not self.repo or not os.path.isdir(self.repo):
+            self.report({'ERROR'}, "Repository not found")
+            return {'CANCELLED'}
+        status, detail = git_sync(self.repo)
+        invalidate_git_state()
+        if status == "ok":
+            sync_manager.invalidate_cache()
+            self.report({'INFO'}, "Git sync complete")
+            return {'FINISHED'}
+        if status == "diverged":
+            self.report({'WARNING'},
+                        "Versions diverged — resolve with your git client "
+                        "(pull could not fast-forward)")
+            return {'CANCELLED'}
+        self.report({'ERROR'}, f"Git sync failed: {detail}")
+        return {'CANCELLED'}
+
+
+class GN_OT_RevealRepo(bpy.types.Operator):
+    bl_idname = "gn.git_reveal_repo"
+    bl_label = "Reveal Repository"
+    bl_description = "Open the git repository folder in the system file explorer (Windows)"
+    bl_options = {'REGISTER'}
+
+    repo: StringProperty(name="Repository")
+
+    def execute(self, context):
+        if not self.repo or not os.path.isdir(self.repo):
+            self.report({'ERROR'}, "Repository not found")
+            return {'CANCELLED'}
+        try:
+            os.startfile(self.repo)
+        except (OSError, AttributeError):
+            self.report({'WARNING'}, "Could not open the system file explorer")
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -754,6 +863,10 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
                             f"'{os.path.basename(json_path)}' is not valid UTF-8 — "
                             "re-save it as UTF-8 in your editor (File > Save As > "
                             "UTF-8) and try again")
+            elif reason == "conflict":
+                self.report({'ERROR'},
+                            f"'{os.path.basename(json_path)}' has merge conflicts — "
+                            "resolve them with your git client")
             else:
                 self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
             return {'CANCELLED'}
@@ -1142,13 +1255,17 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
         _fill_import_items(state)
         if len(state.items) == 0:
             reason = json_read_failure_reason(self.filepath)
-            if reason in ("encoding", "json"):
+            if reason in ("encoding", "conflict", "json"):
                 state.open = False
                 if reason == "encoding":
                     self.report({'ERROR'},
                                 f"'{os.path.basename(self.filepath)}' is not valid UTF-8 — "
                                 "re-save it as UTF-8 in your editor (File > Save As > "
                                 "UTF-8) and try again")
+                elif reason == "conflict":
+                    self.report({'ERROR'},
+                                f"'{os.path.basename(self.filepath)}' has merge conflicts — "
+                                "resolve them with your git client")
                 else:
                     self.report({'ERROR'},
                                 f"'{os.path.basename(self.filepath)}' is not valid JSON")
@@ -1431,4 +1548,7 @@ classes = (
     GN_OT_SyncImportGroupTrack,
     GN_OT_SyncImportGroupClose,
     GN_OT_SyncCommitReview,
+    GN_OT_GitCommit,
+    GN_OT_GitSync,
+    GN_OT_RevealRepo,
 )

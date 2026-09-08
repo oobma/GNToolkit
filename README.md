@@ -17,6 +17,13 @@ file is the RNA (working cache).
   one click (**Track Folder…**), commit changes back to per-group files,
   and recreate a whole folder export with **Import Package/Folder**
   (modifiers applied by default to existing objects with matching names).
+- **Collaboration with Git**: a thin git transport (no server, no
+  reimplementation — Git stays the authority). The Collaboration panel
+  detects the repository behind the tracked JSONs and offers state,
+  **Git Commit…** (stages only the tracked JSONs), **Git Sync**
+  (fast-forward pull + push, never an automatic merge), merge-conflict
+  warnings and per-group/repo history. The manual flow with any git
+  client works too — see `docs/GIT_COLLAB.md`.
 - **Export active group** with its full dependency chain.
 - **Deterministic JSON serialization**: nodes are emitted in name order,
   so renaming/reordering produces minimal, stable git diffs, and
@@ -137,6 +144,22 @@ one-file-per-group JSONs that the sync layer treats like a repository:
 4. Recreate the project elsewhere with **Import Package/Folder** (pick
    any file in the folder) — or use **Track from Existing JSON**, which
    also accepts a single-group export file.
+
+### Collaboration with Git
+
+The deterministic JSONs are plain files — any git client can share
+them. The addon adds a thin transport on top:
+
+1. Put the exported folder in a git repository (init with your client,
+   push to GitHub or any remote).
+2. The **Collaboration** panel (GN Tools tab) shows the repository
+   state, commits with **Git Commit…** (only the tracked JSONs are
+   staged) and synchronizes with **Git Sync** (fast-forward only —
+   diverged versions are refused, never auto-merged).
+3. Conflict markers in a JSON are detected and reported; resolve them
+   with your git client.
+4. Full guide (including the manual flow with any client):
+   `docs/GIT_COLLAB.md`.
 
 ### Sync (git-style vocabulary)
 

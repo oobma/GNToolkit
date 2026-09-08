@@ -219,6 +219,7 @@ def json_read_failure_reason(json_path: str) -> str | None:
     """Classify why read_json_tolerant gave up on *json_path*.
 
     Returns 'encoding' (not valid UTF-8, not recoverable safely),
+    'conflict' (valid UTF-8 carrying git merge-conflict markers),
     'json' (valid UTF-8 but not parseable JSON), 'io' (missing or
     unreadable), or None when the file reads fine.
     """
@@ -231,6 +232,8 @@ def json_read_failure_reason(json_path: str) -> str | None:
         text = raw.decode('utf-8-sig')
     except UnicodeDecodeError:
         return 'encoding'
+    if "<<<<<<<" in text:
+        return 'conflict'
     try:
         json.loads(text)
     except json.JSONDecodeError:

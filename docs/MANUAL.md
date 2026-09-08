@@ -351,6 +351,36 @@ file and modifiers in `Modifiers/*.json`.
 
 ---
 
+## Additional workflow 5 — Collaborate with Git
+
+**What to do**
+
+1. Export the project with **Export Package → Use Folder Structure**
+   (one JSON per group), then `git init` + commit + push it with your
+   git client (see `docs/GIT_COLLAB.md` for the full manual flow).
+2. In the GN Tools tab, the **Collaboration** panel shows the detected
+   repository, its state (`clean` / `N to commit` / `ahead` / `behind`)
+   and the buttons:
+   - **Git Commit…** — message dialog; stages only the tracked JSONs
+     that changed and commits locally.
+   - **Git Sync** — `pull --ff-only` + `push`. Remote changes arrive
+     only when your branch is simply behind; if versions diverged, it
+     refuses with a clear message.
+3. Use **Pull from JSON** (Sync panel) after a sync to apply changed
+   JSONs to the .blend.
+
+**What should happen**
+
+- Git Commit reports the number of committed files; the repository row
+  returns to `clean`.
+- Git Sync on a behind branch fast-forwards and pushes; on divergent
+  branches it refuses without touching any file.
+- A JSON with merge-conflict markers is listed in the panel (and
+  reported when tracking/importing); after resolving it with your git
+  client, **Pull from JSON** applies the resolved content.
+
+---
+
 ## References between groups and the package
 
 Two principles drive everything below:

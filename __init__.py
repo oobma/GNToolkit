@@ -49,6 +49,12 @@ def _on_load_post(scene):
         _schedule_json_check()
     except Exception:
         pass
+    try:
+        if sync_manager.metadata.get("tracked_groups"):
+            from .git_integration import refresh_git_state
+            refresh_git_state()
+    except Exception:
+        pass
 
 
 def _schedule_json_check():
