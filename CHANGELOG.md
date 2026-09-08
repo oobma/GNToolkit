@@ -81,6 +81,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **"Missing in Blend" returned after every save for restored groups.**
+  Blender does not persist zero-user node groups across save/reload; a
+  group restored from JSON (or batch-imported) that nothing references
+  disappeared from the .blend on the next open, so the sync layer
+  reported it as orphan forever. The importer now gives every tree it
+  creates a fake user (`use_fake_user`) so imported/restored groups
+  survive saving (the canonical hash excludes that flag — sync
+  detection is unaffected).
 - **Links into group nodes with duplicated socket names were lost,
   silently and order-dependently.** When a dependency was not rebuilt in
   the same pass, wiring fell back to name-only socket lookup; interfaces

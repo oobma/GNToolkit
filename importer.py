@@ -1976,6 +1976,13 @@ def _import_node_tree_gen(
             ng.outputs.clear()
     else:
         ng = bpy.data.node_groups.new(name, 'GeometryNodeTree')
+        # Blender does NOT persist zero-user node groups across save/reload;
+        # an imported group must survive the save, so give it a fake user.
+        # (The canonical hash excludes use_fake_user, so sync is unaffected.)
+        try:
+            ng.use_fake_user = True
+        except Exception:
+            pass
 
     # Apply tree-level properties
     for prop_name, prop_val in data.get("tree_properties", {}).items():
