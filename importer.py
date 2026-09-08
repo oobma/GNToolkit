@@ -1225,6 +1225,42 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
 # Step 3 helper: Wire links
 # ---------------------------------------------------------------------------
 
+def _positional_group_socket(node, nodes_data, node_name: str, sid: str,
+                             is_input: bool):
+    """Resolve a Group node socket by its serialized POSITION.
+
+    When the referenced tree was not rebuilt in this pass, its interface
+    identifiers are stale.  Names are not unique (interfaces can carry
+    duplicated names, e.g. two 'Switch Target End' sockets), so a name
+    match alone cannot tell the pair apart — both links would land on the
+    first socket and the second ``links.new`` would silently REPLACE the
+    first.  The node's serialized socket ORDER mirrors the referenced
+    interface, so the socket's index disambiguates the duplicates.
+
+    Returns the socket, or None when the serialized data cannot be
+    matched positionally (caller falls back to name-based lookup).
+    """
+    nd = next((n for n in nodes_data if n["name"] == node_name), None)
+    if nd is None:
+        return None
+    s_list = nd.get("inputs" if is_input else "outputs", [])
+    idx = None
+    for i, s in enumerate(s_list):
+        if s.get("identifier") == sid:
+            idx = i
+            break
+    if idx is None:
+        return None
+    socks = node.inputs if is_input else node.outputs
+    if idx >= len(socks):
+        return None
+    cand = socks[idx]
+    exp_name = s_list[idx].get("name")
+    if exp_name is not None and getattr(cand, 'name', '') != exp_name:
+        return None
+    return cand
+
+
 def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
                     group_interface_maps: dict | None, zone_socket_remap: dict,
                     tracker: ImportErrorTracker, holder: dict,
@@ -1244,6 +1280,11 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
         to_node = node_map.get(link_data["to_node"])
 
         if not (from_node and to_node):
+            tracker.record(
+                f"Link skipped (node not in map): {link_data['from_node']} "
+                f"-> {link_data['to_node']}",
+                level="DEBUG",
+            )
             continue
 
         from_id = link_data["from_socket_id"]
@@ -1264,6 +1305,7 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
 
         # 1. Group Input/Output Remap
         from_name_only = False
+        from_sock_pre = None
         if from_node.type == 'GROUP_INPUT':
             from_id = interface_map.get(from_id, from_id)
         elif from_node.bl_idname == 'GeometryNodeGroup' and getattr(from_node, "node_tree", None) and group_interface_maps is not None:
@@ -1272,11 +1314,18 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
                 from_id = group_interface_maps[ref_name].get(from_id, from_id)
             else:
                 # Dependency not rebuilt in this pass: its identifiers
-                # are stale, so match by name only — the bare stale id may
-                # hit a DIFFERENT socket after the roundtrip.
-                from_name_only = True
+                # are stale. Prefer positional disambiguation (duplicated
+                # socket names would collide on the first name match);
+                # fall back to name-only when that fails.
+                from_sock_pre = _positional_group_socket(
+                    from_node, data["nodes"], link_data["from_node"],
+                    from_id, is_input=False,
+                )
+                if from_sock_pre is None:
+                    from_name_only = True
 
         to_name_only = False
+        to_sock_pre = None
         if to_node.type == 'GROUP_OUTPUT':
             to_id = interface_map.get(to_id, to_id)
         elif to_node.bl_idname == 'GeometryNodeGroup' and getattr(to_node, "node_tree", None) and group_interface_maps is not None:
@@ -1284,7 +1333,12 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
             if ref_name in group_interface_maps:
                 to_id = group_interface_maps[ref_name].get(to_id, to_id)
             else:
-                to_name_only = True
+                to_sock_pre = _positional_group_socket(
+                    to_node, data["nodes"], link_data["to_node"],
+                    to_id, is_input=True,
+                )
+                if to_sock_pre is None:
+                    to_name_only = True
 
         # 2. Dynamic Status
         from_is_dynamic = from_node.bl_idname in _VOLATILE_TYPES
@@ -1301,16 +1355,22 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
             if remapped:
                 to_id = remapped
 
-        from_sock = find_robust_socket(
-            from_node, from_node.outputs, from_id, from_name,
-            from_expected_type, dynamic_hint=from_is_dynamic,
-            name_only=from_name_only,
-        )
+        from_sock = None
+        if from_sock_pre is not None:
+            from_sock = from_sock_pre
+        else:
+            from_sock = find_robust_socket(
+                from_node, from_node.outputs, from_id, from_name,
+                from_expected_type, dynamic_hint=from_is_dynamic,
+                name_only=from_name_only,
+            )
 
         if to_node.bl_idname == "GeometryNodeViewer" and to_name == "Geometry":
             to_sock = next(
                 (s for s in to_node.inputs if s.name == "Geometry" and s.type == 'GEOMETRY'), None
             )
+        elif to_sock_pre is not None:
+            to_sock = to_sock_pre
         else:
             to_sock = find_robust_socket(
                 to_node, to_node.inputs, to_id, to_name,
@@ -1328,7 +1388,8 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
                 )
         else:
             tracker.record(
-                f"Socket not found: {from_node.name}.{from_name} -> {to_node.name}.{to_name}",
+                f"Socket not found: {from_node.name}.{from_name} -> {to_node.name}.{to_name} "
+                f"(name_only from={from_name_only} to={to_name_only})",
                 level="WARN",
             )
 
