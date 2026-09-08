@@ -14,7 +14,9 @@ from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProp
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
-from .sync_manager import read_json_tolerant, sync_manager, SyncStatus
+from .sync_manager import (
+    read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
+)
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
 
@@ -399,7 +401,10 @@ class GN_OT_SyncLinkDeps(bpy.types.Operator):
 class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link_all"
     bl_label = "Track All"
-    bl_description = "Track every Geometry Nodes group in one master JSON, written from the current .blend (first commit)"
+    bl_description = ("Track every Geometry Nodes group, writing one master JSON from the "
+                      "current .blend — the addon CREATES the JSON here (first commit). "
+                      "Use 'Track from Existing JSON' instead when the JSON already exists "
+                      "elsewhere and must not be rewritten")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -579,7 +584,8 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.sync_initialize"
     bl_label = "Track from Existing JSON"
     bl_description = ("Start tracking all groups using an existing JSON as the source of truth — "
-                      "the JSON is read only and is NOT modified")
+                      "the JSON is read only and is NOT modified. Pick the file from the dialog; "
+                      "use 'Track All' instead to write a new master JSON from the current .blend")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -609,7 +615,14 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         # Load JSON
         data = read_json_tolerant(json_path)
         if data is None:
-            self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
+            reason = json_read_failure_reason(json_path)
+            if reason == "encoding":
+                self.report({'ERROR'},
+                            f"'{os.path.basename(json_path)}' is not valid UTF-8 — "
+                            "re-save it as UTF-8 in your editor (File > Save As > "
+                            "UTF-8) and try again")
+            else:
+                self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
             return {'CANCELLED'}
 
         groups = data.get("node_groups", {})
@@ -976,6 +989,19 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
         state.group_name = ""
         state.open = True
         _fill_import_items(state)
+        if len(state.items) == 0:
+            reason = json_read_failure_reason(self.filepath)
+            if reason in ("encoding", "json"):
+                state.open = False
+                if reason == "encoding":
+                    self.report({'ERROR'},
+                                f"'{os.path.basename(self.filepath)}' is not valid UTF-8 — "
+                                "re-save it as UTF-8 in your editor (File > Save As > "
+                                "UTF-8) and try again")
+                else:
+                    self.report({'ERROR'},
+                                f"'{os.path.basename(self.filepath)}' is not valid JSON")
+                return {'CANCELLED'}
         _selection_plan_cache.clear()
         _ensure_picker_pump()
         for area in context.screen.areas:

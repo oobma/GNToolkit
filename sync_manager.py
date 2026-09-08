@@ -189,6 +189,13 @@ def read_json_tolerant(json_path: str, timeout: float = LOCK_TIMEOUT_SECONDS):
     Waits while the lock file is present (another session is mid-write)
     and retries briefly when the file fails to parse (caught halfway
     through a write). Returns the parsed data, or None after giving up.
+
+    Reads with 'utf-8-sig' so files saved with a UTF-8 BOM (legacy
+    Windows editors) parse normally. Files that are not valid UTF-8
+    (e.g. saved as ANSI/Windows-1252) cannot be recovered safely — the
+    encoding is ambiguous and a wrong guess would silently corrupt the
+    source of truth — so they return None; use json_read_failure_reason
+    to tell the user why.
     """
     lock = JsonLock(json_path)
     start = time.time()
@@ -197,12 +204,37 @@ def read_json_tolerant(json_path: str, timeout: float = LOCK_TIMEOUT_SECONDS):
             time.sleep(0.05)
             continue
         try:
-            with open(json_path, 'r', encoding='utf-8') as f:
+            with open(json_path, 'r', encoding='utf-8-sig') as f:
                 return json.load(f)
         except json.JSONDecodeError:
             time.sleep(0.05)
+        except UnicodeDecodeError:
+            return None
         except OSError:
             return None
+    return None
+
+
+def json_read_failure_reason(json_path: str) -> str | None:
+    """Classify why read_json_tolerant gave up on *json_path*.
+
+    Returns 'encoding' (not valid UTF-8, not recoverable safely),
+    'json' (valid UTF-8 but not parseable JSON), 'io' (missing or
+    unreadable), or None when the file reads fine.
+    """
+    try:
+        with open(json_path, 'rb') as f:
+            raw = f.read()
+    except OSError:
+        return 'io'
+    try:
+        text = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return 'encoding'
+    try:
+        json.loads(text)
+    except json.JSONDecodeError:
+        return 'json'
     return None
 
 

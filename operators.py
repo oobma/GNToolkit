@@ -125,7 +125,8 @@ def _apply_modifier_inputs(mod, inputs: dict) -> None:
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_batch_json"
     bl_label = "Export JSON Package"
-    bl_description = "Save a full snapshot of all Geometry Nodes groups and NODES modifiers to a JSON package file"
+    bl_description = ("Export all Geometry Nodes groups and NODES modifiers to JSON — a single "
+                      "package file, or one file per group in folders with 'Use Folder Structure'")
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 

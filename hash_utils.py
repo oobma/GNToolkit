@@ -317,9 +317,9 @@ def _load_json_file(filepath: str) -> dict | None:
     if not os.path.isfile(filepath):
         return None
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return None
 
 
