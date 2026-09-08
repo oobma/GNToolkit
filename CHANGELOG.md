@@ -34,6 +34,13 @@ All notable changes to this project are documented in this file.
   - State refreshes on load, on Refresh Status and after every Git
     operation (cached — no subprocess per redraw); "Git not found" and
     "not a git repository" states are reported with guidance.
+  - **Morning chef for the shared repository**: opening a .blend now
+    silently fetches every tracked repo's remote before the state
+    refresh (`refresh_git_state(fetch=True)` in the load handler), so
+    `behind` reflects the shared repository as-is without touching Git
+    Sync first. Offline/repository-less setups are a no-op (10s
+    timeout, errors swallowed — `git status` semantics otherwise
+    unchanged).
 - **Folder workflow (per-group JSON files as full sync participants).**
   The "Use Folder Structure" export (`NodeGroups/` + `Modifiers/`) is no
   longer a one-shot snapshot — it round-trips through the sync layer:
