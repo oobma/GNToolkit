@@ -104,6 +104,10 @@ All notable changes to this project are documented in this file.
   - tracked-file matching compared backslash relpaths against git's
     forward-slash status lines — changed files were invisible; all
     paths are normalized to `/` before comparing.
+  - untracked directories were collapsed (`?? dir/`) and paths with
+    spaces arrived quoted (`?? "dir/a b.json"`); status now runs with
+    `-uall -z` (NUL-separated, unquoted, individual files), and a
+    "No commits yet on <branch>" head line parses as that branch.
 
 ### Tests
 

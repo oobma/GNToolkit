@@ -89,31 +89,34 @@ def repo_status(repo_root):
     """Porcelain state: branch, upstream, ahead/behind, changed files."""
     if not git_available():
         return {"ok": False, "error": "Git not found"}
-    rc, out, err = _git(["status", "--porcelain=v1", "-b"], repo_root)
+    rc, out, err = _git(["status", "--porcelain=v1", "-b", "-uall", "-z"], repo_root)
     if rc != 0:
         return {"ok": False, "error": (err or out).strip() or "git status failed"}
-    lines = out.splitlines()
+    lines = [e for e in out.split("\x00") if e]
     branch = ""
     upstream = None
     ahead = 0
     behind = 0
     if lines and lines[0].startswith("## "):
         head = lines[0][3:]
-        branch = head.split("...")[0].strip()
-        if "..." in head:
-            up_part = head.split("...", 1)[1]
-            upstream = up_part.split(" ")[0].strip()
-            if "[ahead" in up_part:
-                try:
-                    ahead = int(up_part.split("[ahead ")[1].split("]")[0].split(",")[0])
-                except (ValueError, IndexError):
-                    ahead = 0
-            if "[behind" in up_part:
-                try:
-                    behind = int(up_part.split("[behind ")[1].split("]")[0].split(",")[0])
-                except (ValueError, IndexError):
-                    behind = 0
-    changed = [line[3:].strip() for line in lines[1:] if len(line) >= 4 and line[3:].strip()]
+        if head.startswith("No commits yet on "):
+            branch = head[len("No commits yet on "):].strip()
+        else:
+            branch = head.split("...")[0].strip()
+            if "..." in head:
+                up_part = head.split("...", 1)[1]
+                upstream = up_part.split(" ")[0].strip()
+                if "[ahead" in up_part:
+                    try:
+                        ahead = int(up_part.split("[ahead ")[1].split("]")[0].split(",")[0])
+                    except (ValueError, IndexError):
+                        ahead = 0
+                if "[behind" in up_part:
+                    try:
+                        behind = int(up_part.split("[behind ")[1].split("]")[0].split(",")[0])
+                    except (ValueError, IndexError):
+                        behind = 0
+    changed = [line[3:] for line in lines[1:] if len(line) >= 4]
     return {
         "ok": True,
         "branch": branch,
