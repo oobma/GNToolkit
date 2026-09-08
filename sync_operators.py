@@ -583,8 +583,9 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
 class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.sync_initialize"
     bl_label = "Track from Existing JSON"
-    bl_description = ("Start tracking all groups using an existing JSON as the source of truth — "
-                      "the JSON is read only and is NOT modified. Pick the file from the dialog; "
+    bl_description = ("Start tracking groups using an existing JSON as the source of truth — "
+                      "a unified package (one file) or a single-group export ('Export package' "
+                      "with folder structure). The JSON is read only and is NOT modified; "
                       "use 'Track All' instead to write a new master JSON from the current .blend")
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -625,9 +626,27 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
                 self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
             return {'CANCELLED'}
 
+        if not isinstance(data, dict):
+            self.report({'ERROR'},
+                        f"'{os.path.basename(json_path)}' is not a node group package — "
+                        "pick the unified package (single file) or a per-group export "
+                        "(NodeGroups folder)")
+            return {'CANCELLED'}
+
         groups = data.get("node_groups", {})
+        if not groups and "nodes" in data and data.get("name"):
+            groups = {data["name"]: data}
         if not groups:
-            self.report({'ERROR'}, "No node groups found in JSON")
+            if "modifier_name" in data:
+                self.report({'ERROR'},
+                            f"'{os.path.basename(json_path)}' is a modifier export, "
+                            "not a node group package — pick the unified package "
+                            "(single file) or a per-group export (NodeGroups folder)")
+            else:
+                self.report({'ERROR'},
+                            f"No node groups found in '{os.path.basename(json_path)}' — "
+                            "pick the unified package (single file) or a per-group "
+                            "export (NodeGroups folder)")
             return {'CANCELLED'}
 
         # Initialize sync manager if needed
