@@ -52,7 +52,7 @@ def _on_load_post(scene):
     try:
         if sync_manager.metadata.get("tracked_groups"):
             from .git_integration import refresh_git_state
-            refresh_git_state()
+            refresh_git_state(fetch=True)
     except Exception:
         pass
 

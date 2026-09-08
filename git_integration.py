@@ -40,13 +40,13 @@ def git_available() -> bool:
     return _available_cache
 
 
-def _git(args, cwd):
+def _git(args, cwd, timeout=_TIMEOUT):
     cmd = ["git"] + _NOCOLOR_FLAGS + args
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.run(
         cmd, cwd=cwd, capture_output=True, text=True,
         encoding="utf-8", errors="replace",
-        timeout=_TIMEOUT, creationflags=creationflags,
+        timeout=timeout, creationflags=creationflags,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -227,8 +227,23 @@ def detect_conflict_markers(paths):
     return hits
 
 
-def refresh_git_state():
-    """Rebuild the panel cache: per-repo status + conflict flags."""
+_FETCH_ON_LOAD_TIMEOUT = 10.0
+
+
+def _fetch_repo(repo_root):
+    """Silent ``git fetch`` (nothing raises; offline is just a no-op)."""
+    try:
+        _git(["fetch", "--quiet"], repo_root, timeout=_FETCH_ON_LOAD_TIMEOUT)
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+        pass
+
+
+def refresh_git_state(fetch=False):
+    """Rebuild the panel cache: per-repo status + conflict flags.
+
+    With fetch=True every repo's remote is fetched first (silently), so
+    ``behind`` reflects the shared repository as-is when opening a file
+    (the "morning chef" for the shared shelf)."""
     global _state_cache
     _state_cache = {"available": git_available(), "repos": {}, "conflicts": []}
     if not _state_cache["available"]:
@@ -237,6 +252,9 @@ def refresh_git_state():
         repos = repos_for_tracked()
     except Exception:
         return _state_cache
+    if fetch:
+        for root in repos:
+            _fetch_repo(root)
     tracked_set = set()
     for root, paths in repos.items():
         st = repo_status(root)
