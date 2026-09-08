@@ -232,16 +232,22 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         remotes = _json_remotes(tracked)
         if remotes:
             layout.separator()
-            layout.label(text="JSON remotes:", icon='FILE_FOLDER')
-            for abs_path, count in sorted(remotes.items()):
-                remote_row = layout.row(align=True)
-                icon = 'FILE' if os.path.isfile(abs_path) else 'ERROR'
-                remote_row.label(text=abs_path, icon=icon)
-                remote_row.label(text=f"{count} groups")
-                copy_op = remote_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
-                copy_op.json_path = abs_path
-                reveal_op = remote_row.operator("gn.sync_reveal_json_path", text="", icon='FOLDER_REDIRECT')
-                reveal_op.json_path = abs_path
+            rem_box = layout.box()
+            rem_head = rem_box.row(align=True)
+            rem_head.prop(prefs, "expand_remotes", text="", emboss=False,
+                          icon='DISCLOSURE_TRI_DOWN' if prefs.expand_remotes
+                          else 'DISCLOSURE_TRI_RIGHT')
+            rem_head.label(text=f"JSON files: {len(remotes)}", icon='FILE_FOLDER')
+            if prefs.expand_remotes:
+                for abs_path, count in sorted(remotes.items()):
+                    remote_row = rem_box.row(align=True)
+                    icon = 'FILE' if os.path.isfile(abs_path) else 'ERROR'
+                    remote_row.label(text=abs_path, icon=icon)
+                    remote_row.label(text=f"{count} groups")
+                    copy_op = remote_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
+                    copy_op.json_path = abs_path
+                    reveal_op = remote_row.operator("gn.sync_reveal_json_path", text="", icon='FOLDER_REDIRECT')
+                    reveal_op.json_path = abs_path
 
         has_cache = bool(sync_manager._status_cache)
 
@@ -371,8 +377,20 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             layout.label(text="No issues match current filters", icon='INFO')
             return
 
+        iss_box = layout.box()
+        iss_head = iss_box.row(align=True)
+        iss_head.prop(prefs, "expand_issues", text="", emboss=False,
+                      icon='DISCLOSURE_TRI_DOWN' if prefs.expand_issues
+                      else 'DISCLOSURE_TRI_RIGHT')
+        iss_head.label(text=f"{len(filtered_items)} group(s) out of sync",
+                       icon='ERROR')
+        if not prefs.expand_issues:
+            layout.separator()
+            layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
+            return
+
         for uid, blend_name, status, ignored in filtered_items:
-            box = layout.box()
+            box = iss_box.box()
             icon = STATUS_ICONS.get(status, 'QUESTION')
             label = STATUS_LABELS.get(status, status.value)
 
@@ -551,6 +569,17 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
     )
     show_ignored: bpy.props.BoolProperty(
         name="Show Ignored", default=False,
+    )
+    expand_remotes: bpy.props.BoolProperty(
+        name="Show JSON Files",
+        description="List every JSON file that tracked groups point to "
+                    "(folder exports can produce one file per group)",
+        default=False,
+    )
+    expand_issues: bpy.props.BoolProperty(
+        name="Show Issue List",
+        description="List each out-of-sync group with its actions",
+        default=True,
     )
     check_on_load: bpy.props.BoolProperty(
         name="Check JSON on open",
