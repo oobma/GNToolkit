@@ -283,10 +283,49 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
         return {'FINISHED'}
 
 
+def load_package_sources(filepath: str) -> tuple[dict, list]:
+    """Load groups and modifiers from a package file or a folder export.
+
+    Accepts a unified package file, a standalone single-group file, or a
+    folder (a folder export is detected by its NodeGroups/Modifiers
+    subfolders). Returns (json_cache, mod_data_list).
+    """
+    json_cache = {}
+    mod_data_list = []
+    if os.path.isdir(filepath):
+        ng_dir = os.path.join(filepath, "NodeGroups")
+        mod_dir = os.path.join(filepath, "Modifiers")
+        if os.path.exists(ng_dir):
+            for f in os.listdir(ng_dir):
+                if f.endswith('.json'):
+                    with open(os.path.join(ng_dir, f), 'r', encoding='utf-8') as file:
+                        data = json.load(file)
+                    if "name" in data:
+                        json_cache[data["name"]] = data
+                    elif isinstance(data, dict) and "node_groups" in data:
+                        json_cache.update(data["node_groups"])
+        if os.path.exists(mod_dir):
+            for f in os.listdir(mod_dir):
+                if f.endswith('.json'):
+                    with open(os.path.join(mod_dir, f), 'r', encoding='utf-8') as file:
+                        mod_data_list.append(json.load(file))
+    else:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            master_data = json.load(f)
+        if master_data.get("type") == "GN_UNIFIED_PACKAGE":
+            json_cache.update(master_data.get("node_groups", {}))
+            mod_data_list = master_data.get("modifiers", [])
+        elif "name" in master_data and "nodes" in master_data:
+            json_cache[master_data["name"]] = master_data
+    return json_cache, mod_data_list
+
+
 class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
     bl_label = "Import JSON Package"
-    bl_description = ("Recreate all Geometry Nodes groups (and modifiers) from a JSON package; "
+    bl_description = ("Recreate all Geometry Nodes groups (and modifiers) from a JSON package — "
+                      "or pick any file inside a folder export ('Export package' with folder "
+                      "structure) to recreate its NodeGroups/Modifiers folders; "
                       "'Update existing groups' rebuilds existing ones in place")
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
@@ -294,8 +333,8 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     apply_modifiers: BoolProperty(
         name="Apply Modifiers",
         description="Apply the modifiers stored in the JSON to existing objects "
-                    "with matching names (off by default: modifiers are skipped)",
-        default=False,
+                    "with matching names",
+        default=True,
     )
 
     overwrite_existing: BoolProperty(
@@ -334,35 +373,16 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         self._tracker = ImportErrorTracker()
 
         filepath = self.filepath
+        if not os.path.isdir(filepath):
+            parent = os.path.dirname(filepath)
+            if os.path.isdir(os.path.join(parent, "NodeGroups")):
+                filepath = parent
         self.json_cache = {}
         self.group_interface_maps = {}
         mod_data_list = []
 
         try:
-            if os.path.isdir(filepath):
-                ng_dir = os.path.join(filepath, "NodeGroups")
-                mod_dir = os.path.join(filepath, "Modifiers")
-                if os.path.exists(ng_dir):
-                    for f in os.listdir(ng_dir):
-                        if f.endswith('.json'):
-                            with open(os.path.join(ng_dir, f), 'r', encoding='utf-8') as file:
-                                data = json.load(file)
-                                if "name" in data:
-                                    self.json_cache[data["name"]] = data
-                if os.path.exists(mod_dir):
-                    for f in os.listdir(mod_dir):
-                        if f.endswith('.json'):
-                            with open(os.path.join(mod_dir, f), 'r', encoding='utf-8') as file:
-                                mod_data_list.append(json.load(file))
-            else:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    master_data = json.load(f)
-                if master_data.get("type") == "GN_UNIFIED_PACKAGE":
-                    self.json_cache.update(master_data.get("node_groups", {}))
-                    mod_data_list = master_data.get("modifiers", [])
-                elif "name" in master_data and "nodes" in master_data:
-                    self.json_cache[master_data["name"]] = master_data
-
+            self.json_cache, mod_data_list = load_package_sources(filepath)
         except Exception as e:
             self.report({'ERROR'}, f"Read error: {str(e)}")
             return {'CANCELLED'}
@@ -511,7 +531,7 @@ class GN_PT_MainPanel(bpy.types.Panel):
 
         row = layout.row(align=True)
         row.operator("gn.export_batch_json", text="Export Package", icon='EXPORT')
-        row.operator("gn.import_batch_json", text="Import Package", icon='IMPORT')
+        row.operator("gn.import_batch_json", text="Import Package/Folder", icon='IMPORT')
 
         row2 = layout.row(align=True)
         row2.operator("gn.export_active_json", text="Export Active Group", icon='FILE_BACKUP')
