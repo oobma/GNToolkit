@@ -434,14 +434,35 @@ class GN_OT_GitSync(bpy.types.Operator):
 
     def execute(self, context):
         from .git_integration import git_sync, invalidate_git_state
+        from .sync_metadata import resolve_json_path
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        status, detail = git_sync(self.repo)
+        status, detail, files = git_sync(self.repo, report_files=True)
         invalidate_git_state()
         if status == "ok":
-            sync_manager.invalidate_cache()
-            self.report({'INFO'}, "Git sync complete")
+            affected = set()
+            if files:
+                blend_dir = sync_manager._blend_dir()
+                for uid, info in sync_manager.metadata.get("tracked_groups", {}).items():
+                    jp = info.get("json_path", "")
+                    if not jp:
+                        continue
+                    abs_path = os.path.normcase(os.path.normpath(
+                        resolve_json_path(jp, blend_dir)))
+                    for rel in files:
+                        repo_abs = os.path.normcase(os.path.normpath(
+                            os.path.join(self.repo, rel.replace("/", os.sep))))
+                        if abs_path == repo_abs:
+                            affected.add(uid)
+            if affected:
+                for uid in affected:
+                    sync_manager.invalidate_cache(uid)
+                sync_manager.check_all_statuses()
+                self.report({'INFO'},
+                            f"Git sync complete — {len(affected)} group(s) refreshed")
+            else:
+                self.report({'INFO'}, "Git sync complete")
             return {'FINISHED'}
         if status == "diverged":
             self.report({'WARNING'},

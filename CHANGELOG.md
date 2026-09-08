@@ -21,8 +21,10 @@ All notable changes to this project are documented in this file.
   - **Git Sync** = `git pull --ff-only` + `git push`: remote changes
     arrive only when the branch is simply behind (no automatic merge,
     ever); diverged versions are refused with a clear message. After a
-    clean sync the status cache is invalidated so JSON-side changes show
-    up as "Changed in JSON" immediately.
+    clean sync the tracked groups of the files the pull changed are
+    re-checked automatically ("Changed in JSON" appears without a
+    manual Refresh Status); `git_sync(..., report_files=True)` returns
+    the repo-relative paths the pull modified.
   - **Merge-conflict detection**: `json_read_failure_reason` gained a
     `'conflict'` reason; tracking/importing a conflicted JSON reports
     "has merge conflicts — resolve them with your git client" and the

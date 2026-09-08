@@ -110,7 +110,9 @@ on the PATH.
     versions diverged, the sync refuses and reports "Versions diverged
     — resolve with your git client". After a clean sync the sync status
     cache is refreshed so a changed JSON shows up as "Changed in JSON"
-    immediately.
+    immediately. When the pull brought changes, the tracked groups of
+    the updated files are re-checked automatically — no manual
+    **Refresh Status** needed.
   - **Reveal** — open the repository folder in the file explorer.
 - **Merge conflicts**: when a tracked JSON carries conflict markers the
   panel shows a warning row per file with a Reveal button.

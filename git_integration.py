@@ -164,32 +164,53 @@ def git_commit(repo_root, message, paths):
     return True, (out or err).strip()
 
 
-def git_sync(repo_root):
+def git_sync(repo_root, report_files=False):
     """``pull --ff-only`` then ``push``. Returns (status, detail) with
-    status in {'ok', 'diverged', 'error'}."""
+    status in {'ok', 'diverged', 'error'}. With report_files=True the
+    result is (status, detail, files) where files are the repo-relative
+    paths (forward slashes) that the pull changed (empty when already
+    up to date)."""
     if not git_available():
-        return "error", "Git not found — install Git and restart Blender"
+        result = ("error", "Git not found — install Git and restart Blender")
+        return result + ([],) if report_files else result
+    head_before = ""
+    if report_files:
+        rc, out, _ = _git(["rev-parse", "HEAD"], repo_root)
+        head_before = out.strip() if rc == 0 else ""
     rc, out, err = _git(["pull", "--ff-only"], repo_root)
     if rc != 0:
         text = (err or out).strip()
         low = text.lower()
         if "not a git repository" in low:
-            return "error", "Not a git repository"
-        if "no upstream" in low or "no tracking information" in low:
-            return "error", "No upstream branch — set it with your git client"
-        if "no such remote" in low or "does not appear to be a git repository" in low:
-            return "error", "No remote configured — add one with your git client"
-        if "not possible to fast-forward" in low or "diverged" in low:
-            return "diverged", text.splitlines()[0] if text else "versions diverged"
-        return "diverged", text.splitlines()[0] if text else "pull failed"
+            status, detail = "error", "Not a git repository"
+        elif "no upstream" in low or "no tracking information" in low:
+            status, detail = "error", "No upstream branch — set it with your git client"
+        elif "no such remote" in low or "does not appear to be a git repository" in low:
+            status, detail = "error", "No remote configured — add one with your git client"
+        elif "not possible to fast-forward" in low or "diverged" in low:
+            status, detail = "diverged", text.splitlines()[0] if text else "versions diverged"
+        else:
+            status, detail = "diverged", text.splitlines()[0] if text else "pull failed"
+        return (status, detail, []) if report_files else (status, detail)
     rc, out, err = _git(["push"], repo_root)
     if rc != 0:
         text = (err or out).strip()
         low = text.lower()
         if "no upstream" in low:
-            return "error", "No upstream branch — set it with your git client"
-        return "error", text.splitlines()[0] if text else "push failed"
-    return "ok", (out or err).strip()
+            status, detail = "error", "No upstream branch — set it with your git client"
+        else:
+            status, detail = "error", text.splitlines()[0] if text else "push failed"
+        return (status, detail, []) if report_files else (status, detail)
+    files = []
+    if report_files and head_before:
+        rc, out_head, _ = _git(["rev-parse", "HEAD"], repo_root)
+        head_after = out_head.strip() if rc == 0 else ""
+        if head_after and head_after != head_before:
+            rc, out_diff, _ = _git(["diff", "--name-only", head_before, head_after],
+                                   repo_root)
+            files = [line.strip() for line in out_diff.splitlines() if line.strip()]
+    result = ("ok", (out or err).strip())
+    return result + (files,) if report_files else result
 
 
 def detect_conflict_markers(paths):
