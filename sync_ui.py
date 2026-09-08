@@ -645,6 +645,8 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 entries = git_log(next(iter(repos)), None, 10)
                 if entries:
                     _draw_git_log_box(repo_box, entries)
+                    repo_box.label(text="Shows the last 10 commits (newest first)",
+                                   icon='INFO')
                 else:
                     repo_box.label(text="No commits yet", icon='INFO')
 
@@ -666,6 +668,8 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                     entries = git_log(root, os.path.relpath(json_path, root), 10)
                     if entries:
                         _draw_git_log_box(act_box, entries)
+                        act_box.label(text="Shows the last 10 commits (newest first)",
+                                      icon='INFO')
                     else:
                         act_box.label(text="No commits for this file",
                                       icon='INFO')
