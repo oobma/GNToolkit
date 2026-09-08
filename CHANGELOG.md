@@ -95,6 +95,15 @@ All notable changes to this project are documented in this file.
   top-level `name`, so the folder loader skipped it (4 of 5 groups).
   `load_package_sources` merges `node_groups` from package-shaped files
   in the folder.
+- **Git transport (found by the two-user collaboration e2e)**:
+  - `repos_for_tracked` resolved tracked paths without the blend dir
+    (`resolve_json_path` requires it) — the Collaboration panel found
+    no repositories.
+  - `ahead`/`behind` parsing kept the `]` of `[ahead 1]` (`int("1]")`)
+    and silently reported 0.
+  - tracked-file matching compared backslash relpaths against git's
+    forward-slash status lines — changed files were invisible; all
+    paths are normalized to `/` before comparing.
 
 ### Tests
 
@@ -114,6 +123,12 @@ All notable changes to this project are documented in this file.
   folders, resets to an empty file and reimports everything from the
   folder — verifying counts, canonical hashes and dependency closure
   (113-group chain resolved deps-first). Passes 9/9 on 5.1.1 and 5.2.0.
+- Collaboration e2e `tests/git_collab_e2e.py` (out-of-battery, run
+  manually): a full two-user simulation over a local bare remote —
+  folder export into a repo, track, colleague clone/edit/push, sync
+  (fast-forward), "Changed in JSON" + pull into the .blend, addon
+  commit (standalone→package conversion visible to the colleague) and
+  push. Passes 18/18 on 5.1.1 and 5.2.0.
 
 ## [0.2.3] - 2026-08-15
 

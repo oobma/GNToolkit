@@ -4,7 +4,7 @@ Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
 the headless suites on Blender 5.1.1 and 5.2.0 LTS, including the
 new-node E2E for the 25 new instantiable 5.2 node classes and every GN
 socket type. The currently maintained suites are
-`tests/smoke_test_5.1.py` (**114 checks**, 5.1) and
+`tests/smoke_test_5.1.py` (**129 checks**, 5.1) and
 `tests/test_52_new_nodes_e2e.py` (**40 checks**, 5.2-only); the
 per-test table below reflects the suite state as of 2026-08-13.
 This document records the research and the changes the port required so
@@ -20,12 +20,12 @@ node set** (test #10, `test_52_new_nodes_e2e.py`); three roundtrip
 fidelity bugs found by that test were fixed (see §10, included in the
 0.2.2 release).
 
-Updated: 2026-09-08 — the smoke suite grew to **114 checks** with the
+Updated: 2026-09-08 — the smoke suite grew to **129 checks** with the
 0.2.4 additions (encoding tolerance, standalone write-back, folder
-loader, duplicated-socket regression), and the recreation suite
-(`tests/recreate_from_folder_test.py`) verifies a full folder round-trip
-of the 439-group reference project **byte-identically on 5.1.1 and
-5.2.0** (see the Unreleased section of the CHANGELOG).
+loader, duplicated-socket regression, git transport), and the recreation
+suite (`tests/recreate_from_folder_test.py`) verifies a full folder
+round-trip of the 439-group reference project **byte-identically on
+5.1.1 and 5.2.0** (see the Unreleased section of the CHANGELOG).
 
 ---
 
@@ -54,10 +54,10 @@ e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
 one root cause (data-type-driven socket layouts) except the modifier RNA.
 
 **Current state (2026-09-08):** the maintained suites are
-`tests/smoke_test_5.1.py` (114 checks) and
+`tests/smoke_test_5.1.py` (129 checks) and
 `tests/test_52_new_nodes_e2e.py` (40 checks, 5.2-only); the per-test
 table above reflects the suite state as of 2026-08-13 (test #1 was 41
-checks then — it grew to 96 with the 0.2.3 additions and to 114 with
+checks then — it grew to 96 with the 0.2.3 additions and to 129 with
 the 0.2.4 additions).
 
 ## What the port changed (implemented 2026-08-11)
