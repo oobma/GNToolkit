@@ -203,6 +203,11 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 with open(self.filepath, 'w', encoding='utf-8') as f:
                     json.dump(master_data, f, **dump_args)
                 self.report({'INFO'}, "Package export completed.")
+        except PermissionError:
+            self.report({'ERROR'},
+                        f"Cannot write to {self.filepath} — save the .blend "
+                        "file in a writable location and try again")
+            return {'CANCELLED'}
         except Exception as e:
             self.report({'ERROR'}, f"Export failed: {e}")
             traceback.print_exc()
@@ -275,6 +280,11 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
             with open(self.filepath, 'w', encoding='utf-8') as f:
                 json.dump(master_data, f, **dump_args)
             self.report({'INFO'}, f"Exported '{tree.name}' successfully.")
+        except PermissionError:
+            self.report({'ERROR'},
+                        f"Cannot write to {self.filepath} — save the .blend "
+                        "file in a writable location and try again")
+            return {'CANCELLED'}
         except Exception as e:
             self.report({'ERROR'}, f"Export failed: {e}")
             traceback.print_exc()

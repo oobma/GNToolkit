@@ -13,11 +13,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from enum import Enum
 
 import bpy
+
+_log = logging.getLogger("GNToolkit.sync")
+
+
+def _write_json_file(json_path: str, data: dict) -> None:
+    """Write a package JSON with a user-friendly PermissionError message."""
+    try:
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+    except PermissionError:
+        raise PermissionError(
+            f"Cannot write to {json_path} — save the .blend file in a "
+            "writable location and try again"
+        ) from None
 
 from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
@@ -1130,7 +1146,7 @@ class SyncManager:
                     f"inconsistent state. Save and restart Blender, then pull again."
                 )
                 return tracker
-            print(f"[Pull] repaired {removed} dangling link(s) left by a previous crash")
+            _log.info("[Pull] repaired %d dangling link(s) left by a previous crash", removed)
 
         json_path = resolve_json_path(info.get("json_path", ""), self._blend_dir())
         if not os.path.isfile(json_path):
@@ -1491,9 +1507,7 @@ class SyncManager:
             master_data["node_groups"][blend_name] = serialize_node_tree(tree)
             serialized_dict = {blend_name: master_data["node_groups"][blend_name]}
 
-            os.makedirs(os.path.dirname(json_path), exist_ok=True)
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(master_data, f, indent=4, ensure_ascii=False)
+            _write_json_file(json_path, master_data)
 
             # Update primary group hashes
             new_blend_hash = canonical_hash_from_tree(tree)
@@ -1627,7 +1641,7 @@ class SyncManager:
             return {"linked": 0, "skipped": 0, "errors": 0}
 
         total = len(all_groups)
-        print(f"[Link All] serializing {total} groups...")
+        _log.info("[Link All] serializing %d groups...", total)
 
         abs_path = json_path
         if not os.path.isabs(abs_path):
@@ -1660,22 +1674,20 @@ class SyncManager:
             master_data["node_groups"][name] = serialize_node_tree(tree)
             done += 1
             if done % 50 == 0 or done == total:
-                print(f"[Link All] serialized {done}/{total} groups")
+                _log.info("[Link All] serialized %d/%d groups", done, total)
                 if context and hasattr(context, 'workspace') and context.workspace:
                     context.workspace.status_text_set(f"Link All: serializing {done}/{total}...")
                 import bpy as _bpy
                 _bpy.app.timers.register(lambda: None, first_interval=0.0)
 
-        print(f"[Link All] writing JSON to {abs_path}...")
+        _log.info("[Link All] writing JSON to %s...", abs_path)
         if context and hasattr(context, 'workspace') and context.workspace:
             context.workspace.status_text_set("Link All: writing JSON...")
 
         # Write the master JSON
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        with open(abs_path, 'w', encoding='utf-8') as f:
-            json.dump(master_data, f, indent=4, ensure_ascii=False)
+        _write_json_file(abs_path, master_data)
 
-        print(f"[Link All] JSON written, reading back from disk to compute hashes...")
+        _log.info("[Link All] JSON written, reading back from disk to compute hashes...")
 
         json_mtime = os.path.getmtime(abs_path)
         stored_path = make_json_path_relative(abs_path, self._blend_dir())
@@ -1720,7 +1732,7 @@ class SyncManager:
             name_to_uuid[name] = new_uuid
             linked += 1
 
-        print(f"[Link All] UUIDs assigned: {linked} new, {skipped} existing")
+        _log.info("[Link All] UUIDs assigned: %d new, %d existing", linked, skipped)
 
         # Second pass: create metadata entries using pre-computed hashes
         done = 0
@@ -1764,7 +1776,7 @@ class SyncManager:
             )
 
             if done % 50 == 0 or done == total:
-                print(f"[Link All] tracking {done}/{total} groups")
+                _log.info("[Link All] tracking %d/%d groups", done, total)
                 if context and hasattr(context, 'workspace') and context.workspace:
                     context.workspace.status_text_set(f"Link All: tracking {done}/{total}...")
 
@@ -1773,7 +1785,7 @@ class SyncManager:
         # without recomputing hashes (we just wrote them).
         for uid, info in self.metadata.get("tracked_groups", {}).items():
             self._status_cache[uid] = SyncStatus.SYNCED
-        print(f"[Link All] done: {linked} linked, {skipped} skipped, {errors} errors")
+        _log.info("[Link All] done: %d linked, %d skipped, %d errors", linked, skipped, errors)
         if context and hasattr(context, 'workspace') and context.workspace:
             context.workspace.status_text_set(f"Link All: done ({linked} linked, {skipped} skipped)")
         return {"linked": linked, "skipped": skipped, "errors": errors}
@@ -1797,7 +1809,7 @@ class SyncManager:
             return {"exported": 0, "skipped": 0, "errors": 0}
 
         total = len(tracked)
-        print(f"[Export All] exporting {total} tracked groups...")
+        _log.info("[Export All] exporting %d tracked groups...", total)
 
         # Group tracked entries by JSON path
         json_groups: dict[str, list[str]] = {}
@@ -1840,7 +1852,8 @@ class SyncManager:
                 skipped += len(uids)
                 continue
 
-            print(f"[Export All] serializing {len(groups_to_export)} groups to {os.path.basename(json_path)}...")
+            _log.info("[Export All] serializing %d groups to %s...",
+                      len(groups_to_export), os.path.basename(json_path))
             if context and hasattr(context, 'workspace') and context.workspace:
                 context.workspace.status_text_set(f"Export All: writing {len(groups_to_export)} groups...")
 
@@ -1880,9 +1893,7 @@ class SyncManager:
                     master_data["node_groups"][g_name] = serialize_node_tree(g_tree)
                     serialized_dict[g_name] = master_data["node_groups"][g_name]
 
-                os.makedirs(os.path.dirname(json_path), exist_ok=True)
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(master_data, f, indent=4, ensure_ascii=False)
+                _write_json_file(json_path, master_data)
 
                 new_mtime = os.path.getmtime(json_path)
 
@@ -1891,15 +1902,16 @@ class SyncManager:
                 exported += len(uids)
                 done += len(uids)
                 self._dirty = True
-                print(f"[Export All] {exported}/{total} groups exported")
+                _log.info("[Export All] %d/%d groups exported", exported, total)
 
             except Exception as e:
-                print(f"[Export All] error: {e}")
+                _log.warning("[Export All] error: %s", e)
                 errors += len(uids)
             finally:
                 lock.release()
 
-        print(f"[Export All] done: {exported} exported, {skipped} skipped, {errors} errors")
+        _log.info("[Export All] done: %d exported, %d skipped, %d errors",
+                  exported, skipped, errors)
         if context and hasattr(context, 'workspace') and context.workspace:
             context.workspace.status_text_set(f"Export All: done ({exported} exported, {skipped} skipped)")
         return {"exported": exported, "skipped": skipped, "errors": errors}
@@ -1917,7 +1929,7 @@ class SyncManager:
         if not tracked:
             return {"exported": 0, "skipped": 0, "errors": 0}
 
-        print("[Export Modified] scanning for changes...")
+        _log.info("[Export Modified] scanning for changes...")
 
         # Detect which groups are blend_modified or conflict
         groups_to_export: list[str] = []
@@ -1940,7 +1952,8 @@ class SyncManager:
 
         total = len(tracked)
         to_export_count = len(groups_to_export)
-        print(f"[Export Modified] {to_export_count} of {total} groups need exporting, {skipped} up-to-date")
+        _log.info("[Export Modified] %d of %d groups need exporting, %d up-to-date",
+                  to_export_count, total, skipped)
 
         if not groups_to_export:
             return {"exported": 0, "skipped": skipped, "errors": 0}
@@ -1976,7 +1989,8 @@ class SyncManager:
                 errors += len(uids)
                 continue
 
-            print(f"[Export Modified] serializing {len(groups_to_serialize)} groups to {os.path.basename(json_path)}...")
+            _log.info("[Export Modified] serializing %d groups to %s...",
+                      len(groups_to_serialize), os.path.basename(json_path))
             if context and hasattr(context, 'workspace') and context.workspace:
                 context.workspace.status_text_set(f"Export Modified: writing {len(groups_to_serialize)} groups...")
 
@@ -2002,9 +2016,7 @@ class SyncManager:
                     master_data["node_groups"][g_name] = serialize_node_tree(g_tree)
                     serialized_dict[g_name] = master_data["node_groups"][g_name]
 
-                os.makedirs(os.path.dirname(json_path), exist_ok=True)
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(master_data, f, indent=4, ensure_ascii=False)
+                _write_json_file(json_path, master_data)
 
                 # Update hashes for all groups sharing this JSON
                 new_mtime = os.path.getmtime(json_path)
@@ -2023,7 +2035,8 @@ class SyncManager:
                 lock.release()
 
         self._dirty = True
-        print(f"[Export Modified] done: {exported} exported, {skipped} skipped, {errors} errors")
+        _log.info("[Export Modified] done: %d exported, %d skipped, %d errors",
+                  exported, skipped, errors)
         if context and hasattr(context, 'workspace') and context.workspace:
             context.workspace.status_text_set(f"Export Modified: done ({exported} exported, {errors} errors)")
         return {"exported": exported, "skipped": skipped, "errors": errors}
@@ -2170,7 +2183,8 @@ class SyncManager:
             uid, info, jp = name_to_item[name]
             blend_name = info.get("blend_name", "")
 
-            print(f"[Import Modified] importing '{blend_name}' ({done}/{to_import_count})...")
+            _log.info("[Import Modified] importing '%s' (%d/%d)...",
+                      blend_name, done, to_import_count)
             if context and hasattr(context, 'workspace') and context.workspace:
                 context.workspace.status_text_set(f"Import Modified: {done}/{to_import_count} — {blend_name}")
 
@@ -2313,9 +2327,9 @@ class SyncManager:
                     f"after repair (e.g. {still[0]}) — the .blend was left in an "
                     f"inconsistent state. Save and restart Blender, then pull again."
                 )
-            print(f"[Import Modified] repaired {removed} dangling link(s) left by a previous crash")
+            _log.info("[Import Modified] repaired %d dangling link(s) left by a previous crash", removed)
 
-        print("[Import Modified] scanning for changes...")
+        _log.info("[Import Modified] scanning for changes...")
 
         # --- Fast detection: compare json hashes from disk vs stored ---
         # Read each JSON file once and compute per-group hashes in memory.
@@ -2388,7 +2402,8 @@ class SyncManager:
 
         total = len(tracked)
         to_import_count = len(groups_to_import)
-        print(f"[Import Modified] {to_import_count} of {total} groups need importing, {skipped} up-to-date")
+        _log.info("[Import Modified] %d of %d groups need importing, %d up-to-date",
+                  to_import_count, total, skipped)
 
         if not groups_to_import:
             return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0,
@@ -2421,7 +2436,7 @@ class SyncManager:
         candidates = list(groups_to_import)
         if candidates:
             pass_no = 1
-            print(f"[Import Modified] pass {pass_no}: {len(candidates)} group(s) to import")
+            _log.info("[Import Modified] pass %d: %d group(s) to import", pass_no, len(candidates))
             rebuilt_names, affected_parents, local_imported, local_errors = self._run_pull_pass(
                 candidates, context, json_data_cache, all_graph, rev_graph,
                 all_names, tracked_by_name, group_interface_maps,
@@ -2461,14 +2476,16 @@ class SyncManager:
                     still_divergent.add(name)
 
             if still_divergent:
-                print(f"[Import Modified] pass {pass_no}: {len(still_divergent)} group(s) still differ from the JSON")
+                _log.info("[Import Modified] pass %d: %d group(s) still differ from the JSON",
+                      pass_no, len(still_divergent))
 
         # --- Post-processing: update hashes (honest), auto-link ---
         # Groups whose rebuild still differs from the JSON keep the
         # DIVERGENT baseline (blend hash on both sides + mtime 0) so the
         # divergence stays visible as "Changed in JSON" instead of being
         # silently absorbed.
-        print(f"[Import Modified] updating hashes for {len(modified_json_paths)} JSON file(s)...")
+        _log.info("[Import Modified] updating hashes for %d JSON file(s)...",
+                      len(modified_json_paths))
         self._restamp_rebuilt(rebuilt_all, modified_json_paths, json_data_cache)
 
         # Auto-link new groups for this JSON
@@ -2491,8 +2508,10 @@ class SyncManager:
 
         self._dirty = True
         still_count = len(still_divergent)
-        print(f"[Import Modified] done: {imported} imported, {skipped} skipped, {errors} errors, "
-              f"{auto_linked} auto-linked, {still_count} still differ after pull")
+        _log.info("[Import Modified] done: %d imported, %d skipped, %d errors, %d conflicts, "
+                  "%d auto-linked, %d still differ after pull",
+                  imported, skipped, errors, conflicts, auto_linked,
+                  len(still_divergent))
 
         # Crash guard: the rebuilds churn interfaces; verify the rebuilt
         # trees did not accumulate dangling links, and flush the depsgraph
