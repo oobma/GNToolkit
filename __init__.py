@@ -8,6 +8,8 @@ JSON (DNA) is the source of truth, .blend (RNA) is the working cache.
 """
 
 import bpy
+import logging
+import os
 
 from .constants import ADDON_VERSION
 from .operators import classes as operator_classes
@@ -51,8 +53,10 @@ def _on_load_post(scene):
         pass
     try:
         if sync_manager.metadata.get("tracked_groups"):
-            from .git_integration import refresh_git_state
-            refresh_git_state(fetch=True)
+            from .git_integration import queue_status_refresh
+            from .sync_operators import ensure_git_pump
+            queue_status_refresh(fetch=True)
+            ensure_git_pump()
     except Exception:
         pass
 
@@ -135,7 +139,29 @@ def _on_undo_post(scene):
 _all_classes = list(operator_classes) + list(sync_operator_classes) + list(ui_classes)
 
 
+def _setup_logging():
+    """Addon-wide file+console logging (file in Blender's temp dir)."""
+    logger = logging.getLogger("GNToolkit")
+    if logger.handlers:
+        return
+    logger.setLevel(logging.INFO)
+    try:
+        fh = logging.FileHandler(
+            os.path.join(bpy.app.tempdir, "gntoolkit.log"), mode="w",
+            encoding="utf-8")
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        logger.addHandler(fh)
+    except Exception:
+        pass
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(sh)
+
+
 def register():
+    _setup_logging()
+
     for cls in _all_classes:
         bpy.utils.register_class(cls)
 
@@ -161,6 +187,9 @@ def unregister():
         except Exception:
             pass
         _check_timer = None
+
+    from .sync_operators import stop_git_pump
+    stop_git_pump()
 
     del bpy.types.Scene.gnt_sync_prefs
     del bpy.types.Scene.gnt_commit_review

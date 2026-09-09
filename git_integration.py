@@ -19,8 +19,13 @@ hidden console window and a timeout.
 
 from __future__ import annotations
 
+import logging
 import os
+import queue
 import subprocess
+import threading
+
+_log = logging.getLogger("GNToolkit.git")
 
 _TIMEOUT = 20.0
 _NOCOLOR_FLAGS = ["-c", "color.ui=false", "-c", "core.quotepath=false", "--no-pager"]
@@ -277,3 +282,126 @@ def get_git_state():
 def invalidate_git_state():
     global _state_cache
     _state_cache = {}
+
+
+# ---------------------------------------------------------------------------
+# Async job worker — git subprocesses run off the main thread so the UI
+# never freezes on slow remotes. Results are delivered back on the main
+# thread by a timer pump (see sync_operators.ensure_git_pump).
+# ---------------------------------------------------------------------------
+
+_job_queue = queue.Queue()
+_result_queue = queue.Queue()
+_worker = None
+_pending_count = 0
+_worker_lock = threading.Lock()
+_status_job_pending = False
+
+
+def _run_job(kind, payload):
+    if kind == "status":
+        return refresh_git_state(fetch=payload.get("fetch", False))
+    if kind == "commit":
+        repo = payload["repo"]
+        message = payload["message"]
+        st = repo_status(repo)
+        if not st.get("ok"):
+            return {"ok": False, "detail": st.get("error", "git status failed"),
+                    "committed": [], "nothing": False}
+        paths = repos_for_tracked().get(repo, [])
+        changed = []
+        for p in paths:
+            rel = os.path.relpath(p, repo).replace(os.sep, "/")
+            if rel in st["changed"]:
+                changed.append(p)
+        if not changed:
+            return {"ok": False, "detail": "nothing to commit",
+                    "committed": [], "nothing": True}
+        ok, detail = git_commit(repo, message, changed)
+        return {"ok": ok, "detail": detail, "committed": changed,
+                "nothing": False}
+    if kind == "sync":
+        status, detail, files = git_sync(payload["repo"], report_files=True)
+        return {"status": status, "detail": detail, "files": files}
+    return {"ok": False, "detail": f"unknown job kind: {kind}",
+            "committed": [], "nothing": False}
+
+
+def _worker_loop():
+    global _pending_count
+    while True:
+        item = _job_queue.get()
+        if item is None:
+            return
+        kind, payload = item
+        _log.info("[GitWorker] start: %s", kind)
+        try:
+            result = _run_job(kind, payload)
+            _log.info("[GitWorker] done: %s", kind)
+        except Exception as e:
+            result = {"ok": False, "detail": str(e)}
+            _log.warning("[GitWorker] %s failed: %s", kind, e)
+        _result_queue.put((kind, payload, result))
+        with _worker_lock:
+            _pending_count -= 1
+
+
+def submit_git_job(kind, **payload):
+    global _worker, _pending_count
+    if _worker is None:
+        _worker = threading.Thread(target=_worker_loop, name="GNToolkitGit",
+                                   daemon=True)
+        _worker.start()
+    with _worker_lock:
+        _pending_count += 1
+    _job_queue.put((kind, payload))
+    return True
+
+
+def git_busy():
+    with _worker_lock:
+        return _pending_count > 0
+
+
+def drain_git_results():
+    out = []
+    while True:
+        try:
+            out.append(_result_queue.get_nowait())
+        except queue.Empty:
+            return out
+
+
+def shutdown_git_worker():
+    global _worker, _status_job_pending
+    if _worker is not None:
+        _job_queue.put(None)
+        _worker = None
+        _status_job_pending = False
+
+
+def queue_status_refresh(fetch=False):
+    global _status_job_pending
+    if _status_job_pending:
+        return False
+    _status_job_pending = True
+    submit_git_job("status", fetch=fetch)
+    return True
+
+
+def ensure_status_job(fetch=False):
+    if _status_job_pending:
+        return False
+    if get_git_state():
+        return False
+    return queue_status_refresh(fetch=fetch)
+
+
+def clear_status_job_flag():
+    global _status_job_pending
+    _status_job_pending = False
+
+
+def set_git_state(state):
+    global _state_cache
+    _state_cache = state

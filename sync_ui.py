@@ -570,7 +570,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
 
     def draw(self, context):
         from .git_integration import (
-            get_git_state, refresh_git_state, git_log, find_git_repo,
+            get_git_state, ensure_status_job, git_busy, git_log, find_git_repo,
         )
 
         layout = self.layout
@@ -578,13 +578,18 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
 
         state = get_git_state()
         if not state:
-            state = refresh_git_state()
+            ensure_status_job()
+            from .sync_operators import ensure_git_pump
+            ensure_git_pump()
+            layout.label(text="Checking git state…", icon='TIME')
+            return
 
         if not state.get("available"):
             layout.label(text="Git not found — install Git and restart",
                          icon='ERROR')
             return
 
+        busy = git_busy()
         repos = state.get("repos", {})
         if not repos:
             layout.label(text="Tracked JSONs are not inside a git repository",
@@ -613,6 +618,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             head.label(text=" · ".join(parts) if parts else "clean")
 
             actions = box.row(align=True)
+            actions.enabled = not busy
             commit_op = actions.operator("gn.git_commit", text="Git Commit…",
                                          icon='EXPORT')
             commit_op.repo = root
@@ -622,6 +628,9 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             reveal_op = actions.operator("gn.git_reveal_repo", text="",
                                          icon='FOLDER_REDIRECT')
             reveal_op.repo = root
+
+        if busy:
+            layout.label(text="Git operation in progress…", icon='TIME')
 
         for path in state.get("conflicts", []):
             row = layout.row(align=True)

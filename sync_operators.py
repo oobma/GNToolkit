@@ -229,7 +229,11 @@ class GN_OT_SyncExport(bpy.types.Operator):
             self.report({'ERROR'}, "No tracked group found")
             return {'CANCELLED'}
 
-        success = sync_manager.export_to_json(self.sync_uuid)
+        try:
+            success = sync_manager.export_to_json(self.sync_uuid)
+        except PermissionError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
         if success:
             sync_manager.save()
             # Force UI redraw so issue disappears immediately
@@ -361,8 +365,9 @@ class GN_OT_SyncCheck(bpy.types.Operator):
             self.report({'WARNING'},
                         f"{n_issues} of {len(statuses)} groups need attention")
         try:
-            from .git_integration import refresh_git_state
-            refresh_git_state()
+            from .git_integration import queue_status_refresh
+            queue_status_refresh()
+            ensure_git_pump()
         except Exception:
             pass
         return {'FINISHED'}
@@ -371,6 +376,152 @@ class GN_OT_SyncCheck(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 # Operators: Git transport (thin layer over the git CLI)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Async git worker pump — delivers worker results on the main thread
+# ---------------------------------------------------------------------------
+
+_git_pump_handle = None
+
+
+def ensure_git_pump():
+    global _git_pump_handle
+    if _git_pump_handle is not None:
+        return
+    handle = bpy.app.timers.register(_git_pump_tick, first_interval=0.1)
+    if handle is None:
+        return
+    _git_pump_handle = handle
+
+
+def stop_git_pump():
+    global _git_pump_handle
+    if _git_pump_handle is not None:
+        try:
+            bpy.app.timers.unregister(_git_pump_tick)
+        except Exception:
+            pass
+        _git_pump_handle = None
+    from .git_integration import shutdown_git_worker
+    shutdown_git_worker()
+
+
+def _git_pump_tick():
+    global _git_pump_handle
+    from . import git_integration as gi
+    for kind, payload, result in gi.drain_git_results():
+        try:
+            handle_git_job_done(kind, payload, result)
+        except Exception:
+            pass
+    if gi.git_busy():
+        return 0.1
+    _git_pump_handle = None
+    return None
+
+
+def git_submit(kind, **payload):
+    ensure_git_pump()
+    from .git_integration import submit_git_job
+    submit_git_job(kind, **payload)
+
+
+def _show_status_message(msg, duration=6.0):
+    def _show(text=msg):
+        try:
+            bpy.context.workspace.status_text_set(text)
+        except Exception:
+            pass
+
+    def _hide():
+        try:
+            bpy.context.workspace.status_text_set(None)
+        except Exception:
+            pass
+
+    try:
+        bpy.app.timers.register(_show, first_interval=0.1)
+        bpy.app.timers.register(_hide, first_interval=duration)
+    except Exception:
+        pass
+
+
+def _tag_git_redraw():
+    try:
+        for area in bpy.context.screen.areas:
+            area.tag_redraw()
+    except Exception:
+        pass
+
+
+def _affected_uids_for_files(repo, files):
+    from .sync_metadata import resolve_json_path
+    affected = set()
+    if not files:
+        return affected
+    blend_dir = sync_manager._blend_dir()
+    for uid, info in sync_manager.metadata.get("tracked_groups", {}).items():
+        jp = info.get("json_path", "")
+        if not jp:
+            continue
+        abs_path = os.path.normcase(os.path.normpath(
+            resolve_json_path(jp, blend_dir)))
+        for rel in files:
+            repo_abs = os.path.normcase(os.path.normpath(
+                os.path.join(repo, rel.replace("/", os.sep))))
+            if abs_path == repo_abs:
+                affected.add(uid)
+    return affected
+
+
+def handle_git_job_done(kind, payload, result):
+    from .git_integration import (
+        set_git_state, clear_status_job_flag, queue_status_refresh,
+    )
+    if kind == "status":
+        clear_status_job_flag()
+        set_git_state(result)
+        _tag_git_redraw()
+        return
+    if kind == "commit":
+        if result.get("ok"):
+            _show_status_message(
+                f"Git: committed {len(result['committed'])} file(s)")
+        elif result.get("nothing"):
+            _show_status_message(
+                "Git: nothing to commit — no tracked JSON changed")
+        else:
+            _show_status_message(
+                f"Git commit failed: {result.get('detail', 'unknown error')}",
+                duration=10.0)
+        queue_status_refresh()
+        _tag_git_redraw()
+        return
+    if kind == "sync":
+        status = result.get("status")
+        detail = result.get("detail", "")
+        if status == "ok":
+            affected = _affected_uids_for_files(
+                payload["repo"], result.get("files", []))
+            if affected:
+                for uid in affected:
+                    sync_manager.invalidate_cache(uid)
+                sync_manager.check_all_statuses()
+                _show_status_message(
+                    f"Git sync complete — {len(affected)} group(s) "
+                    "refreshed from remote")
+            else:
+                _show_status_message("Git sync complete")
+        elif status == "diverged":
+            _show_status_message(
+                "Git: versions diverged — resolve with your git client "
+                "(pull could not fast-forward)", duration=10.0)
+        else:
+            _show_status_message(
+                f"Git sync failed: {detail}", duration=10.0)
+        queue_status_refresh()
+        _tag_git_redraw()
+
 
 class GN_OT_GitCommit(bpy.types.Operator):
     bl_idname = "gn.git_commit"
@@ -393,33 +544,12 @@ class GN_OT_GitCommit(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=400)
 
     def execute(self, context):
-        from .git_integration import (
-            repo_status, git_commit, repos_for_tracked, invalidate_git_state,
-        )
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        st = repo_status(self.repo)
-        if not st.get("ok"):
-            self.report({'ERROR'}, f"Git: {st.get('error', 'unknown error')}")
-            return {'CANCELLED'}
-        all_paths = repos_for_tracked().get(self.repo, [])
-        changed_paths = []
-        for p in all_paths:
-            rel = os.path.relpath(p, self.repo).replace(os.sep, "/")
-            if rel in st["changed"]:
-                changed_paths.append(p)
-        if not changed_paths:
-            self.report({'INFO'}, "Nothing to commit — no tracked JSON changed")
-            return {'CANCELLED'}
-        ok, detail = git_commit(self.repo,
-                                self.message.strip() or "Update node groups",
-                                changed_paths)
-        invalidate_git_state()
-        if not ok:
-            self.report({'ERROR'}, f"Git commit failed: {detail}")
-            return {'CANCELLED'}
-        self.report({'INFO'}, f"Committed {len(changed_paths)} file(s)")
+        git_submit("commit", repo=self.repo,
+                   message=self.message.strip() or "Update node groups")
+        self.report({'INFO'}, "Git commit started in background…")
         return {'FINISHED'}
 
 
@@ -433,44 +563,12 @@ class GN_OT_GitSync(bpy.types.Operator):
     repo: StringProperty(name="Repository")
 
     def execute(self, context):
-        from .git_integration import git_sync, invalidate_git_state
-        from .sync_metadata import resolve_json_path
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        status, detail, files = git_sync(self.repo, report_files=True)
-        invalidate_git_state()
-        if status == "ok":
-            affected = set()
-            if files:
-                blend_dir = sync_manager._blend_dir()
-                for uid, info in sync_manager.metadata.get("tracked_groups", {}).items():
-                    jp = info.get("json_path", "")
-                    if not jp:
-                        continue
-                    abs_path = os.path.normcase(os.path.normpath(
-                        resolve_json_path(jp, blend_dir)))
-                    for rel in files:
-                        repo_abs = os.path.normcase(os.path.normpath(
-                            os.path.join(self.repo, rel.replace("/", os.sep))))
-                        if abs_path == repo_abs:
-                            affected.add(uid)
-            if affected:
-                for uid in affected:
-                    sync_manager.invalidate_cache(uid)
-                sync_manager.check_all_statuses()
-                self.report({'INFO'},
-                            f"Git sync complete — {len(affected)} group(s) refreshed")
-            else:
-                self.report({'INFO'}, "Git sync complete")
-            return {'FINISHED'}
-        if status == "diverged":
-            self.report({'WARNING'},
-                        "Versions diverged — resolve with your git client "
-                        "(pull could not fast-forward)")
-            return {'CANCELLED'}
-        self.report({'ERROR'}, f"Git sync failed: {detail}")
-        return {'CANCELLED'}
+        git_submit("sync", repo=self.repo)
+        self.report({'INFO'}, "Git sync started in background…")
+        return {'FINISHED'}
 
 
 class GN_OT_RevealRepo(bpy.types.Operator):
