@@ -54,8 +54,8 @@ def _on_load_post(scene):
     try:
         if sync_manager.metadata.get("tracked_groups"):
             from .git_integration import queue_status_refresh
-            from .sync_operators import ensure_git_pump
-            queue_status_refresh(fetch=True)
+            from .sync_operators import ensure_git_pump, git_online_allowed
+            queue_status_refresh(fetch=git_online_allowed())
             ensure_git_pump()
     except Exception:
         pass

@@ -1,0 +1,19 @@
+schema_version = "1.0.0"
+
+id = "gn_toolkit"
+name = "GNToolkit"
+version = "0.2.4"
+tagline = "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups"
+maintainer = "oobma <ambooart@gmail.com>"
+
+type = "add-on"
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-only"]
+
+website = "https://github.com/oobma/GNToolkit"
+tags = ["Geometry Nodes", "Version Control", "JSON", "Collaboration"]
+
+[permissions]
+files = "Read and write Geometry Nodes JSON package files and the sync metadata sidecar ('.gntsync') next to the user's .blend file"
+network = "Git push/pull/fetch against remote repositories for the collaboration features"

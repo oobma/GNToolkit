@@ -426,6 +426,10 @@ def git_submit(kind, **payload):
     submit_git_job(kind, **payload)
 
 
+def git_online_allowed() -> bool:
+    return getattr(bpy.app, "online_access", True)
+
+
 def _show_status_message(msg, duration=6.0):
     def _show(text=msg):
         try:
@@ -565,6 +569,12 @@ class GN_OT_GitSync(bpy.types.Operator):
     def execute(self, context):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
+            return {'CANCELLED'}
+        if not git_online_allowed():
+            self.report({'ERROR'},
+                        "Online access is disabled in Blender preferences — "
+                        "Git Sync needs it to push/pull. Git Commit still "
+                        "works locally")
             return {'CANCELLED'}
         git_submit("sync", repo=self.repo)
         self.report({'INFO'}, "Git sync started in background…")

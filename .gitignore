@@ -22,3 +22,6 @@ internal-docs/
 
 # Local test assets and scripts (not part of the addon)
 tests/
+
+# Built extension packages
+dist/
