@@ -15,5 +15,5 @@ website = "https://github.com/oobma/GNToolkit"
 tags = ["Geometry Nodes", "Version Control", "JSON", "Collaboration"]
 
 [permissions]
-files = "Read and write Geometry Nodes JSON package files and the sync metadata sidecar ('.gntsync') next to the user's .blend file"
+files = "Read and write Geometry Nodes JSON package files, their lock files, and the sync metadata sidecar ('.gntsync') next to the user's .blend file"
 network = "Git push/pull/fetch against remote repositories for the collaboration features"
