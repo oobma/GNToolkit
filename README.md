@@ -88,7 +88,7 @@ port required:
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.2.3.zip`).
+   `GNToolkit-v0.2.4.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    downloaded zip (the zip contains the `ADNRNAGNTOOLKIT/` addon folder).
 3. Enable **"GNToolkit"** in the list.

@@ -25,7 +25,7 @@ Updated: 2026-09-08 — the smoke suite grew to **129 checks** with the
 loader, duplicated-socket regression, git transport), and the recreation
 suite (`tests/recreate_from_folder_test.py`) verifies a full folder
 round-trip of the 439-group reference project **byte-identically on
-5.1.1 and 5.2.0** (see the Unreleased section of the CHANGELOG).
+5.1.1 and 5.2.0** (see the 0.2.4 section of the CHANGELOG).
 
 ---
 
@@ -53,11 +53,11 @@ Pre-port (2026-08-11) the 5.2 failures were: smoke T11 (modifier RNA),
 e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
 one root cause (data-type-driven socket layouts) except the modifier RNA.
 
-**Current state (2026-09-08):** the maintained suites are
-`tests/smoke_test_5.1.py` (129 checks) and
+**Current state (2026-09-09):** the maintained suites are
+`tests/smoke_test_5.1.py` (131 checks) and
 `tests/test_52_new_nodes_e2e.py` (40 checks, 5.2-only); the per-test
 table above reflects the suite state as of 2026-08-13 (test #1 was 41
-checks then — it grew to 96 with the 0.2.3 additions and to 129 with
+checks then — it grew to 96 with the 0.2.3 additions and to 131 with
 the 0.2.4 additions).
 
 ## What the port changed (implemented 2026-08-11)

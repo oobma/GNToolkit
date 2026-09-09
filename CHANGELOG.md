@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased] - 2026-09-08
+## [0.2.4] - 2026-09-09
 
 ### Added
 
@@ -127,7 +127,7 @@ All notable changes to this project are documented in this file.
 
 ### Tests
 
-- Smoke suite (Blender 5.1): **129 checks** (+T8 encoding checks, T8b
+- Smoke suite (Blender 5.1): **131 checks** (+T8 encoding checks, T8b
   standalone write-back, T8c folder loader, T8d duplicated-socket
   regression, T8e git transport — 15 checks over a real temporary
   repository: status/commit/log/sync-fast-forward/divergence-refusal/
@@ -244,7 +244,7 @@ That conclusion was wrong — the pairing API is an **instance method**
 cross-checking how Tree Clipper (`Algebraic-UG/tree_clipper`) imports
 zones in its 3-OS CI.
 
-Current architecture (0.2.3):
+Current architecture (0.2.4):
 
 - The importer creates **all** nodes via `nodes.new` (zone inputs and
   outputs included), populates the zone output's dynamic items
@@ -685,7 +685,7 @@ write time. Mitigations applied:
   "Technical note: zone node pairing" at the top of this file.
 - **Batch imports run from a headless/background session lose some links in
   groups that reference other node groups** *(Resolved in 0.2.4 by the
-  positional group-socket resolution — see the Unreleased section above:
+  positional group-socket resolution — see the 0.2.4 section above:
   439/439 groups recreate identically headless.)*
 
 Remaining known characteristic: very large node trees (hundreds of nodes)
