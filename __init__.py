@@ -25,7 +25,7 @@ bl_info = {
     "name": "GNToolkit",
     "author": "oobma / AI assistant",
     "version": (0, 2, 4),
-    "blender": (4, 0, 0),
+    "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GN Tools",
     "description": "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups.",
     "category": "Node",
