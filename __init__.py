@@ -2,9 +2,10 @@
 """
 GNToolkit — Blender Add-on Package
 
-Flawless Post-Creation Sequential Mapping to prevent ID Collisions on
-Volatile Nodes.  Now includes DNA/RNA synchronization for Geometry Nodes:
-JSON (DNA) is the source of truth, .blend (RNA) is the working cache.
+Git-style version control for Geometry Nodes: node groups are serialized
+to deterministic JSON (the DNA — source of truth) while the .blend stays
+a working cache (RNA), with per-group sync statuses, dependency-aware
+import and a Git collaboration loop.
 """
 
 import bpy
@@ -27,7 +28,7 @@ bl_info = {
     "version": (0, 2, 4),
     "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GN Tools",
-    "description": "Geometry Nodes DNA/RNA sync: JSON-driven version control for node groups.",
+    "description": "Git-style version control for Geometry Nodes: track node groups between .blend and JSON, commit, pull and resolve conflicts.",
     "category": "Node",
 }
 

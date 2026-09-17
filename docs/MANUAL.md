@@ -1,6 +1,6 @@
 # GNToolkit Usage Manual
 
-**JSON → .blend import and sync verification workflow.**
+**Version control and sync verification workflow (.blend ↔ JSON).**
 
 This manual walks through the complete workflow step by step — from
 importing a JSON package into a fresh file to verifying that the sync
@@ -8,7 +8,7 @@ layer converges cleanly. Each step describes **what to do** and **what
 should happen**; do not move to the next step until the current one
 completes as described.
 
-Applies to GNToolkit 0.2.4 on Blender 4.0 – 5.2 LTS (tested on 5.1.1 and
+Applies to GNToolkit 0.2.4 on Blender 4.2 – 5.2 LTS (tested on 5.1.1 and
 5.2.0; the same code and the same workflow run on both).
 
 ---
