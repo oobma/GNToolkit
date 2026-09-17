@@ -23,20 +23,9 @@ import bpy
 _log = logging.getLogger("GNToolkit.sync")
 
 
-def _write_json_file(json_path: str, data: dict) -> None:
-    """Write a package JSON with a user-friendly PermissionError message."""
-    try:
-        os.makedirs(os.path.dirname(json_path), exist_ok=True)
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-    except PermissionError:
-        raise PermissionError(
-            f"Cannot write to {json_path} — save the .blend file in a "
-            "writable location and try again"
-        ) from None
-
 from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
+from .file_utils import write_json_file
 from .hash_utils import (
     canonical_hash_from_tree,
     canonical_hash_from_json_path,
@@ -684,9 +673,7 @@ class SyncManager:
         # Serialize ONLY the primary tree (no full dependency chain)
         master_data["node_groups"][tree.name] = serialize_node_tree(tree)
 
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        with open(abs_path, 'w', encoding='utf-8') as f:
-            json.dump(master_data, f, indent=4, ensure_ascii=False)
+        write_json_file(abs_path, master_data)
 
         # Per-group hash for the primary group
         blend_hash = canonical_hash_from_tree(tree)
@@ -1507,7 +1494,7 @@ class SyncManager:
             master_data["node_groups"][blend_name] = serialize_node_tree(tree)
             serialized_dict = {blend_name: master_data["node_groups"][blend_name]}
 
-            _write_json_file(json_path, master_data)
+            write_json_file(json_path, master_data)
 
             # Update primary group hashes
             new_blend_hash = canonical_hash_from_tree(tree)
@@ -1685,7 +1672,7 @@ class SyncManager:
             context.workspace.status_text_set("Link All: writing JSON...")
 
         # Write the master JSON
-        _write_json_file(abs_path, master_data)
+        write_json_file(abs_path, master_data)
 
         _log.info("[Link All] JSON written, reading back from disk to compute hashes...")
 
@@ -1893,7 +1880,7 @@ class SyncManager:
                     master_data["node_groups"][g_name] = serialize_node_tree(g_tree)
                     serialized_dict[g_name] = master_data["node_groups"][g_name]
 
-                _write_json_file(json_path, master_data)
+                write_json_file(json_path, master_data)
 
                 new_mtime = os.path.getmtime(json_path)
 
@@ -2016,7 +2003,7 @@ class SyncManager:
                     master_data["node_groups"][g_name] = serialize_node_tree(g_tree)
                     serialized_dict[g_name] = master_data["node_groups"][g_name]
 
-                _write_json_file(json_path, master_data)
+                write_json_file(json_path, master_data)
 
                 # Update hashes for all groups sharing this JSON
                 new_mtime = os.path.getmtime(json_path)

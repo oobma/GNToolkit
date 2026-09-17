@@ -136,9 +136,17 @@ All notable changes to this project are documented in this file.
   directory and the sync metadata in their payload, resolved on the main
   thread at submit time: they no longer reach into Blender data
   (`bpy.data.filepath`) off the main thread, which the previous
-  worker did through the sync manager. `shutdown_git_worker` is now
+  worker did through the sync manager.   `shutdown_git_worker` is now
   `shutdown_git_jobs`. A repo whose `git status` fails shows the error
   in its panel row instead of failing the whole refresh.
+- **JSON writes are atomic.** Packages, standalone exports and the
+  `.gntsync` sidecar go through `file_utils.write_json_file`, which
+  writes to a temporary file in the destination directory and swaps it
+  into place with `os.replace` — previously `open(path, 'w')` truncated
+  the destination first, so a crash, a full disk or a stalled write
+  could leave a half-written source of truth and destroy the previous
+  good copy. A failed write now leaves the old file untouched (and no
+  `.tmp` files behind).
 
 ### Tests
 

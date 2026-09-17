@@ -15,6 +15,7 @@ import uuid as _uuid
 import bpy
 
 from .constants import SIDECAR_EXTENSION, SIDECAR_TEXT_BLOCK_NAME, ADDON_VERSION, HASH_VERSION
+from .file_utils import write_json_file
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +110,8 @@ def save_sync_metadata_to_sidecar(metadata: dict, blend_filepath: str | None = N
 
     sidecar = _sidecar_path(blend_filepath)
     try:
-        with open(sidecar, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        write_json_file(sidecar, metadata,
+                        {"indent": 2, "ensure_ascii": False})
         return True
     except OSError:
         return False

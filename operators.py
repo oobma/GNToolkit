@@ -19,6 +19,7 @@ from bpy.props import StringProperty, BoolProperty
 from .codec import clean_value, unclean_value
 from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
+from .file_utils import write_json_file
 from .importer import _import_node_tree_gen
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
@@ -158,8 +159,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     context.workspace.status_text_set(f"Exporting: {tree.name}")
                     data = serialize_node_tree(tree)
                     safe_name = "".join(c if c.isalnum() or c in (' ', '_') else '_' for c in tree.name)
-                    with open(os.path.join(ng_dir, f"{safe_name}.json"), 'w', encoding='utf-8') as f:
-                        json.dump(data, f, **dump_args)
+                    write_json_file(os.path.join(ng_dir, f"{safe_name}.json"),
+                                    data, dump_args)
 
                 mod_dir = os.path.join(base_dir, "Modifiers")
                 if not os.path.exists(mod_dir):
@@ -175,8 +176,9 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "inputs": _serialize_modifier_inputs(mod),
                             }
                             safe_name = "".join(c if c.isalnum() or c in (' ', '_') else '_' for c in f"{obj.name}_{mod.name}")
-                            with open(os.path.join(mod_dir, f"{safe_name}.json"), 'w', encoding='utf-8') as f:
-                                json.dump(data, f, **dump_args)
+                            write_json_file(
+                                os.path.join(mod_dir, f"{safe_name}.json"),
+                                data, dump_args)
                             count_mod += 1
                 self.report({'INFO'}, f"Exported {len(trees)} Groups and {count_mod} Modifiers.")
             else:
@@ -200,8 +202,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "node_group": mod.node_group.name if mod.node_group else None,
                                 "inputs": _serialize_modifier_inputs(mod),
                             })
-                with open(self.filepath, 'w', encoding='utf-8') as f:
-                    json.dump(master_data, f, **dump_args)
+                write_json_file(self.filepath, master_data, dump_args)
                 self.report({'INFO'}, "Package export completed.")
         except PermissionError:
             self.report({'ERROR'},
@@ -277,8 +278,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
                     })
 
         try:
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(master_data, f, **dump_args)
+            write_json_file(self.filepath, master_data, dump_args)
             self.report({'INFO'}, f"Exported '{tree.name}' successfully.")
         except PermissionError:
             self.report({'ERROR'},
