@@ -147,6 +147,19 @@ All notable changes to this project are documented in this file.
   could leave a half-written source of truth and destroy the previous
   good copy. A failed write now leaves the old file untouched (and no
   `.tmp` files behind).
+- **Folder exports can no longer silently overwrite each other.** File
+  names use the same lossy cleaning rule as always (alphanumerics,
+  spaces and underscores kept; `A/B` and `A:B` both become `A_B`), so
+  the second file used to replace the first and the report counted node
+  trees instead of files. The exporter now allocates
+  unique stems (`A_B`, `A_B~<hash>` for the colliding one), falls back
+  to `unnamed` for empty names and prefixes Windows reserved device
+  names (`CON` → `_CON` — `CON.json` cannot be created), and reports
+  the number of files actually written plus every adjusted name
+  (`old → new`). The cleaning rule itself is unchanged, so existing
+  folder-export paths keep working (verified against the 439 group
+  names of the reference project: 0 differences). The active-group
+  export dialog sanitizes its default file name too.
 
 ### Tests
 

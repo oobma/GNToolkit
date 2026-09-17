@@ -19,7 +19,7 @@ from bpy.props import StringProperty, BoolProperty
 from .codec import clean_value, unclean_value
 from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
-from .file_utils import write_json_file
+from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
 from .importer import _import_node_tree_gen
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
@@ -154,17 +154,21 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 if not os.path.exists(ng_dir):
                     os.makedirs(ng_dir)
 
+                ng_names = FilenameAllocator()
+                count_ng = 0
                 for i, tree in enumerate(trees):
                     context.window_manager.progress_update(i)
                     context.workspace.status_text_set(f"Exporting: {tree.name}")
                     data = serialize_node_tree(tree)
-                    safe_name = "".join(c if c.isalnum() or c in (' ', '_') else '_' for c in tree.name)
-                    write_json_file(os.path.join(ng_dir, f"{safe_name}.json"),
+                    stem = ng_names.allocate(tree.name, "node_group")
+                    write_json_file(os.path.join(ng_dir, f"{stem}.json"),
                                     data, dump_args)
+                    count_ng += 1
 
                 mod_dir = os.path.join(base_dir, "Modifiers")
                 if not os.path.exists(mod_dir):
                     os.makedirs(mod_dir)
+                mod_names = FilenameAllocator()
                 count_mod = 0
                 for obj in bpy.data.objects:
                     for mod in obj.modifiers:
@@ -175,12 +179,24 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "node_group": mod.node_group.name if mod.node_group else None,
                                 "inputs": _serialize_modifier_inputs(mod),
                             }
-                            safe_name = "".join(c if c.isalnum() or c in (' ', '_') else '_' for c in f"{obj.name}_{mod.name}")
+                            stem = mod_names.allocate(f"{obj.name}_{mod.name}",
+                                                      "modifier")
                             write_json_file(
-                                os.path.join(mod_dir, f"{safe_name}.json"),
+                                os.path.join(mod_dir, f"{stem}.json"),
                                 data, dump_args)
                             count_mod += 1
-                self.report({'INFO'}, f"Exported {len(trees)} Groups and {count_mod} Modifiers.")
+                self.report({'INFO'},
+                            f"Exported {count_ng} group file(s) and "
+                            f"{count_mod} modifier file(s).")
+                adjusted = ng_names.adjusted + mod_names.adjusted
+                if adjusted:
+                    shown = "; ".join(f"{old} → {new}"
+                                      for old, new in adjusted[:3])
+                    if len(adjusted) > 3:
+                        shown += f"; +{len(adjusted) - 3} more"
+                    self.report({'WARNING'},
+                                f"{len(adjusted)} filename(s) adjusted for "
+                                f"unsafe or duplicate names: {shown}")
             else:
                 master_data = {
                     "version": ADDON_VERSION,
@@ -240,7 +256,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
             return {'CANCELLED'}
 
         self.tree_name = tree.name
-        self.filepath = tree.name + ".json"
+        self.filepath = sanitize_filename(tree.name, "node_group") + ".json"
         return super().invoke(context, event)
 
     def draw(self, context):
