@@ -227,7 +227,8 @@ The deterministic JSONs are plain files — any git client can share
 them. The addon adds a thin transport on top:
 
 1. Put the exported folder in a git repository (init with your client,
-   push to GitHub or any remote).
+   push to any git remote — GitHub, GitLab, Codeberg, a network share,
+   a local bare repo, …).
 2. The **Collaboration** panel (GN Tools tab) shows the repository
    state, commits with **Git Commit…** (only the tracked JSONs are
    staged) and synchronizes with **Git Sync** (fast-forward only —
@@ -235,7 +236,7 @@ them. The addon adds a thin transport on top:
 3. Conflict markers in a JSON are detected and reported; resolve them
    with your git client.
 4. Full guide (including the manual flow with any client):
-   `docs/GIT_COLLAB.md`.
+   [docs/GIT_COLLAB.md](https://github.com/oobma/GNToolkit/blob/main/docs/GIT_COLLAB.md).
 
 ### JSON package snapshots (no tracking)
 
@@ -302,7 +303,7 @@ port required:
 
 ## Installation
 
-**Option 1 — GitHub Releases (recommended):**
+**Option 1 — Release zip (recommended):**
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
@@ -315,8 +316,8 @@ port required:
 **Option 2 — from the repository:**
 
 1. Download or clone this repository and zip the `GNToolkit` folder
-   (the repository root is the addon folder itself; the GitHub source
-   zip extracts to a version-suffixed folder such as `GNToolkit-main`,
+   (the repository root is the addon folder itself; a source zip
+   extracts to a version-suffixed folder such as `GNToolkit-main`,
    which is not a valid add-on module name — use the release asset).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    `.zip` file.

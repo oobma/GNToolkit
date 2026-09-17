@@ -30,9 +30,13 @@ Nothing changes in the addon. The only difference is how git itself
 reaches and authenticates against the remote. If `git push` works from
 your terminal, it works from the panel.
 
-### Going from local to GitHub (one-time setup)
+### Going from local to a web remote (one-time setup)
 
-1. **Create an empty repository** on GitHub (no README, no license —
+GitHub is used as the example below; GitLab, Codeberg, Gitea, Bitbucket
+and self-hosted hosts work the same way — only the repository URL
+changes.
+
+1. **Create an empty repository** on your host (no README, no license —
    or you will have to merge unrelated histories). Note the HTTPS URL:
    `https://github.com/<user>/<repo>.git`.
 2. In the folder that already holds your exported JSONs and is already
@@ -42,11 +46,11 @@ your terminal, it works from the panel.
    git push -u origin main
    ```
 3. The first push opens the **Git Credential Manager** window (browser):
-   sign in to GitHub once, authorize, and Windows stores the token —
+   sign in to your host once, authorize, and Windows stores the token —
    every later sync works without asking.
 
 From then on, the Collaboration panel's **Git Sync** pushes and pulls
-from GitHub exactly as it did from the local remote, and your
+from the remote exactly as it did from the local one, and your
 colleagues just run:
 
 ```
@@ -57,9 +61,9 @@ git clone https://github.com/<user>/<repo>.git
 
 - **HTTPS** (recommended): zero setup beyond the one-time credential
   manager sign-in above.
-- **SSH**: add your key on GitHub and use
-  `git@github.com:<user>/<repo>.git`. Git handles the key — the addon
-  never sees any credentials.
+- **SSH**: add your key on your host and use its SSH URL
+  (`git@github.com:<user>/<repo>.git` on GitHub). Git handles the key —
+  the addon never sees any credentials.
 
 ### Two gotchas before sharing a repo
 
