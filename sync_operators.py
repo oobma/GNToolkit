@@ -378,7 +378,7 @@ class GN_OT_SyncCheck(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Async git worker pump — delivers worker results on the main thread
+# Git job pump — advances the pipeline stages and delivers results
 # ---------------------------------------------------------------------------
 
 _git_pump_handle = None
@@ -402,13 +402,14 @@ def stop_git_pump():
         except Exception:
             pass
         _git_pump_handle = None
-    from .git_integration import shutdown_git_worker
-    shutdown_git_worker()
+    from .git_integration import shutdown_git_jobs
+    shutdown_git_jobs()
 
 
 def _git_pump_tick():
     global _git_pump_handle
     from . import git_integration as gi
+    gi.advance_git_jobs()
     for kind, payload, result in gi.drain_git_results():
         try:
             handle_git_job_done(kind, payload, result)

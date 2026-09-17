@@ -601,6 +601,10 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
         for root, st in sorted(repos.items()):
             box = layout.box()
             head = box.row(align=True)
+            if not st.get("ok"):
+                head.label(text=f"Repo: {st.get('name', root)}", icon='ERROR')
+                head.label(text=st.get("error", "git status failed"))
+                continue
             if st["tracked_changed"]:
                 icon = 'FILE_REFRESH'
             elif st["ahead"] or st["behind"]:

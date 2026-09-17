@@ -15,15 +15,22 @@ only:
 Nothing here raises to the UI — operators translate the results into
 reports. All subprocesses run locale-safe, without pager/color, with a
 hidden console window and a timeout.
+
+Every git call runs on the main thread. Jobs are small generators driven
+by the timer pump in ``sync_operators``: short local commands run inline
+(milliseconds), while fetch/pull/push are started as child processes and
+polled across ticks, so the UI never blocks on a slow remote. No worker
+thread exists anywhere in this module (and therefore no Blender data is
+ever touched from one).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import queue
 import subprocess
-import threading
+import tempfile
+import time
 
 _log = logging.getLogger("GNToolkit.git")
 
@@ -45,11 +52,14 @@ def git_available() -> bool:
     return _available_cache
 
 
+def _git_argv(args):
+    return ["git"] + _NOCOLOR_FLAGS + list(args)
+
+
 def _git(args, cwd, timeout=_TIMEOUT):
-    cmd = ["git"] + _NOCOLOR_FLAGS + args
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.run(
-        cmd, cwd=cwd, capture_output=True, text=True,
+        _git_argv(args), cwd=cwd, capture_output=True, text=True,
         encoding="utf-8", errors="replace",
         timeout=timeout, creationflags=creationflags,
     )
@@ -70,14 +80,20 @@ def find_git_repo(path: str):
         d = parent
 
 
-def repos_for_tracked(metadata=None):
-    """Map repo root -> sorted list of tracked JSON paths living inside it."""
-    from .sync_manager import sync_manager
+def repos_for_tracked(metadata=None, blend_dir=None):
+    """Map repo root -> sorted list of tracked JSON paths living inside it.
+
+    ``metadata`` and ``blend_dir`` are resolved by the caller on the main
+    thread and travel in the job payload, so the job bodies never reach
+    into Blender data (the defaults exist for direct/scripted callers)."""
     from .sync_metadata import resolve_json_path
 
-    if metadata is None:
-        metadata = sync_manager.metadata
-    blend_dir = sync_manager._blend_dir()
+    if metadata is None or blend_dir is None:
+        from .sync_manager import sync_manager
+        if metadata is None:
+            metadata = sync_manager.metadata
+        if blend_dir is None:
+            blend_dir = sync_manager._blend_dir()
     repos = {}
     for entry in metadata.get("tracked_groups", {}).values():
         abs_path = resolve_json_path(entry.get("json_path", ""), blend_dir)
@@ -90,13 +106,20 @@ def repos_for_tracked(metadata=None):
     return {root: sorted(paths) for root, paths in repos.items()}
 
 
+_STATUS_ARGS = ["status", "--porcelain=v1", "-b", "-uall", "-z"]
+
+
 def repo_status(repo_root):
     """Porcelain state: branch, upstream, ahead/behind, changed files."""
     if not git_available():
         return {"ok": False, "error": "Git not found"}
-    rc, out, err = _git(["status", "--porcelain=v1", "-b", "-uall", "-z"], repo_root)
+    rc, out, err = _git(_STATUS_ARGS, repo_root)
     if rc != 0:
         return {"ok": False, "error": (err or out).strip() or "git status failed"}
+    return _parse_status(out)
+
+
+def _parse_status(out):
     lines = [e for e in out.split("\x00") if e]
     branch = ""
     upstream = None
@@ -169,6 +192,27 @@ def git_commit(repo_root, message, paths):
     return True, (out or err).strip()
 
 
+def classify_pull_failure(text):
+    """(status, detail) for a failed ``pull --ff-only`` from its output."""
+    low = text.lower()
+    if "not a git repository" in low:
+        return "error", "Not a git repository"
+    if "no upstream" in low or "no tracking information" in low:
+        return "error", "No upstream branch — set it with your git client"
+    if "no such remote" in low or "does not appear to be a git repository" in low:
+        return "error", "No remote configured — add one with your git client"
+    if "not possible to fast-forward" in low or "diverged" in low:
+        return "diverged", text.splitlines()[0] if text else "versions diverged"
+    return "diverged", text.splitlines()[0] if text else "pull failed"
+
+
+def classify_push_failure(text):
+    """Human detail for a failed ``push`` from its output."""
+    if "no upstream" in text.lower():
+        return "No upstream branch — set it with your git client"
+    return text.splitlines()[0] if text else "push failed"
+
+
 def git_sync(repo_root, report_files=False):
     """``pull --ff-only`` then ``push``. Returns (status, detail) with
     status in {'ok', 'diverged', 'error'}. With report_files=True the
@@ -184,27 +228,12 @@ def git_sync(repo_root, report_files=False):
         head_before = out.strip() if rc == 0 else ""
     rc, out, err = _git(["pull", "--ff-only"], repo_root)
     if rc != 0:
-        text = (err or out).strip()
-        low = text.lower()
-        if "not a git repository" in low:
-            status, detail = "error", "Not a git repository"
-        elif "no upstream" in low or "no tracking information" in low:
-            status, detail = "error", "No upstream branch — set it with your git client"
-        elif "no such remote" in low or "does not appear to be a git repository" in low:
-            status, detail = "error", "No remote configured — add one with your git client"
-        elif "not possible to fast-forward" in low or "diverged" in low:
-            status, detail = "diverged", text.splitlines()[0] if text else "versions diverged"
-        else:
-            status, detail = "diverged", text.splitlines()[0] if text else "pull failed"
+        status, detail = classify_pull_failure((err or out).strip())
         return (status, detail, []) if report_files else (status, detail)
     rc, out, err = _git(["push"], repo_root)
     if rc != 0:
-        text = (err or out).strip()
-        low = text.lower()
-        if "no upstream" in low:
-            status, detail = "error", "No upstream branch — set it with your git client"
-        else:
-            status, detail = "error", text.splitlines()[0] if text else "push failed"
+        status = "error"
+        detail = classify_push_failure((err or out).strip())
         return (status, detail, []) if report_files else (status, detail)
     files = []
     if report_files and head_before:
@@ -261,15 +290,8 @@ def refresh_git_state(fetch=False):
             _fetch_repo(root)
     tracked_set = set()
     for root, paths in repos.items():
-        st = repo_status(root)
-        st["root"] = root
-        st["name"] = os.path.basename(root.rstrip("\\/")) or root
-        st["tracked_changed"] = []
-        for p in paths:
-            rel = os.path.relpath(p, root).replace(os.sep, "/")
-            if rel in st["changed"]:
-                st["tracked_changed"].append(rel)
-        _state_cache["repos"][root] = st
+        _state_cache["repos"][root] = _build_repo_entry(
+            root, paths, repo_status(root))
         tracked_set.update(paths)
     _state_cache["conflicts"] = detect_conflict_markers(tracked_set)
     return _state_cache
@@ -285,99 +307,333 @@ def invalidate_git_state():
 
 
 # ---------------------------------------------------------------------------
-# Async job worker — git subprocesses run off the main thread so the UI
-# never freezes on slow remotes. Results are delivered back on the main
-# thread by a timer pump (see sync_operators.ensure_git_pump).
+# Job pipeline — every git call runs on the main thread
 # ---------------------------------------------------------------------------
+#
+# Jobs are generators that yield small requests; ``advance_git_jobs``
+# executes a bounded amount of work per timer tick
+# (``sync_operators._git_pump_tick``):
+#
+#   ("run",   args, cwd, timeout)  short local command, inline (milliseconds)
+#   ("spawn", args, cwd, timeout)  child process polled across ticks — used
+#                                  for fetch/pull/push, the slow networked ones
+#   ("chunk",)                     yield control between batches of Python
+#                                  work (path resolution, conflict scans)
+#
+# Child output is redirected to temporary files, never pipes: a verbose
+# command cannot deadlock on a full pipe buffer while nobody reads it.
 
-_job_queue = queue.Queue()
-_result_queue = queue.Queue()
-_worker = None
-_pending_count = 0
-_worker_lock = threading.Lock()
+_CHUNK_SIZE = 50
+_RUN_BUDGET = 2
+_CHUNK_BUDGET = 4
+_SPAWN_BUDGET = 1
+
+_job_queue = []
+_active_job = None
+_results = []
 _status_job_pending = False
+_NO_SEND = object()
+
+
+def _job_failure(exc):
+    return {"ok": False, "detail": str(exc)}
+
+
+def _repo_inputs():
+    """(blend_dir, metadata) resolved on the main thread for repo discovery."""
+    try:
+        from .sync_manager import sync_manager
+        return sync_manager._blend_dir(), sync_manager.metadata
+    except Exception:
+        return "", None
+
+
+def _build_repo_entry(root, paths, st):
+    """Decorate a status dict with root/name/tracked_changed and defaults."""
+    st["root"] = root
+    st["name"] = os.path.basename(root.rstrip("\\/")) or root
+    st["tracked_changed"] = []
+    if st.get("ok"):
+        for p in paths:
+            rel = os.path.relpath(p, root).replace(os.sep, "/")
+            if rel in st.get("changed", []):
+                st["tracked_changed"].append(rel)
+    st.setdefault("changed", [])
+    st.setdefault("ahead", 0)
+    st.setdefault("behind", 0)
+    st.setdefault("branch", "")
+    return st
+
+
+def _job_status(payload):
+    """Rebuild the panel cache: optional fetch, per-repo status, conflicts."""
+    state = {"available": git_available(), "repos": {}, "conflicts": []}
+    if not state["available"]:
+        return state
+    try:
+        repos = repos_for_tracked(payload.get("metadata"),
+                                  payload.get("blend_dir"))
+    except Exception:
+        return state
+    if payload.get("fetch", False):
+        for root in repos:
+            yield ("spawn", ["fetch", "--quiet"], root, _FETCH_ON_LOAD_TIMEOUT)
+    tracked = set()
+    for root, paths in repos.items():
+        rc, out, err = yield ("spawn", _STATUS_ARGS, root, _TIMEOUT)
+        if rc == 0:
+            st = _parse_status(out)
+        else:
+            st = {"ok": False,
+                  "error": (err or out).strip() or "git status failed"}
+        state["repos"][root] = _build_repo_entry(root, paths, st)
+        tracked.update(paths)
+    tracked_sorted = sorted(tracked)
+    hits = []
+    for i in range(0, len(tracked_sorted), _CHUNK_SIZE):
+        yield ("chunk",)
+        hits.extend(detect_conflict_markers(tracked_sorted[i:i + _CHUNK_SIZE]))
+    state["conflicts"] = hits
+    return state
+
+
+def _job_commit(payload):
+    """Stage ONLY the tracked JSONs that changed and commit them."""
+    repo = payload["repo"]
+    st = repo_status(repo)
+    if not st.get("ok"):
+        return {"ok": False, "detail": st.get("error", "git status failed"),
+                "committed": [], "nothing": False}
+    paths = repos_for_tracked(payload.get("metadata"),
+                              payload.get("blend_dir")).get(repo, [])
+    changed = []
+    for p in paths:
+        rel = os.path.relpath(p, repo).replace(os.sep, "/")
+        if rel in st["changed"]:
+            changed.append(p)
+    if not changed:
+        return {"ok": False, "detail": "nothing to commit",
+                "committed": [], "nothing": True}
+    ok, detail = git_commit(repo, payload["message"], changed)
+    return {"ok": ok, "detail": detail, "committed": changed,
+            "nothing": False}
+
+
+def _job_sync(payload):
+    """pull --ff-only then push, both polled as child processes."""
+    repo = payload["repo"]
+    head_before = ""
+    rc, out, _ = yield ("run", ["rev-parse", "HEAD"], repo, _TIMEOUT)
+    if rc == 0:
+        head_before = out.strip()
+    rc, out, err = yield ("spawn", ["pull", "--ff-only"], repo, _TIMEOUT)
+    if rc != 0:
+        status, detail = classify_pull_failure((err or out).strip())
+        return {"status": status, "detail": detail, "files": []}
+    rc, out, err = yield ("spawn", ["push"], repo, _TIMEOUT)
+    if rc != 0:
+        return {"status": "error",
+                "detail": classify_push_failure((err or out).strip()),
+                "files": []}
+    files = []
+    if head_before:
+        rc, out_head, _ = yield ("run", ["rev-parse", "HEAD"], repo, _TIMEOUT)
+        head_after = out_head.strip() if rc == 0 else ""
+        if head_after and head_after != head_before:
+            rc, out_diff, _ = yield ("run",
+                                     ["diff", "--name-only", head_before,
+                                      head_after], repo, _TIMEOUT)
+            files = [line.strip() for line in out_diff.splitlines()
+                     if line.strip()]
+    return {"status": "ok", "detail": (out or err).strip(), "files": files}
 
 
 def _run_job(kind, payload):
     if kind == "status":
-        return refresh_git_state(fetch=payload.get("fetch", False))
+        return _job_status(payload)
     if kind == "commit":
-        repo = payload["repo"]
-        message = payload["message"]
-        st = repo_status(repo)
-        if not st.get("ok"):
-            return {"ok": False, "detail": st.get("error", "git status failed"),
-                    "committed": [], "nothing": False}
-        paths = repos_for_tracked().get(repo, [])
-        changed = []
-        for p in paths:
-            rel = os.path.relpath(p, repo).replace(os.sep, "/")
-            if rel in st["changed"]:
-                changed.append(p)
-        if not changed:
-            return {"ok": False, "detail": "nothing to commit",
-                    "committed": [], "nothing": True}
-        ok, detail = git_commit(repo, message, changed)
-        return {"ok": ok, "detail": detail, "committed": changed,
-                "nothing": False}
+        return _job_commit(payload)
     if kind == "sync":
-        status, detail, files = git_sync(payload["repo"], report_files=True)
-        return {"status": status, "detail": detail, "files": files}
+        return _job_sync(payload)
     return {"ok": False, "detail": f"unknown job kind: {kind}",
             "committed": [], "nothing": False}
 
 
-def _worker_loop():
-    global _pending_count
-    while True:
-        item = _job_queue.get()
-        if item is None:
-            return
-        kind, payload = item
-        _log.info("[GitWorker] start: %s", kind)
+def _spawn_git(args, cwd, timeout):
+    """Start a git child with output to temp files; polled by the pump."""
+    out_f = tempfile.TemporaryFile()
+    err_f = tempfile.TemporaryFile()
+    try:
+        proc = subprocess.Popen(
+            _git_argv(args), cwd=cwd, stdin=subprocess.DEVNULL,
+            stdout=out_f, stderr=err_f,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        out_f.close()
+        err_f.close()
+        raise
+    return {"proc": proc, "out": out_f, "err": err_f,
+            "deadline": time.monotonic() + timeout}
+
+
+def _read_temp(handle):
+    try:
+        handle.seek(0)
+        return handle.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return ""
+
+
+def _close_spawn(spawn):
+    for key in ("out", "err"):
         try:
-            result = _run_job(kind, payload)
-            _log.info("[GitWorker] done: %s", kind)
-        except Exception as e:
-            result = {"ok": False, "detail": str(e)}
-            _log.warning("[GitWorker] %s failed: %s", kind, e)
-        _result_queue.put((kind, payload, result))
-        with _worker_lock:
-            _pending_count -= 1
+            spawn[key].close()
+        except (OSError, ValueError):
+            pass
+
+
+def _finish_job(job, result):
+    global _active_job
+    _log.info("[GitJob] done: %s", job["kind"])
+    _results.append((job["kind"], job["payload"], result))
+    spawn = job.get("spawn")
+    if spawn is not None:
+        try:
+            spawn["proc"].kill()
+        except OSError:
+            pass
+        _close_spawn(spawn)
+    _active_job = None
+
+
+def advance_git_jobs():
+    """Advance the pipeline one tick. Returns True while work remains."""
+    global _active_job
+    run_budget, chunk_budget, spawn_budget = (_RUN_BUDGET, _CHUNK_BUDGET,
+                                              _SPAWN_BUDGET)
+    while True:
+        if _active_job is None:
+            if not _job_queue:
+                return False
+            kind, payload = _job_queue.pop(0)
+            _log.info("[GitJob] start: %s", kind)
+            _active_job = {"kind": kind, "payload": payload, "gen": None,
+                           "spawn": None, "send": _NO_SEND, "request": None}
+            try:
+                value = _run_job(kind, payload)
+            except Exception as exc:
+                _finish_job(_active_job, _job_failure(exc))
+                continue
+            if hasattr(value, "__next__"):
+                _active_job["gen"] = value
+            else:
+                _finish_job(_active_job, value)
+            continue
+
+        job = _active_job
+
+        if job["spawn"] is not None:
+            spawn = job["spawn"]
+            rc = spawn["proc"].poll()
+            if rc is None:
+                if time.monotonic() < spawn["deadline"]:
+                    return True
+                try:
+                    spawn["proc"].kill()
+                except OSError:
+                    pass
+                send = (None, _read_temp(spawn["out"]),
+                        (_read_temp(spawn["err"]).strip()
+                         + "\ncommand timed out").strip())
+            else:
+                send = (rc, _read_temp(spawn["out"]), _read_temp(spawn["err"]))
+            _close_spawn(spawn)
+            job["spawn"] = None
+            job["send"] = send
+            continue
+
+        request = job["request"]
+        job["request"] = None
+        if request is None:
+            try:
+                if job["send"] is _NO_SEND:
+                    request = next(job["gen"])
+                else:
+                    request = job["gen"].send(job["send"])
+                    job["send"] = _NO_SEND
+            except StopIteration as stop:
+                _finish_job(job, stop.value if stop.value is not None else {})
+                continue
+            except Exception as exc:
+                _finish_job(job, _job_failure(exc))
+                continue
+        stage = request[0]
+        if stage == "run":
+            if run_budget <= 0:
+                job["request"] = request
+                return True
+            run_budget -= 1
+            try:
+                job["send"] = _git(request[1], request[2], request[3])
+            except Exception as exc:
+                _finish_job(job, _job_failure(exc))
+            continue
+        if stage == "spawn":
+            if spawn_budget <= 0:
+                job["request"] = request
+                return True
+            spawn_budget -= 1
+            try:
+                job["spawn"] = _spawn_git(request[1], request[2], request[3])
+            except Exception as exc:
+                job["send"] = (None, "", str(exc))
+            continue
+        if stage == "chunk":
+            if chunk_budget <= 0:
+                job["request"] = request
+                return True
+            chunk_budget -= 1
+            job["send"] = None
+            continue
+        job["send"] = None
 
 
 def submit_git_job(kind, **payload):
-    global _worker, _pending_count
-    if _worker is None:
-        _worker = threading.Thread(target=_worker_loop, name="GNToolkitGit",
-                                   daemon=True)
-        _worker.start()
-    with _worker_lock:
-        _pending_count += 1
-    _job_queue.put((kind, payload))
+    """Queue a job; ``advance_git_jobs`` runs it on the main thread."""
+    if kind in ("status", "commit") and "blend_dir" not in payload:
+        blend_dir, metadata = _repo_inputs()
+        payload["blend_dir"] = blend_dir
+        payload["metadata"] = metadata
+    _job_queue.append((kind, payload))
     return True
 
 
 def git_busy():
-    with _worker_lock:
-        return _pending_count > 0
+    return _active_job is not None or bool(_job_queue)
 
 
 def drain_git_results():
-    out = []
-    while True:
-        try:
-            out.append(_result_queue.get_nowait())
-        except queue.Empty:
-            return out
+    global _results
+    out = _results
+    _results = []
+    return out
 
 
-def shutdown_git_worker():
-    global _worker, _status_job_pending
-    if _worker is not None:
-        _job_queue.put(None)
-        _worker = None
-        _status_job_pending = False
+def shutdown_git_jobs():
+    global _active_job, _status_job_pending
+    _job_queue.clear()
+    job = _active_job
+    if job is not None:
+        spawn = job.get("spawn")
+        if spawn is not None:
+            try:
+                spawn["proc"].kill()
+            except OSError:
+                pass
+            _close_spawn(spawn)
+    _active_job = None
+    _status_job_pending = False
 
 
 def queue_status_refresh(fetch=False):

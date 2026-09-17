@@ -124,6 +124,21 @@ All notable changes to this project are documented in this file.
     spaces arrived quoted (`?? "dir/a b.json"`); status now runs with
     `-uall -z` (NUL-separated, unquoted, individual files), and a
     "No commits yet on <branch>" head line parses as that branch.
+- **Git jobs no longer run in a worker thread.** Every git call now
+  happens on the main thread: a job is a small generator of stages
+  executed by the existing timer pump — short local commands
+  (`status`/`add`/`commit`/`rev-parse`) run inline (tens of
+  milliseconds), fetch/pull/push are started as child processes and
+  polled across ticks (output to temporary files, never pipes, so a
+  verbose command cannot deadlock on a full buffer), and the Python
+  batches (tracked-path resolution, conflict scans over hundreds of
+  files) yield control between chunks. The job bodies receive the blend
+  directory and the sync metadata in their payload, resolved on the main
+  thread at submit time: they no longer reach into Blender data
+  (`bpy.data.filepath`) off the main thread, which the previous
+  worker did through the sync manager. `shutdown_git_worker` is now
+  `shutdown_git_jobs`. A repo whose `git status` fails shows the error
+  in its panel row instead of failing the whole refresh.
 
 ### Tests
 
