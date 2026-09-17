@@ -163,13 +163,15 @@ All notable changes to this project are documented in this file.
 
 ### Tests
 
-- Smoke suite (Blender 5.1): **131 checks** (+T8 encoding checks, T8b
+- Smoke suite (Blender 5.1): **143 checks** (+T8 encoding checks, T8b
   standalone write-back, T8c folder loader, T8d duplicated-socket
   regression, T8e git transport — 15 checks over a real temporary
   repository: status/commit/log/sync-fast-forward/divergence-refusal/
   conflict markers, with a bare local remote; skipped with a warning
-  when git is not installed). New-node E2E (Blender 5.2): 40 checks
-  (unchanged).
+  when git is not installed; T19 atomic-write checks; T20 export
+  filename checks: reserved names, collision suffixes, one file per
+  group under the real folder export). New-node E2E (Blender 5.2):
+  40 checks (unchanged).
 - Reproduction suite `tests/repro_folder_flow.py` (24 checks on 5.1 and 5.2):
   the full folder workflow — export by folders, per-group track, commit
   to a standalone file, folder batch track, master package track,
@@ -185,6 +187,12 @@ All notable changes to this project are documented in this file.
   (fast-forward), "Changed in JSON" + pull into the .blend, addon
   commit (standalone→package conversion visible to the colleague) and
   push. Passes 18/18 on 5.1.1 and 5.2.0.
+- Git job pipeline diagnostic `tests/diag_git_worker.py` (out-of-battery,
+  run manually; drives the pump by hand since background mode has no
+  timers): submit → stages → results → handlers, the status/commit/sync
+  jobs, the fetch-on-load path, the operator path, and that no git
+  thread is created and nothing runs before the pump ticks. Passes 30/30
+  on 5.1.1 and 5.2.0.
 
 ## [0.2.3] - 2026-08-15
 
