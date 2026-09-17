@@ -9,7 +9,7 @@ maintainer = "oobma <ambooart@gmail.com>"
 type = "add-on"
 blender_version_min = "4.2.0"
 
-license = ["SPDX:GPL-3.0-only"]
+license = ["SPDX:GPL-3.0-or-later"]
 
 website = "https://github.com/oobma/GNToolkit"
 tags = ["Geometry Nodes", "Version Control", "JSON", "Collaboration", "Git", "Sync"]

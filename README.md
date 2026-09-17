@@ -9,7 +9,7 @@ statuses, dependency-aware import and a commit/pull/conflict loop that
 plugs into Git, all from inside Blender.
 
 ![Blender](https://img.shields.io/badge/Blender-4.2%E2%80%935.2-orange)
-![License](https://img.shields.io/badge/License-GPL--3.0-blue)
+![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
 
 <!-- Screenshot placeholder: docs/images/sync-panel.png — the GN Tools tab
      with the Sync panel (per-group statuses) and the Collaboration panel. -->
@@ -370,4 +370,6 @@ links and tree properties — enough to fully reconstruct the group.
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0-or-later](LICENSE)
+
+Releases up to and including v0.2.4 were published under GPL-3.0-only.
