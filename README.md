@@ -308,16 +308,16 @@ port required:
    and download the addon zip of the latest release (e.g.
    `GNToolkit-v0.2.4.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
-   downloaded zip (the zip contains the `ADNRNAGNTOOLKIT/` addon folder).
+   downloaded zip (the zip contains the `GNToolkit/` addon folder).
 3. Enable **"GNToolkit"** in the list.
 4. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
 
 **Option 2 — from the repository:**
 
-1. Download or clone this repository and zip the `ADNRNAGNTOOLKIT` folder
-   (the repository root is the addon folder itself; the GitHub source zip
-   also installs, but it creates a version-named folder that leaves
-   duplicates when upgrading — the release asset avoids this).
+1. Download or clone this repository and zip the `GNToolkit` folder
+   (the repository root is the addon folder itself; the GitHub source
+   zip extracts to a version-suffixed folder such as `GNToolkit-main`,
+   which is not a valid add-on module name — use the release asset).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    `.zip` file.
 3. Enable **"GNToolkit"** in the list.
