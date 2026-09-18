@@ -486,8 +486,8 @@ class GN_OT_CopyJSONPath(bpy.types.Operator):
 
 class GN_OT_RevealJSONPath(bpy.types.Operator):
     bl_idname = "gn.sync_reveal_json_path"
-    bl_label = "Reveal JSON in Explorer"
-    bl_description = "Open the JSON file's folder in the system file explorer (Windows)"
+    bl_label = "Reveal JSON in File Browser"
+    bl_description = "Open the JSON file's folder in the system file browser"
     bl_options = {'REGISTER'}
 
     json_path: bpy.props.StringProperty()
@@ -500,9 +500,11 @@ class GN_OT_RevealJSONPath(bpy.types.Operator):
             self.report({'ERROR'}, f"Folder not found: {folder}")
             return {'CANCELLED'}
         try:
-            os.startfile(folder)
-        except (OSError, AttributeError):
-            self.report({'WARNING'}, "Could not open the system file explorer")
+            opened = bpy.ops.wm.path_open(filepath=folder)
+        except Exception:
+            opened = set()
+        if "FINISHED" not in opened:
+            self.report({'WARNING'}, "Could not open the system file browser")
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -687,6 +689,9 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                         act_box.label(text="No commits for this file",
                                       icon='INFO')
 
+        layout.separator()
+        layout.prop(prefs, "fetch_on_load", toggle=True, icon='URL')
+
 
 # ---------------------------------------------------------------------------
 # Preferences PropertyGroup
@@ -742,6 +747,12 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
         name="Check JSON on open",
         description="After loading a .blend, compare the JSON hashes in the background "
                     "and show a notice when files changed outside Blender",
+        default=True,
+    )
+    fetch_on_load: bpy.props.BoolProperty(
+        name="Fetch remotes on open",
+        description="After loading a .blend, contact the Git remotes of the tracked "
+                    "repositories in the background (only when online access is enabled)",
         default=True,
     )
 

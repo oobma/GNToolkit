@@ -585,7 +585,7 @@ class GN_OT_GitSync(bpy.types.Operator):
 class GN_OT_RevealRepo(bpy.types.Operator):
     bl_idname = "gn.git_reveal_repo"
     bl_label = "Reveal Repository"
-    bl_description = "Open the git repository folder in the system file explorer (Windows)"
+    bl_description = "Open the git repository folder in the system file browser"
     bl_options = {'REGISTER'}
 
     repo: StringProperty(name="Repository")
@@ -595,9 +595,11 @@ class GN_OT_RevealRepo(bpy.types.Operator):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
         try:
-            os.startfile(self.repo)
-        except (OSError, AttributeError):
-            self.report({'WARNING'}, "Could not open the system file explorer")
+            opened = bpy.ops.wm.path_open(filepath=self.repo)
+        except Exception:
+            opened = set()
+        if "FINISHED" not in opened:
+            self.report({'WARNING'}, "Could not open the system file browser")
             return {'CANCELLED'}
         return {'FINISHED'}
 

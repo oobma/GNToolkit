@@ -56,7 +56,12 @@ def _on_load_post(scene):
         if sync_manager.metadata.get("tracked_groups"):
             from .git_integration import queue_status_refresh
             from .sync_operators import ensure_git_pump, git_online_allowed
-            queue_status_refresh(fetch=git_online_allowed())
+            try:
+                prefs = bpy.context.scene.gnt_sync_prefs
+                fetch = bool(getattr(prefs, "fetch_on_load", True))
+            except Exception:
+                fetch = True
+            queue_status_refresh(fetch=git_online_allowed() and fetch)
             ensure_git_pump()
     except Exception:
         pass
