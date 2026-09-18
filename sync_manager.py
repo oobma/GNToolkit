@@ -2495,9 +2495,9 @@ class SyncManager:
 
         self._dirty = True
         still_count = len(still_divergent)
-        _log.info("[Import Modified] done: %d imported, %d skipped, %d errors, %d conflicts, "
+        _log.info("[Import Modified] done: %d imported, %d skipped, %d errors, "
                   "%d auto-linked, %d still differ after pull",
-                  imported, skipped, errors, conflicts, auto_linked,
+                  imported, skipped, errors, auto_linked,
                   len(still_divergent))
 
         # Crash guard: the rebuilds churn interfaces; verify the rebuilt
