@@ -227,8 +227,8 @@ The deterministic JSONs are plain files — any git client can share
 them. The addon adds a thin transport on top:
 
 1. Put the exported folder in a git repository (init with your client,
-   push to any git remote — GitHub, GitLab, Codeberg, a network share,
-   a local bare repo, …).
+   push to any git remote you control — your own Git host, a network
+   share, a local bare repo, …).
 2. The **Collaboration** panel (GN Tools tab) shows the repository
    state, commits with **Git Commit…** (only the tracked JSONs are
    staged) and synchronizes with **Git Sync** (fast-forward only —
@@ -281,14 +281,16 @@ and the .blend hash against the stored hash:
 
 ## Requirements
 
-- Blender 4.2 – 5.2 LTS (tested on 5.1.1 and 5.2.0)
-- No external dependencies
+- Blender 4.2 – 5.2 LTS (tested on 4.2.1, 5.1.1 and 5.2.0)
+- Git CLI installed and available on `PATH` — only for the Collaboration
+  features. The JSON sync and the package export/import work without it.
 
 ## Compatibility
 
-Blender **4.2 – 5.2 LTS** (tested on 5.1.1 and 5.2.0; the maintained
-suites are `tests/smoke_test_5.1.py` — 129 checks — and
-`tests/test_52_new_nodes_e2e.py` — 40 checks, 5.2-only). The 5.2 port
+Blender **4.2 – 5.2 LTS** (tested on 4.2.1, 5.1.1 and 5.2.0; the maintained
+suites are `tests/smoke_test_5.1.py` — 143 checks —,
+`tests/test_52_new_nodes_e2e.py` — 40 checks, 5.2-only — and
+`tests/test_42_smoke.py` — 21 checks, run under 4.2). The 5.2 port
 details are recorded in [docs/port-5.2.md](docs/port-5.2.md). What the
 port required:
 

@@ -40,6 +40,10 @@ All notable changes to this project are documented in this file.
     reflects the shared repository as-is without touching Git Sync
     first. Offline/repository-less setups are a no-op (10s timeout,
     errors swallowed — `git status` semantics otherwise unchanged).
+    The network part is gated by the new **Fetch remotes on open**
+    preference (Collaboration panel, on by default) and by Blender's
+    *Allow Online Access* setting; the local `git status` refresh always
+    runs.
 - **Folder workflow (per-group JSON files as full sync participants).**
   The "Use Folder Structure" export (`NodeGroups/` + `Modifiers/`) is no
   longer a one-shot snapshot — it round-trips through the sync layer:
@@ -160,6 +164,18 @@ All notable changes to this project are documented in this file.
   folder-export paths keep working (verified against the 439 group
   names of the reference project: 0 differences). The active-group
   export dialog sanitizes its default file name too.
+- **"Pull from JSON" raised `name 'conflicts' is not defined` after the
+  import.** The batch pull's completion log still referenced a
+  `conflicts` counter removed in an earlier refactor, so the operator
+  reported `Pull failed` (the import itself had already been applied).
+  Found by the new Blender 4.2 platform suite; the log now reports the
+  counters that exist (`imported`, `skipped`, `errors`, `auto-linked`,
+  `still differ`).
+- **"Reveal" buttons were Windows-only.** Both *Reveal JSON in Explorer*
+  and *Reveal Repository* called `os.startfile`, which does not exist on
+  macOS/Linux (the operators only warned). They now use Blender's native
+  `bpy.ops.wm.path_open`, so the folder opens in the system file browser
+  on every platform.
 
 ### Tests
 
@@ -193,6 +209,14 @@ All notable changes to this project are documented in this file.
   jobs, the fetch-on-load path, the operator path, and that no git
   thread is created and nothing runs before the pump ticks. Passes 30/30
   on 5.1.1 and 5.2.0.
+- Blender 4.2 platform suite `tests/test_42_smoke.py` (21 checks): the
+  extension ZIP is installed from disk into an **isolated** extensions
+  directory under Blender **4.2.1 LTS** (the declared
+  `blender_version_min`), then the sync core runs end to end with
+  4.2-compatible nodes — install/enable, folder export, Track Folder,
+  local edit, Commit All (standalone → package write-back), external
+  JSON edit, Pull from JSON, status transitions. Found the `conflicts`
+  `NameError` fixed above. Passes 21/21 on 4.2.1.
 
 ## [0.2.3] - 2026-08-15
 

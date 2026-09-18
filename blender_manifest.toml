@@ -12,8 +12,8 @@ blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 
 website = "https://github.com/oobma/GNToolkit"
-tags = ["Geometry Nodes", "Version Control", "JSON", "Collaboration", "Git", "Sync"]
+tags = ["Geometry Nodes", "Pipeline", "Node"]
 
 [permissions]
-files = "Read and write Geometry Nodes JSON package files, their lock files and temporary sibling files during atomic writes, plus the sync metadata sidecar ('.gntsync') next to the user's .blend file"
-network = "Git push/pull/fetch against remote repositories for the collaboration features, including a silent fetch of tracked repositories when a .blend is opened — only when online access is enabled in Blender"
+files = "Read and write project JSON files and the .gntsync sidecar"
+network = "Fetch, pull and push to the Git remotes you configure"
