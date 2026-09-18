@@ -13,7 +13,7 @@ import bpy
 
 # Attempt to import mathutils types at module level (with fallback guard).
 try:
-    from mathutils import Vector, Color, Euler
+    from mathutils import Vector, Color, Euler, Quaternion, Matrix
     _HAS_MATHUTILS = True
 except ImportError:
     _HAS_MATHUTILS = False
@@ -39,7 +39,11 @@ def clean_value(val):
         return [clean_value(v) for v in val]
 
     if isinstance(val, float):
-        return round(val, 6)
+        # Normalise -0.0 (produced by round() of tiny negatives) to 0.0:
+        # both are the same float32 value and the roundtrip may flip the
+        # sign, which would otherwise produce spurious hash differences.
+        rounded = round(val, 6)
+        return 0.0 if rounded == 0.0 else rounded
     if isinstance(val, (int, str, bool)):
         return val
 
@@ -50,6 +54,13 @@ def clean_value(val):
             return [round(val.r, 6), round(val.g, 6), round(val.b, 6)]
         if isinstance(val, Euler):
             return [round(v, 6) for v in val]
+        if isinstance(val, Quaternion):
+            # 4-component vector variants (e.g. NodeSocketVectorEuler4D)
+            # expose their default_value as a Quaternion (w, x, y, z).
+            return [round(val.w, 6), round(val.x, 6),
+                    round(val.y, 6), round(val.z, 6)]
+        if isinstance(val, Matrix):
+            return [[round(v, 6) for v in row] for row in val]
 
     if isinstance(val, dict):
         return {str(k): clean_value(v) for k, v in val.items()}
@@ -78,6 +89,12 @@ def _is_2d_vector_type(expected_type: str) -> bool:
     """Return True if expected_type denotes a 2D vector socket (needs 2 components)."""
     et = expected_type.upper()
     return "2D" in et or et in ("NODESOCKETVECTOR2D", "NODESOCKETVECTORTRANSLATION2D")
+
+
+def _is_4d_vector_type(expected_type: str) -> bool:
+    """Return True if expected_type denotes a 4D vector socket (needs 4 components)."""
+    et = expected_type.upper()
+    return "VECTOR" in et and et.endswith("4D")
 
 
 def _is_color_type(expected_type: str) -> bool:
@@ -209,6 +226,7 @@ def unclean_value(val, expected_type=None, context=None):
     # Pre-compute type desires (only if expected_type is provided)
     wants_vector = bool(expected_type) and _is_vector_type(expected_type)
     wants_2d_vector = bool(expected_type) and _is_2d_vector_type(expected_type)
+    wants_4d_vector = bool(expected_type) and _is_4d_vector_type(expected_type)
     wants_color = bool(expected_type) and _is_color_type(expected_type)
     wants_int = bool(expected_type) and _is_int_type(expected_type)
     wants_bool = bool(expected_type) and _is_bool_type(expected_type)
@@ -217,8 +235,13 @@ def unclean_value(val, expected_type=None, context=None):
     wants_geometry = bool(expected_type) and _is_geometry_type(expected_type)
     wants_object = bool(expected_type) and _is_object_type(expected_type)
 
-    # Number of components for vector sockets (2 or 3)
-    vec_len = 2 if wants_2d_vector else 3
+    # Number of components for vector sockets (2, 3 or 4)
+    if wants_2d_vector:
+        vec_len = 2
+    elif wants_4d_vector:
+        vec_len = 4
+    else:
+        vec_len = 3
 
     if val is None:
         # Promote None to the correct zero-default for the socket type

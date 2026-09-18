@@ -22,6 +22,7 @@ from .constants import (
     OPTIONAL_SOCKET_PROPS,
     EXPLICITLY_HANDLED_PROPS,
     INTERFACE_SOCKET_TYPE_REMAP,
+    parse_vector_socket_variant,
 )
 from .error_tracker import ImportErrorTracker
 from .socket_utils import (
@@ -84,6 +85,9 @@ def _apply_socket_subtype(interface_item, raw_socket_type: str,
     in _SOCKET_SUBTYPE_MAP and silently skipped.
     """
     subtype = _SOCKET_SUBTYPE_MAP.get(raw_socket_type)
+    if subtype is None:
+        variant = parse_vector_socket_variant(raw_socket_type)
+        subtype = variant[2] if variant else None
     if subtype is None:
         return
 
@@ -240,10 +244,14 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
                     raw_socket_type = i_data.get("bl_socket_idname", i_data.get("socket_type", "NodeSocketFloat"))
                     creation_type = INTERFACE_SOCKET_TYPE_REMAP.get(raw_socket_type, raw_socket_type)
                     force_dimensions = None
+                    vector_variant = parse_vector_socket_variant(raw_socket_type)
 
-                    if raw_socket_type in ("NodeSocketVector2D", "NodeSocketVectorTranslation2D"):
-                        creation_type = "NodeSocketVector"
-                        force_dimensions = 2
+                    if vector_variant is not None:
+                        # 5.2 vector variants (NodeSocketVectorFactor2D,
+                        # NodeSocketVector4D, ...): new_socket() accepts only
+                        # the base type; dimensions and subtype are applied
+                        # right after creation.
+                        creation_type, force_dimensions, _vector_subtype = vector_variant
 
                     kwargs = {
                         "name": i_data.get("name", "Socket"),
@@ -276,7 +284,9 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
                             )
 
                     # Apply subtype for remapped float/int/vector sockets
-                    if new_item and raw_socket_type != creation_type and raw_socket_type in INTERFACE_SOCKET_TYPE_REMAP:
+                    if (new_item and raw_socket_type != creation_type
+                            and (raw_socket_type in INTERFACE_SOCKET_TYPE_REMAP
+                                 or vector_variant is not None)):
                         _apply_socket_subtype(new_item, raw_socket_type, i_data, tracker)
 
                     interface_map[i_data.get("identifier", "")] = new_item.identifier
@@ -292,10 +302,7 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
                     if new_item and hasattr(new_item, 'bl_socket_idname'):
                         actual_type = new_item.bl_socket_idname
                         # Compute the expected type after the full creation flow
-                        if raw_socket_type in ("NodeSocketVector2D", "NodeSocketVectorTranslation2D"):
-                            expected_type = "NodeSocketVector2D"
-                        else:
-                            expected_type = raw_socket_type
+                        expected_type = raw_socket_type
                         if actual_type != expected_type:
                             # This is a known Blender limitation: some socket
                             # types (e.g. NodeSocketMatrix) are silently

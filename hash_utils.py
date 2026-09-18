@@ -104,6 +104,23 @@ def _normalize_interface_socket_type(bl_socket_idname: str) -> str:
     return bl_socket_idname
 
 
+def _normalize_floats(value):
+    """Return *value* with -0.0 normalised to 0.0.
+
+    ``round(-1e-9, 6)`` produces ``-0.0``, which ``json.dumps`` prints
+    differently from ``0.0``.  Blender stores float32, so the roundtrip
+    flips the sign and identical trees hashed differently (seen on the
+    real project with 2 groups).
+    """
+    if isinstance(value, float):
+        return 0.0 if value == 0.0 else value
+    if isinstance(value, dict):
+        return {k: _normalize_floats(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_floats(v) for v in value]
+    return value
+
+
 def canonicalize_node_tree_data(data: dict) -> dict:
     """Return a deep copy of *data* with all lists and dicts sorted
     deterministically so that two functionally identical node trees
@@ -283,7 +300,7 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             tree_props[k] = v
     out["tree_properties"] = dict(sorted(tree_props.items()))
 
-    return out
+    return _normalize_floats(out)
 
 
 def canonical_hash_from_tree(tree) -> str:

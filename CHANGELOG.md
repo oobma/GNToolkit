@@ -85,6 +85,32 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Blender 5.2 vector interface sockets with subtype + extra dimensions
+  were dropped on import (`NodeSocketVectorFactor2D` and the whole
+  family).** The 5.2 interface API accepts only the base socket types and
+  the remap/subtype tables only covered the float/int/string/vector-3D
+  subtypes plus the plain 2D vector variants, so `new_socket()` raised on
+  e.g. `NodeSocketVectorFactor2D`.  A 582-group folder export with 10
+  such sockets logged 10 `[ERROR] Failed to create interface item …`,
+  lost the 14 links into/out of them (6 groups) and kept none of their
+  saved defaults.  `parse_vector_socket_variant()` (`constants.py`) now
+  decomposes any `NodeSocketVector<Sub>[2D|4D]` name into base type +
+  dimensions + subtype; the importer creates the base socket, applies
+  `dimensions` and then the subtype, so every variant (including the 4D
+  ones) round-trips its `bl_socket_idname`.
+- **4-component vector defaults serialized as `mathutils.Quaternion`
+  reprs.** `clean_value` handled `Vector`/`Color`/`Euler` but not
+  `Quaternion`/`Matrix`, so a 4D vector subtype default (e.g.
+  `NodeSocketVectorEuler4D`) became an unparseable string
+  (`"<Quaternion …>"`).  Quaternions now serialize as `[w, x, y, z]`,
+  matrices as rows, and `unclean_value` builds 4-component values for
+  `…4D` socket types.
+- **Spurious "Changed in JSON" for groups whose JSON carries `-0.0`.**
+  `round(-1e-9, 6)` writes `-0.0`, which `json.dumps` prints differently
+  from `0.0`; Blender stores float32 and flips the sign on re-export, so
+  two identical trees hashed differently (2 groups on the real project).
+  The canonical hash now normalises `-0.0` to `0.0` (HASH_VERSION 6;
+  stored baselines migrate automatically via the re-baseline mechanism).
 - **"Missing in Blend" returned after every save for restored groups.**
   Blender does not persist zero-user node groups across save/reload; a
   group restored from JSON (or batch-imported) that nothing references

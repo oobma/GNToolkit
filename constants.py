@@ -135,6 +135,60 @@ INTERFACE_SOCKET_TYPE_REMAP: dict[str, str] = {
     "NodeSocketVectorVelocity": "NodeSocketVector",
 }
 
+# Vector interface socket variants (Blender 5.2+): new_socket() accepts only
+# the base "NodeSocketVector", but subtype variants exist as distinct
+# bl_socket_idname values with optional extra dimensions
+# (NodeSocketVectorFactor2D, NodeSocketVector4D, ...).  The importer
+# decomposes the serialized name into (base, dimensions, subtype) instead of
+# hardcoding every combination in INTERFACE_SOCKET_TYPE_REMAP.
+VECTOR_SUBTYPE_MAP: dict[str, str] = {
+    "Acceleration": "ACCELERATION",
+    "Direction": "DIRECTION",
+    "Euler": "EULER",
+    "Factor": "FACTOR",
+    "Percentage": "PERCENTAGE",
+    "Pixel": "PIXEL",
+    "Translation": "TRANSLATION",
+    "Velocity": "VELOCITY",
+    "XYZ": "XYZ",
+}
+
+_VECTOR_BASE_TYPE = "NodeSocketVector"
+
+
+def parse_vector_socket_variant(bl_socket_idname: str):
+    """Decompose a vector socket name into creation parameters.
+
+    Returns ``(base_type, dimensions, subtype)`` — where ``dimensions`` is
+    2, 4 or None (3 components) and ``subtype`` is an interface subtype
+    string or None — or None when *bl_socket_idname* is not a vector
+    socket name.
+
+    Examples::
+
+        NodeSocketVector         -> ("NodeSocketVector", None, None)
+        NodeSocketVector2D       -> ("NodeSocketVector", 2, None)
+        NodeSocketVector4D       -> ("NodeSocketVector", 4, None)
+        NodeSocketVectorXYZ      -> ("NodeSocketVector", None, "XYZ")
+        NodeSocketVectorFactor2D -> ("NodeSocketVector", 2, "FACTOR")
+    """
+    if not isinstance(bl_socket_idname, str):
+        return None
+    if not bl_socket_idname.startswith(_VECTOR_BASE_TYPE):
+        return None
+    suffix = bl_socket_idname[len(_VECTOR_BASE_TYPE):]
+    dimensions = None
+    if suffix.endswith("2D"):
+        dimensions, suffix = 2, suffix[:-2]
+    elif suffix.endswith("4D"):
+        dimensions, suffix = 4, suffix[:-2]
+    if not suffix:
+        return (_VECTOR_BASE_TYPE, dimensions, None)
+    subtype = VECTOR_SUBTYPE_MAP.get(suffix)
+    if subtype is None:
+        return None
+    return (_VECTOR_BASE_TYPE, dimensions, subtype)
+
 # Optional socket properties that may exist on interface items.
 OPTIONAL_SOCKET_PROPS: tuple[str, ...] = (
     'min_value', 'max_value', 'description', 'subtype', 'hide_value',
@@ -224,7 +278,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 5
+HASH_VERSION: int = 6
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"
