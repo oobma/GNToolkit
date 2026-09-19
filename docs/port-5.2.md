@@ -283,7 +283,7 @@ the 5.2 RNA (`modifier.properties.inputs[0].type`).
 
 On the *manual_test.blend* file (a file with local edits), the batch
 pull can reset the `input_type` (GEOMETRY → FLOAT) of one Switch node
-in `SP - NURBS Patch Viewers` — the isolated rebuild and all fresh-file
+in one overlay group — the isolated rebuild and all fresh-file
 flows (e2e, manual-flow, fidelity) are correct; the stress test
 tolerates this single group. If it reappears on other files, compare
 the batch context (shared interface maps / pre-unlink / zone session)

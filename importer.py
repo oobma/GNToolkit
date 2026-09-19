@@ -1123,16 +1123,11 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                             deferred_string_defaults.append((sock, raw_val, serialized_bl_id, ctx))
                             continue
 
-                    # When the runtime socket is NodeSocketMenu but the
-                    # serialized value is not a string (int/bool/list),
-                    # the socket type changed after export.  We can't
-                    # resolve the enum identifier from a numeric value,
-                    # so skip and let Step 6 handle it after Blender has
-                    # fully populated enum_items.
-                    if bl_id == 'NodeSocketMenu' and not isinstance(raw_val, str):
-                        # Defer to Step 6 (_final_menu_defaults_pass)
-                        # which operates on interface-level Menu sockets
-                        # after all wiring is complete.
+                    # Menu socket defaults are deferred to Step 6
+                    # (_final_menu_defaults_pass): the enum identifiers may
+                    # only exist after wiring, and Step 6 sets them once
+                    # Blender has fully populated enum_items.
+                    if bl_id == 'NodeSocketMenu':
                         continue
 
                     # Skip the (expensive) write when the current value

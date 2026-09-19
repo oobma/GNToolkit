@@ -158,9 +158,12 @@ _NODE_SERIALIZERS["NodeEvaluateClosure"] = _handle_closure_output
 
 # Socket types whose default_value cannot be meaningfully serialized/restored.
 # Attempting to assign a scalar to these sockets will always fail on import.
+# MENU is NOT listed: menu sockets store a string enum identifier that the
+# importer restores (after enum_items exist), and per-node overrides on Group
+# nodes are lost if omitted.
 _NON_SCALAR_SOCKET_TYPES = frozenset({
     'GEOMETRY', 'OBJECT', 'COLLECTION', 'MATERIAL', 'TEXTURE', 'IMAGE',
-    'MATRIX', 'CLOSURE', 'MENU',
+    'MATRIX', 'CLOSURE',
 })
 
 
@@ -201,7 +204,8 @@ def serialize_node(node, skip_output_defaults: bool = False):
         # - Non-scalar types (Geometry, Object, etc.): can't assign scalar
         if (node.bl_idname != "NodeReroute"
                 and hasattr(inp, 'default_value')
-                and inp.type not in _NON_SCALAR_SOCKET_TYPES):
+                and inp.type not in _NON_SCALAR_SOCKET_TYPES
+                and not (inp.type == 'MENU' and not inp.default_value)):
             inp_data["default_value"] = clean_value(inp.default_value)
         data["inputs"].append(inp_data)
     for out in node.outputs:
@@ -216,7 +220,8 @@ def serialize_node(node, skip_output_defaults: bool = False):
         if (node.bl_idname != "NodeReroute"
                 and not skip_output_defaults
                 and hasattr(out, 'default_value')
-                and out.type not in _NON_SCALAR_SOCKET_TYPES):
+                and out.type not in _NON_SCALAR_SOCKET_TYPES
+                and not (out.type == 'MENU' and not out.default_value)):
             out_data["default_value"] = clean_value(out.default_value)
         data["outputs"].append(out_data)
 

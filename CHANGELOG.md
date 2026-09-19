@@ -85,6 +85,22 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Menu socket defaults on nodes were never serialized.** `MENU` was
+  listed in `_NON_SCALAR_SOCKET_TYPES`, so `serialize_node` skipped
+  `default_value` on every `NodeSocketMenu` input/output.  Per-node
+  overrides on Group nodes were reset to the referenced interface
+  default on import, silently changing geometry: a menu-switched meshing
+  chain produced no meshed instances where the original produced the
+  full patch set (the reconstructed object "disappeared").  Menu sockets
+  now serialize their string enum identifier (empty identifiers are
+  still omitted, matching the importer); node-level menu defaults are
+  deferred to the importer's final menu pass (where `enum_items` already
+  exist) instead of warning on the early attempt.  Regression: smoke T21
+  (5.1), E2E T9 (5.2) and the name-agnostic folder diagnostic
+  `tests/diag_menu_defaults.py` (every node-level menu default must
+  reach the JSON and every rebuilt group must hash identically).
+  Packages exported with the old serializer keep the lossy value and now
+  show "Changed in JSON" until re-exported.
 - **Blender 5.x interface sockets are now handled as a complete,
   self-verified matrix.** `parse_interface_socket_variant()` decomposes
   every `NodeSocket<Base><Subtype>[2D|3D|4D]` name (Vector's 30 classes,
@@ -627,8 +643,8 @@ zone through a NODES modifier.
   rebuild set, and the affected non-rebuilt parents are re-baselined
   after the restore (both in the batch and the per-group pull), so the
   result is byte-perfect except for a known edge: groups whose
-  dependencies have **duplicated interface socket names** (e.g. the two
-  "Tension" sockets of `SP - Blend Curve [Intern]`) — name-based
+  dependencies have **duplicated interface socket names** (e.g. two
+  identically-named "Tension" sockets in one interface) — name-based
   restoration is ambiguous there and a handful of links cannot be
   reconnected (5 of 25,439 on the reference project, verified).
 - **Canonical hash is now name-based and roundtrip-robust.** The hash
@@ -804,8 +820,8 @@ avoided from Python.
 
 - **Link fidelity on roundtrip**: links into/out of group-reference nodes
   could land on swapped sockets when a dependency's interface identifiers
-  are reordered during import (counts preserved; 8 of 85 links on
-  `SP - NURBS Patch Meshing`). *(Resolved in 0.2.4 — the positional
+  are reordered during import (counts preserved; 8 of 85 links on one
+  deep meshing chain). *(Resolved in 0.2.4 — the positional
   group-socket resolution recreates every link exactly; 439/439 groups
   hash-identical from a folder export.)*
 - **Blender drops zero-user node groups on save** (verified with pure
