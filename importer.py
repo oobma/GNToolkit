@@ -22,7 +22,8 @@ from .constants import (
     OPTIONAL_SOCKET_PROPS,
     EXPLICITLY_HANDLED_PROPS,
     INTERFACE_SOCKET_TYPE_REMAP,
-    parse_vector_socket_variant,
+    NON_RECREATABLE_FALLBACKS,
+    parse_interface_socket_variant,
 )
 from .error_tracker import ImportErrorTracker
 from .socket_utils import (
@@ -86,7 +87,7 @@ def _apply_socket_subtype(interface_item, raw_socket_type: str,
     """
     subtype = _SOCKET_SUBTYPE_MAP.get(raw_socket_type)
     if subtype is None:
-        variant = parse_vector_socket_variant(raw_socket_type)
+        variant = parse_interface_socket_variant(raw_socket_type)
         subtype = variant[2] if variant else None
     if subtype is None:
         return
@@ -232,6 +233,13 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
             for inp in data.get('inputs', [])
             if inp.get('socket_type') == 'NodeSocketMenu'
         }
+        # Rebuilt from scratch on every import: names of sockets that had
+        # to be recreated as a different (base) type.
+        try:
+            if "gnt_degraded_sockets" in ng.keys():
+                del ng["gnt_degraded_sockets"]
+        except Exception:
+            pass
 
         for i_data in data["interface_items"]:
             item_type = i_data.get("item_type")
@@ -242,16 +250,24 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
                     panel_map[i_data["name"]] = new_item
                 elif item_type == 'SOCKET':
                     raw_socket_type = i_data.get("bl_socket_idname", i_data.get("socket_type", "NodeSocketFloat"))
-                    creation_type = INTERFACE_SOCKET_TYPE_REMAP.get(raw_socket_type, raw_socket_type)
                     force_dimensions = None
-                    vector_variant = parse_vector_socket_variant(raw_socket_type)
+                    variant = parse_interface_socket_variant(raw_socket_type)
+                    fallback = NON_RECREATABLE_FALLBACKS.get(raw_socket_type)
 
-                    if vector_variant is not None:
-                        # 5.2 vector variants (NodeSocketVectorFactor2D,
-                        # NodeSocketVector4D, ...): new_socket() accepts only
-                        # the base type; dimensions and subtype are applied
-                        # right after creation.
-                        creation_type, force_dimensions, _vector_subtype = vector_variant
+                    if fallback is not None:
+                        # Exists as a class but the Python API cannot build
+                        # it (no subtype enum value / no dimensions / the
+                        # bl_socket_idname recast crashes Blender): create
+                        # the base type and warn below.
+                        creation_type = fallback
+                    elif variant is not None:
+                        # 5.x variants (NodeSocketVectorFactor2D,
+                        # NodeSocketFloatAngle, ...): new_socket() accepts
+                        # only the base type; dimensions and subtype are
+                        # applied right after creation.
+                        creation_type, force_dimensions, _variant_subtype = variant
+                    else:
+                        creation_type = INTERFACE_SOCKET_TYPE_REMAP.get(raw_socket_type, raw_socket_type)
 
                     kwargs = {
                         "name": i_data.get("name", "Socket"),
@@ -284,37 +300,38 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
                             )
 
                     # Apply subtype for remapped float/int/vector sockets
-                    if (new_item and raw_socket_type != creation_type
+                    if (new_item and fallback is None and raw_socket_type != creation_type
                             and (raw_socket_type in INTERFACE_SOCKET_TYPE_REMAP
-                                 or vector_variant is not None)):
+                                 or variant is not None)):
                         _apply_socket_subtype(new_item, raw_socket_type, i_data, tracker)
 
                     interface_map[i_data.get("identifier", "")] = new_item.identifier
 
                     # Post-creation type verification: Blender may silently
-                    # create a socket with a different type than requested
-                    # (e.g. NodeSocketInt instead of NodeSocketString).
-                    # Log this so we can detect silent type mismatches.
-                    #
-                    # Compare against the EXPECTED type, not the raw type,
-                    # because 2D vectors are created as NodeSocketVector
-                    # then converted to NodeSocketVector2D via dimensions=2.
+                    # create a socket with a different type than requested.
+                    # Any mismatch means the socket is degraded (its saved
+                    # default value and the links using it cannot be
+                    # restored), so it must be VISIBLE in the report — never
+                    # silent (the NodeSocketVectorFactor2D bug).
                     if new_item and hasattr(new_item, 'bl_socket_idname'):
                         actual_type = new_item.bl_socket_idname
-                        # Compute the expected type after the full creation flow
-                        expected_type = raw_socket_type
-                        if actual_type != expected_type:
-                            # This is a known Blender limitation: some socket
-                            # types (e.g. NodeSocketMatrix) are silently
-                            # replaced by fallback types during
-                            # interface.new_socket().  Log at DEBUG level
-                            # since this is expected behavior, not an error.
+                        if actual_type != raw_socket_type:
                             tracker.record(
-                                f"Interface socket '{i_data.get('name')}': requested type "
-                                f"'{raw_socket_type}' (expected '{expected_type}') but Blender "
-                                f"created '{actual_type}'",
-                                level="DEBUG",
+                                f"Interface socket '{i_data.get('name')}': "
+                                f"'{raw_socket_type}' cannot be recreated by this Blender "
+                                f"version — created as '{actual_type}'. Its saved default "
+                                f"value and any links using it will not be restored.",
+                                level="WARN",
                             )
+                            # Remember the requested name so re-exports
+                            # keep it instead of silently downgrading the
+                            # JSON to the fallback type.
+                            try:
+                                if ng.get("gnt_degraded_sockets") is None:
+                                    ng["gnt_degraded_sockets"] = {}
+                                ng["gnt_degraded_sockets"][new_item.identifier] = raw_socket_type
+                            except Exception:
+                                pass
             except Exception as e:
                 tracker.record(f"Failed to create interface item '{i_data.get('name')}': {e}")
 

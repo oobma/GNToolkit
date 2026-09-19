@@ -341,7 +341,8 @@ type. Verified facts worth keeping (do NOT re-investigate):
   must be created as the base type and then `item.subtype = ...`
   (same mechanism the importer already used — see the 0.2.3 subtype
   fix). `Vector2D` = Vector + `dimensions = 2`. `FloatUnsigned` /
-  `IntUnsigned` / `IntVector3D` cannot be created via the interface.
+  `IntUnsigned` / the integer-vector family cannot be created via the
+  Python API — see §11 for the complete, verified matrix.
 - **`item.subtype` enum_items reports only `["DEFAULT"]`** even though
   the full enum is accepted by the setter — never validate subtypes
   against `enum_items` (this cost the 0.2.3 subtype bug).
@@ -368,3 +369,62 @@ type. Verified facts worth keeping (do NOT re-investigate):
   ride on typed sockets (`NodeSocketVirtual` for Field/Closure to
   List outputs) and `list_items` collections on the nodes must be
   round-tripped (0.2.3 fix).
+
+## 11. Interface socket variant matrix (2026-09-19, releasing in 0.2.4)
+
+Triggered by the 582-group folder export dropping 10
+`NodeSocketVectorFactor2D` sockets (10 `[ERROR]`, 23 WARN, 14 lost
+links across 6 groups).  The sweep
+`tests/verify_folder_recreation.py` (section A) now discovers the space
+from `bpy.types` at runtime — never a hand-written list — and asserts
+exact roundtrip (or documented fallback + WARN).
+
+**Verified matrix, Blender 5.2.0 (74 GN-valid classes):**
+
+- Vector: base + 2D/4D (plain) + 9 subtypes (Acceleration, Direction,
+  Euler, Factor, Percentage, Pixel, Translation, Velocity, XYZ) x
+  {3D implicit, 2D, 4D} = 30 classes.
+- Float: 12 subtypes (Angle, ColorTemperature, Distance, Factor,
+  Frequency, Mass, Percentage, Pixel, Time, TimeAbsolute, Wavelength,
+  Unsigned).  Int: Factor, Percentage, Pixel, Unsigned.  String:
+  FilePath.  Int also has the integer-vector family
+  (IntVector[Sub]{2D,3D}, 10 classes; the UI shows it as "Integer
+  Vector", the datatype enum calls it INT_VECTOR).
+- `item_type` has only SOCKET and PANEL.  `NodeSocketShader/Texture/
+  Mask/Scene/Text` are foreign (other tree kinds) — never in a GN tree.
+- Creation recipe (matches the importer): `new_socket(base)` then
+  `item.dimensions = 2|3|4` (Vector only), `item.subtype = "..."`.
+  Assign `default_value` while the array still has 3 components and
+  change `dimensions` afterwards (setting dimensions first makes a
+  2/4-component assignment raise).
+- `dimensions` range: Vector [2,4], integer vector [2,3].  On subtype
+  variants the default is exposed as a mathutils type (Quaternion for
+  4D Euler, per codec.clean_value).
+
+**The 12 GN-valid classes that CANNOT be recreated (verified 5.2.0):**
+
+- `NodeSocketFloatUnsigned`, `NodeSocketIntUnsigned` — no UNSIGNED in
+  the subtype enum (Float: NONE/PIXEL/PERCENTAGE/FACTOR/MASS/ANGLE/
+  TIME/TIME_ABSOLUTE/DISTANCE/WAVELENGTH/COLOR_TEMPERATURE/FREQUENCY;
+  Int: NONE/PIXEL/PERCENTAGE/FACTOR).
+- The 10 integer-vector classes — the Int item has no `dimensions`
+  property and the data type enum does not include INT_VECTOR for
+  `new_socket`.
+
+They fall back to their base type with a WARN in the report
+("cannot be recreated by this Blender version"), the tree stores
+`gnt_degraded_sockets` (id → requested name) so re-exports keep the
+original name instead of silently downgrading the JSON, and the
+canonical hash (v7) maps them to the fallback so sync shows no phantom
+divergence.
+
+**DO NOT attempt to recreate them by writing `item.bl_socket_idname`:**
+it is writable in RNA and appears to work, but the underlying item
+changes class while the Python wrapper stays stale — using the item
+afterwards (re-fetch, default assignment) CRASHES Blender with
+EXCEPTION_ACCESS_VIOLATION in tbbmalloc (reproduced twice on 5.2.0).
+
+**Older 5.x differences (sweep runs info-only there):** 5.1 exposes 59
+GN classes (no integer-vector family; `NodeSocketSound` cannot be
+created by `new_socket`); 5.0 exposes 56 and cannot apply most
+subtypes.  A 5.2 export is therefore only fully faithful on 5.2.

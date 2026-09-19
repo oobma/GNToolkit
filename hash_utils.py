@@ -18,6 +18,7 @@ from .constants import (
     HASH_EXCLUDE_TREE_PROPS,
     HASH_EXCLUDE_SOCKET_PROPS,
     HASH_EXCLUDE_INTERFACE_PROPS,
+    NON_RECREATABLE_FALLBACKS,
 )
 
 
@@ -101,7 +102,11 @@ _2D_VECTOR_SOCKETS = frozenset({
 def _normalize_interface_socket_type(bl_socket_idname: str) -> str:
     if bl_socket_idname in _2D_VECTOR_SOCKETS:
         return "NodeSocketVector2D"
-    return bl_socket_idname
+    # Variants that exist as classes but cannot be built by the Python API
+    # (Unsigned, integer vectors) are recreated as their base type; hash
+    # both sides the same so sync does not report phantom divergence.  The
+    # import report warns about the degradation.
+    return NON_RECREATABLE_FALLBACKS.get(bl_socket_idname, bl_socket_idname)
 
 
 def _normalize_floats(value):
@@ -156,7 +161,14 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             it.pop("identifier", None)
             it.pop("parent", None)
             if "bl_socket_idname" in it:
-                it["bl_socket_idname"] = _normalize_interface_socket_type(it["bl_socket_idname"])
+                raw_name = it["bl_socket_idname"]
+                it["bl_socket_idname"] = _normalize_interface_socket_type(raw_name)
+                if raw_name in NON_RECREATABLE_FALLBACKS:
+                    # The socket cannot be rebuilt (properties and defaults
+                    # are lost); hash it as its fallback name only.
+                    it.pop("properties", None)
+                    it.pop("socket_type", None)
+                    it.pop("enum_items", None)
             if "properties" in it and isinstance(it["properties"], dict):
                 it["properties"] = {
                     k: v for k, v in it["properties"].items()
@@ -181,7 +193,10 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                 it = dict(item)
                 it.pop("identifier", None)
                 if "bl_socket_idname" in it:
-                    it["bl_socket_idname"] = _normalize_interface_socket_type(it["bl_socket_idname"])
+                    raw_name = it["bl_socket_idname"]
+                    it["bl_socket_idname"] = _normalize_interface_socket_type(raw_name)
+                    if raw_name in NON_RECREATABLE_FALLBACKS:
+                        it.pop("properties", None)
                 if "properties" in it and isinstance(it["properties"], dict):
                     it["properties"] = {
                         k: v for k, v in it["properties"].items()

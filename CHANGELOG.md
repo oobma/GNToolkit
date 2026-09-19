@@ -85,6 +85,22 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Blender 5.x interface sockets are now handled as a complete,
+  self-verified matrix.** `parse_interface_socket_variant()` decomposes
+  every `NodeSocket<Base><Subtype>[2D|3D|4D]` name (Vector's 30 classes,
+  the Float/Int/String subtypes, and the integer-vector family) into base
+  type + dimensions + subtype; the importer builds them in that order.
+  The 12 GN-valid classes the Python API cannot build (Float/Int
+  `Unsigned`, the 10 integer-vector variants — no UNSIGNED enum value, no
+  `dimensions` on Int, and the `bl_socket_idname` recast crashes Blender
+  with an access violation) now fall back to their base type and are
+  **visible in the import report** (one WARN each: "cannot be recreated
+  by this Blender version").  The tree remembers the requested names so a
+  re-export never silently downgrades the JSON, and the canonical hash
+  maps them to the fallback so sync shows no phantom "Changed in JSON"
+  (HASH_VERSION 7).  New test `tests/verify_folder_recreation.py` sweeps
+  every class discovered from `bpy.types` (never a hand list) and fails
+  when a future Blender exposes one the parser does not know.
 - **Blender 5.2 vector interface sockets with subtype + extra dimensions
   were dropped on import (`NodeSocketVectorFactor2D` and the whole
   family).** The 5.2 interface API accepts only the base socket types and
@@ -93,11 +109,8 @@ All notable changes to this project are documented in this file.
   e.g. `NodeSocketVectorFactor2D`.  A 582-group folder export with 10
   such sockets logged 10 `[ERROR] Failed to create interface item …`,
   lost the 14 links into/out of them (6 groups) and kept none of their
-  saved defaults.  `parse_vector_socket_variant()` (`constants.py`) now
-  decomposes any `NodeSocketVector<Sub>[2D|4D]` name into base type +
-  dimensions + subtype; the importer creates the base socket, applies
-  `dimensions` and then the subtype, so every variant (including the 4D
-  ones) round-trips its `bl_socket_idname`.
+  saved defaults.  The base+dimensions+subtype recipe now recreates every
+  creatable variant (including the 4D ones) exactly.
 - **4-component vector defaults serialized as `mathutils.Quaternion`
   reprs.** `clean_value` handled `Vector`/`Color`/`Euler` but not
   `Quaternion`/`Matrix`, so a 4D vector subtype default (e.g.
@@ -109,8 +122,8 @@ All notable changes to this project are documented in this file.
   `round(-1e-9, 6)` writes `-0.0`, which `json.dumps` prints differently
   from `0.0`; Blender stores float32 and flips the sign on re-export, so
   two identical trees hashed differently (2 groups on the real project).
-  The canonical hash now normalises `-0.0` to `0.0` (HASH_VERSION 6;
-  stored baselines migrate automatically via the re-baseline mechanism).
+  The canonical hash now normalises `-0.0` to `0.0` (stored baselines
+  migrate automatically via the re-baseline mechanism).
 - **"Missing in Blend" returned after every save for restored groups.**
   Blender does not persist zero-user node groups across save/reload; a
   group restored from JSON (or batch-imported) that nothing references

@@ -14,6 +14,7 @@ from .constants import (
     TREE_PROPS_TO_SKIP,
     INTERFACE_SKIP_PROPS,
     OPTIONAL_SOCKET_PROPS,
+    parse_interface_socket_variant,
 )
 
 
@@ -269,6 +270,19 @@ def serialize_node_tree(tree):
                 input_connections[link.from_socket.identifier] = link.to_node
 
     if hasattr(tree, 'interface'):
+        # Interface sockets that exist as classes but cannot be built by
+        # the Python API (see constants.NON_RECREATABLE_FALLBACKS) are
+        # recreated as their base type; the importer remembers the original
+        # name here so re-exports keep it instead of silently writing the
+        # degraded type.
+        degraded = {}
+        try:
+            stored = tree.get("gnt_degraded_sockets")
+            if stored is not None:
+                degraded = {k: stored[k] for k in stored.keys()}
+        except Exception:
+            degraded = {}
+
         data["interface_items"] = []
         for item in tree.interface.items_tree:
             i_data = {
@@ -285,6 +299,12 @@ def serialize_node_tree(tree):
                 i_data['in_out'] = getattr(item, 'in_out', 'INPUT')
                 i_data['socket_type'] = getattr(item, 'socket_type', 'FLOAT')
                 i_data['bl_socket_idname'] = getattr(item, 'bl_socket_idname', i_data['socket_type'])
+                degraded_name = degraded.get(getattr(item, 'identifier', ''))
+                if degraded_name:
+                    i_data['bl_socket_idname'] = degraded_name
+                    variant = parse_interface_socket_variant(degraded_name)
+                    if variant is not None:
+                        i_data['socket_type'] = variant[0]
 
                 if i_data['socket_type'] == 'NodeSocketMenu':
                     items_found = []

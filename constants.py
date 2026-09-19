@@ -135,12 +135,69 @@ INTERFACE_SOCKET_TYPE_REMAP: dict[str, str] = {
     "NodeSocketVectorVelocity": "NodeSocketVector",
 }
 
-# Vector interface socket variants (Blender 5.2+): new_socket() accepts only
-# the base "NodeSocketVector", but subtype variants exist as distinct
-# bl_socket_idname values with optional extra dimensions
-# (NodeSocketVectorFactor2D, NodeSocketVector4D, ...).  The importer
-# decomposes the serialized name into (base, dimensions, subtype) instead of
-# hardcoding every combination in INTERFACE_SOCKET_TYPE_REMAP.
+# Interface socket variants (Blender 5.x).  ``bl_socket_idname`` values are
+# the interface socket class names (NodeSocketVectorFactor2D,
+# NodeSocketIntVector2D, ...).  interface.new_socket() accepts only the 18
+# base types, so the importer decomposes every serialized name into
+# (base type, dimensions, subtype) and applies them in that order.
+#
+# Complete matrix as of Blender 5.2 (verified against bpy.types and the
+# official API docs; see docs/port-5.2.md):
+#   * Vector: 9 subtypes x {3D (implicit), 2D, 4D} + plain 2D/4D
+#   * Int: Factor / Percentage / Pixel / Unsigned, plus the integer-vector
+#     family (Vector[Sub]{2D,3D})
+#   * Float: 12 subtypes; String: FilePath; every other base: no variants
+#
+# Unsigned (Float/Int) and the integer-vector family exist as classes but
+# CANNOT be recreated through the Python API: the subtype enum has no
+# UNSIGNED value, the Int item has no ``dimensions`` property, and the only
+# re-typing path (writing ``bl_socket_idname``) corrupts the item and
+# crashes Blender on further use (EXCEPTION_ACCESS_VIOLATION, verified on
+# 5.2.0).  They fall back to their base type with an import warning, and
+# the canonical hash maps them to that fallback so sync does not report
+# phantom divergence.
+INTERFACE_BASE_TYPES: tuple[str, ...] = (
+    "NodeSocketFloat", "NodeSocketInt", "NodeSocketBool", "NodeSocketVector",
+    "NodeSocketColor", "NodeSocketRotation", "NodeSocketMatrix",
+    "NodeSocketString", "NodeSocketMenu", "NodeSocketGeometry",
+    "NodeSocketObject", "NodeSocketCollection", "NodeSocketImage",
+    "NodeSocketMaterial", "NodeSocketFont", "NodeSocketSound",
+    "NodeSocketBundle", "NodeSocketClosure",
+)
+
+# Only valid for other node-tree kinds (shader/texture/compositor/mask
+# editors); never present in a GeometryNodeTree interface.
+FOREIGN_SOCKET_TYPES: tuple[str, ...] = (
+    "NodeSocketShader", "NodeSocketTexture", "NodeSocketMask",
+    "NodeSocketScene", "NodeSocketText",
+)
+
+_FLOAT_SUBTYPE_MAP: dict[str, str | None] = {
+    "Angle": "ANGLE",
+    "ColorTemperature": "COLOR_TEMPERATURE",
+    "Distance": "DISTANCE",
+    "Factor": "FACTOR",
+    "Frequency": "FREQUENCY",
+    "Mass": "MASS",
+    "Percentage": "PERCENTAGE",
+    "Pixel": "PIXEL",
+    "Time": "TIME",
+    "TimeAbsolute": "TIME_ABSOLUTE",
+    "Wavelength": "WAVELENGTH",
+    # Exists as a class; no UNSIGNED value in the subtype enum.
+    "Unsigned": None,
+}
+
+_INT_SUBTYPE_MAP: dict[str, str | None] = {
+    "Factor": "FACTOR",
+    "Percentage": "PERCENTAGE",
+    "Pixel": "PIXEL",
+    # Exists as a class; no UNSIGNED value in the subtype enum.
+    "Unsigned": None,
+}
+
+_STRING_SUBTYPE_MAP: dict[str, str] = {"FilePath": "FILE_PATH"}
+
 VECTOR_SUBTYPE_MAP: dict[str, str] = {
     "Acceleration": "ACCELERATION",
     "Direction": "DIRECTION",
@@ -153,41 +210,76 @@ VECTOR_SUBTYPE_MAP: dict[str, str] = {
     "XYZ": "XYZ",
 }
 
-_VECTOR_BASE_TYPE = "NodeSocketVector"
+NON_RECREATABLE_FALLBACKS: dict[str, str] = {
+    "NodeSocketFloatUnsigned": "NodeSocketFloat",
+    "NodeSocketIntUnsigned": "NodeSocketInt",
+    "NodeSocketIntVector2D": "NodeSocketInt",
+    "NodeSocketIntVector3D": "NodeSocketInt",
+    "NodeSocketIntVectorFactor2D": "NodeSocketInt",
+    "NodeSocketIntVectorFactor3D": "NodeSocketInt",
+    "NodeSocketIntVectorPercentage2D": "NodeSocketInt",
+    "NodeSocketIntVectorPercentage3D": "NodeSocketInt",
+    "NodeSocketIntVectorPixel2D": "NodeSocketInt",
+    "NodeSocketIntVectorPixel3D": "NodeSocketInt",
+    "NodeSocketIntVectorUnsigned2D": "NodeSocketInt",
+    "NodeSocketIntVectorUnsigned3D": "NodeSocketInt",
+}
 
 
-def parse_vector_socket_variant(bl_socket_idname: str):
-    """Decompose a vector socket name into creation parameters.
+def parse_interface_socket_variant(bl_socket_idname: str):
+    """Decompose an interface socket name into creation parameters.
 
-    Returns ``(base_type, dimensions, subtype)`` — where ``dimensions`` is
-    2, 4 or None (3 components) and ``subtype`` is an interface subtype
-    string or None — or None when *bl_socket_idname* is not a vector
-    socket name.
+    Returns ``(base_type, dimensions, subtype)`` — ``dimensions`` is 2, 3,
+    4 or None, ``subtype`` is an interface subtype string or None — or
+    None when the name does not belong to a Geometry-Nodes base type.
 
     Examples::
 
         NodeSocketVector         -> ("NodeSocketVector", None, None)
         NodeSocketVector2D       -> ("NodeSocketVector", 2, None)
-        NodeSocketVector4D       -> ("NodeSocketVector", 4, None)
-        NodeSocketVectorXYZ      -> ("NodeSocketVector", None, "XYZ")
         NodeSocketVectorFactor2D -> ("NodeSocketVector", 2, "FACTOR")
+        NodeSocketFloatAngle     -> ("NodeSocketFloat", None, "ANGLE")
+        NodeSocketIntVector2D    -> ("NodeSocketInt", 2, None)
     """
     if not isinstance(bl_socket_idname, str):
         return None
-    if not bl_socket_idname.startswith(_VECTOR_BASE_TYPE):
+    if bl_socket_idname in FOREIGN_SOCKET_TYPES:
         return None
-    suffix = bl_socket_idname[len(_VECTOR_BASE_TYPE):]
+    base = None
+    for candidate in INTERFACE_BASE_TYPES:
+        if bl_socket_idname.startswith(candidate):
+            base = candidate
+            break
+    if base is None:
+        return None
+
+    suffix = bl_socket_idname[len(base):]
     dimensions = None
     if suffix.endswith("2D"):
         dimensions, suffix = 2, suffix[:-2]
+    elif suffix.endswith("3D"):
+        dimensions, suffix = 3, suffix[:-2]
     elif suffix.endswith("4D"):
         dimensions, suffix = 4, suffix[:-2]
+
+    if base == "NodeSocketInt" and suffix.startswith("Vector"):
+        suffix = suffix[len("Vector"):]
     if not suffix:
-        return (_VECTOR_BASE_TYPE, dimensions, None)
-    subtype = VECTOR_SUBTYPE_MAP.get(suffix)
-    if subtype is None:
+        return (base, dimensions, None)
+
+    if base == "NodeSocketFloat":
+        subtype = _FLOAT_SUBTYPE_MAP.get(suffix)
+    elif base == "NodeSocketInt":
+        subtype = _INT_SUBTYPE_MAP.get(suffix)
+    elif base == "NodeSocketString":
+        subtype = _STRING_SUBTYPE_MAP.get(suffix)
+    elif base == "NodeSocketVector":
+        subtype = VECTOR_SUBTYPE_MAP.get(suffix)
+    else:
+        subtype = None
+    if subtype is None and suffix not in ("Unsigned",):
         return None
-    return (_VECTOR_BASE_TYPE, dimensions, subtype)
+    return (base, dimensions, subtype)
 
 # Optional socket properties that may exist on interface items.
 OPTIONAL_SOCKET_PROPS: tuple[str, ...] = (
@@ -278,7 +370,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 6
+HASH_VERSION: int = 7
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"
