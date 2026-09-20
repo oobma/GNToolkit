@@ -247,6 +247,19 @@ def _rebuild_interface(ng, data: dict, interface_map: dict, tracker: ImportError
             try:
                 if item_type == 'PANEL':
                     new_item = ng.interface.new_panel(i_data["name"])
+                    parent_name = i_data.get("parent", "") or ""
+                    parent_item = panel_map.get(parent_name) if parent_name else None
+                    if parent_item is not None:
+                        try:
+                            ng.interface.move_to_parent(
+                                new_item, parent_item,
+                                len(parent_item.interface_items))
+                        except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+                            tracker.record(
+                                f"Could not nest interface panel '{i_data['name']}' "
+                                f"inside '{parent_name}': {exc}",
+                                level="WARN",
+                            )
                     panel_map[i_data["name"]] = new_item
                 elif item_type == 'SOCKET':
                     raw_socket_type = i_data.get("bl_socket_idname", i_data.get("socket_type", "NodeSocketFloat"))
@@ -479,7 +492,9 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
         # sockets (they must be set after enum_items exist).  Skip them here
         # to avoid overwriting with a potentially stale value, but only for
         # Menu sockets.  For other socket types, let the loop set them.
-        if p_name in ('menu_expanded', 'optional', 'optional_label'):
+        # optional_label has no enum_items dependency and is applied here
+        # for every socket type (Menu sockets included).
+        if p_name in ('menu_expanded', 'optional'):
             if i_data.get("socket_type") == 'NodeSocketMenu':
                 continue
         if p_name in props and hasattr(new_item, p_name):

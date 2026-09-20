@@ -101,6 +101,25 @@ All notable changes to this project are documented in this file.
   reach the JSON and every rebuilt group must hash identically).
   Packages exported with the old serializer keep the lossy value and now
   show "Changed in JSON" until re-exported.
+- **Nested interface panels were flattened on import.** `_rebuild_interface`
+  created every PANEL with `new_panel()` but never attached it to its parent
+  (the panel `parent` is read-only in the Python API; nesting requires
+  `interface.move_to_parent()`), so a panel inside a panel came back at the
+  root of the interface while its sockets kept pointing at it.  Panels now
+  nest exactly as serialized.  The canonical hash keeps the interface item
+  `parent` (empty parents excluded) so this class of divergence is visible
+  in sync from now on: HASH_VERSION 8, stored baselines are re-stamped
+  automatically.  Regression: smoke T22.
+- **Interface socket presentation flags were lost.** `is_panel_toggle`
+  and `structure_type` were skipped by the serializer and `optional_label`
+  was never applied on Menu sockets, so a bool socket acting as its
+  panel's toggle came back as a plain checkbox inside the panel and
+  list/field structure types reset to AUTO (12 / 5 / 9 sockets in the
+  reference project).  All three now roundtrip and are covered by the
+  canonical hash (HASH_VERSION 8); Blender only accepts `is_panel_toggle`
+  once the socket is nested in its panel, which the importer guarantees
+  by parenting every item before applying properties.  Regression: smoke
+  T22.
 - **Blender 5.x interface sockets are now handled as a complete,
   self-verified matrix.** `parse_interface_socket_variant()` decomposes
   every `NodeSocket<Base><Subtype>[2D|3D|4D]` name (Vector's 30 classes,

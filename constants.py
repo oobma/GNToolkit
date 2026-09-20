@@ -68,8 +68,11 @@ INTERFACE_SKIP_PROPS: frozenset[str] = frozenset({
     'name', 'item_type', 'in_out', 'socket_type', 'bl_socket_idname',
     'identifier', 'parent', 'rna_type', 'enum_items',
     # Vector/Rotation socket-specific properties (Blender 5.0+)
-    'is_inspect_output', 'is_panel_toggle', 'layer_selection_field',
-    'structure_type', 'dimensions',
+    'is_inspect_output', 'layer_selection_field', 'dimensions',
+    # NOTE: 'is_panel_toggle' and 'structure_type' were previously skipped
+    # here, but they change how the modifier UI presents the socket (a bool
+    # acting as its panel's toggle; list/field structure) and are restored
+    # on import now that sockets are nested before properties are applied.
     # NOTE: 'menu_expanded' and 'optional_label' were previously skipped,
     # but they must be serialized so that Menu socket expansion state
     # and the Optional label toggle are preserved across export/import.
@@ -293,6 +296,9 @@ OPTIONAL_SOCKET_PROPS: tuple[str, ...] = (
     # 'optional_label' as a fallback in case the name differs across
     # versions.
     'optional', 'optional_label',
+    # Panel-toggle / list-field presentation (Blender 5.0+); set directly
+    # (never coerced) after the socket is nested in its panel.
+    'is_panel_toggle', 'structure_type',
 )
 
 # Properties that are already handled explicitly and should be skipped in the
@@ -370,7 +376,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 7
+HASH_VERSION: int = 8
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

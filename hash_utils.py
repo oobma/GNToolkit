@@ -159,7 +159,9 @@ def canonicalize_node_tree_data(data: dict) -> dict:
         for item in data["interface_items"]:
             it = dict(item)
             it.pop("identifier", None)
-            it.pop("parent", None)
+            parent = it.pop("parent", None)
+            if parent:
+                it["parent"] = parent
             if "bl_socket_idname" in it:
                 raw_name = it["bl_socket_idname"]
                 it["bl_socket_idname"] = _normalize_interface_socket_type(raw_name)
