@@ -68,6 +68,26 @@ All notable changes to this project are documented in this file.
     `export_all_modified`/`link_group` normalize a standalone single-group
     file into a one-group `GN_UNIFIED_PACKAGE` on the first commit
     (previously a `KeyError` — committing to a per-group export failed).
+- **Untracked dependency groups are detected and filed before a commit.**
+  A tracked group that gains a new nested group locally used to commit a
+  reference to a group that exists in no JSON — the collaborator (or a
+  later folder import) got a dangling Group node with no sockets. The
+  Sync Issues panel now lists every untracked dependency group found in
+  the .blend (one row per child: name, parent and a **Track** button),
+  and **Commit with Review…** shows one row per child (default: track)
+  so they are filed and committed together with their parent. Tracking
+  follows the layout recorded for the parent at tracking time (`layout`
+  metadata, inferred from the file for older entries): folder exports
+  get a per-group JSON next to the parent's file — reusing an existing
+  file when it already holds the group, never rewriting it — while
+  master packages get the group added to the same file (surgical
+  update). Plain **Commit** / **Commit Modified** / **Commit All**
+  buttons only warn ("N untracked dependency group(s) were NOT
+  committed") — no surprise writes. The hidden `gn.sync_link_deps`
+  operator (it scanned the parent's JSON, so a brand-new .blend group
+  was invisible to it) is removed. Regression:
+  `tests/test_untracked_deps.py` (20 checks on 5.1 and 5.2, in the
+  release gate).
 - **Encoding robustness**: JSON reads accept UTF-8 with or without BOM
   (`utf-8-sig`) and a non-UTF-8 file (e.g. saved as ANSI/Windows-1252 by
   an editor) no longer crashes with a raw traceback — the tolerant reader

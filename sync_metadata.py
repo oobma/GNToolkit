@@ -257,8 +257,15 @@ def add_tracked_group(
     json_hash: str,
     json_mtime: float,
     depends_on: list[str] | None = None,
+    layout: str = "",
 ) -> None:
-    """Add a new tracked group to the metadata dict (in-place)."""
+    """Add a new tracked group to the metadata dict (in-place).
+
+    *layout* records where the group's JSON lives: ``"folder"`` (one
+    group per file, siblings in the export folder) or ``"package"``
+    (several groups sharing a master file).  New dependencies are
+    written following it; empty means "infer from the file".
+    """
     if "tracked_groups" not in metadata:
         metadata["tracked_groups"] = {}
     metadata["tracked_groups"][sync_uuid] = {
@@ -269,6 +276,7 @@ def add_tracked_group(
         "last_json_mtime": json_mtime,
         "last_sync_time": _now_timestamp(),
         "depends_on": depends_on or [],
+        "layout": layout,
     }
 
 
@@ -280,7 +288,7 @@ def update_tracked_group(metadata: dict, sync_uuid: str, **kwargs) -> None:
     for key, value in kwargs.items():
         if key in ("blend_name", "json_path", "last_blend_hash",
                     "last_json_hash", "last_json_mtime", "last_sync_time",
-                    "depends_on", "ignored"):
+                    "depends_on", "ignored", "layout"):
             info[key] = value
 
 

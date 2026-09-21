@@ -25,7 +25,7 @@ _log = logging.getLogger("GNToolkit.sync")
 
 from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
-from .file_utils import write_json_file
+from .file_utils import sanitize_filename, write_json_file
 from .hash_utils import (
     canonical_hash_from_tree,
     canonical_hash_from_json_path,
@@ -273,6 +273,7 @@ class SyncManager:
     def __init__(self):
         self.metadata: dict = _empty_metadata()
         self._status_cache: dict[str, SyncStatus] = {}
+        self._untracked_deps_cache: list[dict] | None = None
         self._dirty: bool = False
         self._geometry_issues_cache: dict[str, list] = {}
         self.load_report: dict[str, dict] = {}
@@ -285,6 +286,7 @@ class SyncManager:
         self.metadata = load_sync_metadata()
         self._status_cache.clear()
         self._geometry_issues_cache.clear()
+        self._untracked_deps_cache = None
         self.load_report.clear()
         self._dirty = False
         self._ensure_hash_version()
@@ -700,7 +702,7 @@ class SyncManager:
         add_tracked_group(
             self.metadata, sync_uuid, tree.name, stored_path,
             blend_hash, json_hash, json_mtime,
-            depends_on=dep_uuids,
+            depends_on=dep_uuids, layout="package",
         )
 
         # Auto-link dependency groups that share the same JSON file
@@ -750,7 +752,7 @@ class SyncManager:
                     add_tracked_group(
                         self.metadata, dep_uuid, dep_tree.name, stored_path,
                         dep_blend_hash, dep_json_hash, dep_mtime,
-                        depends_on=[],
+                        depends_on=[], layout="package",
                     )
                     new_uuids.append(dep_uuid)
                     
@@ -1350,79 +1352,186 @@ class SyncManager:
                 self.metadata, dep_uuid, group_name, json_path_stored,
                 dep_blend_hash, dep_json_hash, dep_mtime,
                 depends_on=dep_dep_uuids,
+                layout="package" if len(json_cache) > 1 else "folder",
             )
             self._dirty = True
 
-    def link_dependencies(self, sync_uuid: str) -> list[str]:
-        """Manually link all untracked groups that share the same JSON file.
+    # --- Untracked dependencies -------------------------------------------
 
-        Scans the JSON file for groups that exist in .blend but aren't
-        tracked, and creates tracking entries for them.
+    def _group_layout(self, info: dict) -> str:
+        """Return "folder" or "package" for a tracked group's JSON layout.
 
-        Returns a list of newly created UUIDs.
+        Prefers the layout recorded at tracking time; entries tracked
+        before the field existed are inferred from the file: a package
+        holding several groups is a master, anything else is one group
+        per file.
         """
-        info = get_tracked_group(self.metadata, sync_uuid)
-        if info is None:
-            return []
-
+        layout = info.get("layout")
+        if layout in ("folder", "package"):
+            return layout
         json_path = resolve_json_path(info.get("json_path", ""), self._blend_dir())
-        if not os.path.isfile(json_path):
-            return []
+        data = read_json_tolerant(json_path) if os.path.isfile(json_path) else None
+        if (isinstance(data, dict) and isinstance(data.get("node_groups"), dict)
+                and len(data["node_groups"]) > 1):
+            return "package"
+        return "folder"
 
-        json_data = read_json_tolerant(json_path)
-        if json_data is None:
-            return []
+    @staticmethod
+    def _file_holds_group(data, name: str) -> bool:
+        """True when the JSON payload defines the group *name*."""
+        if not isinstance(data, dict):
+            return False
+        groups = data.get("node_groups")
+        if isinstance(groups, dict):
+            return name in groups
+        return data.get("name") == name and "nodes" in data
 
-        if isinstance(json_data, dict) and json_data.get("type") == "GN_UNIFIED_PACKAGE":
-            group_names = list(json_data.get("node_groups", {}).keys())
-        elif isinstance(json_data, dict) and "name" in json_data:
-            group_names = [json_data["name"]]
-        else:
-            return []
+    def find_untracked_dependencies(self) -> list[dict]:
+        """Return every untracked group reachable from a tracked group.
 
-        new_uuids = []
-        for group_name in group_names:
-            tree = bpy.data.node_groups.get(group_name)
+        Each entry: ``parent_uid``, ``parent_name``, ``child_name`` and
+        ``layout``.  A child used by several parents is reported once
+        (first parent wins).  Cached until the next invalidation.
+        """
+        if self._untracked_deps_cache is not None:
+            return list(self._untracked_deps_cache)
+
+        tracked = self.metadata.get("tracked_groups", {})
+        tracked_names = {info.get("blend_name", "") for info in tracked.values()}
+        found: dict[str, dict] = {}
+        for uid, info in tracked.items():
+            tree = bpy.data.node_groups.get(info.get("blend_name", ""))
             if tree is None:
                 continue
-            existing_uid = get_uuid_from_tree(tree)
-            if existing_uid:
-                continue
-            uid = find_uuid_for_tree(tree, self.metadata)
-            if uid:
-                continue
-
-            dep_uuid = generate_uuid()
-            store_uuid_on_tree(tree, dep_uuid)
-
-            dep_blend_hash = canonical_hash_from_tree(tree)
-            dep_json_hash = canonical_hash_from_json_group(json_path, group_name)
-            if dep_json_hash is None:
-                dep_json_hash = canonical_hash_from_json_path(json_path)
-            dep_mtime = os.path.getmtime(json_path)
-
-            # Detect dependencies
-            dep_deps = get_tree_dependencies(tree)
-            dep_dep_uuids = []
-            for dd_name in dep_deps:
-                if dd_name == group_name:
+            for dep_name in get_tree_dependencies(tree):
+                if (dep_name == tree.name or dep_name in tracked_names
+                        or dep_name in found):
                     continue
-                dd_tree = bpy.data.node_groups.get(dd_name)
-                if dd_tree is not None:
-                    dd_uid = get_uuid_from_tree(dd_tree)
-                    if dd_uid:
-                        dep_dep_uuids.append(dd_uid)
+                dep_tree = bpy.data.node_groups.get(dep_name)
+                if dep_tree is None:
+                    continue
+                if get_uuid_from_tree(dep_tree):
+                    continue
+                if find_uuid_for_tree(dep_tree, self.metadata):
+                    continue
+                found[dep_name] = {
+                    "parent_uid": uid,
+                    "parent_name": tree.name,
+                    "child_name": dep_name,
+                    "layout": self._group_layout(info),
+                }
+        self._untracked_deps_cache = list(found.values())
+        return list(self._untracked_deps_cache)
 
-            stored_path = info.get("json_path", "")
+    def _place_dependency_json(self, child, parent_json: str, layout: str):
+        """Write (or locate) the JSON file for a new dependency group.
+
+        Returns ``(path, action)`` with action one of
+        ``added-to-package``, ``created`` or ``tracked-existing``.
+        """
+        if layout == "package" and os.path.isfile(parent_json):
+            data = read_json_tolerant(parent_json)
+            if data is None:
+                raise ValueError(f"Cannot read {parent_json}")
+            data = _ensure_package_shape(data)
+            data.setdefault("node_groups", {})[child.name] = serialize_node_tree(child)
+            write_json_file(parent_json, data)
+            return parent_json, "added-to-package"
+
+        directory = os.path.dirname(parent_json) or self._blend_dir()
+        stem = sanitize_filename(child.name, "node_group")
+        candidate = os.path.join(directory, stem + ".json")
+        if os.path.isfile(candidate):
+            if self._file_holds_group(read_json_tolerant(candidate), child.name):
+                return candidate, "tracked-existing"
+            digest = hashlib.sha1(child.name.encode("utf-8")).hexdigest()[:6]
+            candidate = os.path.join(directory, f"{stem}~{digest}.json")
+            if os.path.isfile(candidate) and not self._file_holds_group(
+                    read_json_tolerant(candidate), child.name):
+                raise ValueError(f"No free filename for '{child.name}' in {directory}")
+        if not os.path.isfile(candidate):
+            write_json_file(candidate, serialize_node_tree(child))
+            return candidate, "created"
+        return candidate, "tracked-existing"
+
+    def track_untracked_dependencies(self, only_names=None) -> dict:
+        """Track (and file) untracked dependency groups.
+
+        Folder layout: writes a per-group JSON next to the parent's file
+        (reusing an existing one when it already holds the group).
+        Package layout: adds the group to the parent's master file.
+
+        Returns ``{"tracked": int, "errors": int, "entries": [...]}``.
+        """
+        deps = self.find_untracked_dependencies()
+        if only_names is not None:
+            wanted = set(only_names)
+            deps = [dep for dep in deps if dep["child_name"] in wanted]
+        if not deps:
+            return {"tracked": 0, "errors": 0, "entries": []}
+
+        new_uuids: dict[str, str] = {}
+        entries = []
+        errors = 0
+        for dep in deps:
+            child_name = dep["child_name"]
+            child = bpy.data.node_groups.get(child_name)
+            parent_info = get_tracked_group(self.metadata, dep["parent_uid"]) or {}
+            if child is None:
+                errors += 1
+                continue
+            parent_json = resolve_json_path(
+                parent_info.get("json_path", ""), self._blend_dir())
+            try:
+                target_path, action = self._place_dependency_json(
+                    child, parent_json, dep["layout"])
+            except (PermissionError, OSError, ValueError) as exc:
+                _log.warning("[Track deps] %s: %s", child_name, exc)
+                errors += 1
+                continue
+
+            uid = generate_uuid()
+            store_uuid_on_tree(child, uid)
+            blend_hash = canonical_hash_from_tree(child)
+            json_hash = canonical_hash_from_json_group(target_path, child_name)
+            if json_hash is None:
+                json_hash = canonical_hash_from_json_path(target_path)
+            mtime = os.path.getmtime(target_path)
+            stored_path = make_json_path_relative(target_path, self._blend_dir())
             add_tracked_group(
-                self.metadata, dep_uuid, group_name, stored_path,
-                dep_blend_hash, dep_json_hash, dep_mtime,
-                depends_on=dep_dep_uuids,
+                self.metadata, uid, child_name, stored_path,
+                blend_hash, json_hash, mtime, layout=dep["layout"],
             )
-            new_uuids.append(dep_uuid)
-            self._dirty = True
+            new_uuids[child_name] = uid
+            entries.append({"name": child_name, "path": target_path, "action": action})
 
-        return new_uuids
+        for dep in deps:
+            uid = new_uuids.get(dep["child_name"])
+            if uid is None:
+                continue
+            child = bpy.data.node_groups.get(dep["child_name"])
+            if child is not None:
+                dep_uuids = []
+                for dd_name in get_tree_dependencies(child):
+                    if dd_name == child.name:
+                        continue
+                    dd_tree = bpy.data.node_groups.get(dd_name)
+                    if dd_tree is not None:
+                        dd_uid = get_uuid_from_tree(dd_tree)
+                        if dd_uid and dd_uid != uid:
+                            dep_uuids.append(dd_uid)
+                update_tracked_group(self.metadata, uid, depends_on=dep_uuids)
+            parent_info = get_tracked_group(self.metadata, dep["parent_uid"])
+            if parent_info is not None:
+                parent_deps = list(parent_info.get("depends_on", []))
+                if uid not in parent_deps:
+                    parent_deps.append(uid)
+                    update_tracked_group(
+                        self.metadata, dep["parent_uid"], depends_on=parent_deps)
+
+        self._dirty = True
+        self._untracked_deps_cache = None
+        return {"tracked": len(new_uuids), "errors": errors, "entries": entries}
 
     def export_to_json(self, sync_uuid: str, force: bool = False) -> bool:
         """Export .blend group to JSON.
@@ -1559,6 +1668,7 @@ class SyncManager:
     # --- Cache invalidation ------------------------------------------------
 
     def invalidate_cache(self, sync_uuid: str | None = None) -> None:
+        self._untracked_deps_cache = None
         if sync_uuid:
             self._status_cache.pop(sync_uuid, None)
             self._geometry_issues_cache.pop(sync_uuid, None)
@@ -1759,7 +1869,7 @@ class SyncManager:
             add_tracked_group(
                 self.metadata, sync_uuid, name, stored_path,
                 blend_hash, json_hash, json_mtime,
-                depends_on=dep_uuids,
+                depends_on=dep_uuids, layout="package",
             )
 
             if done % 50 == 0 or done == total:

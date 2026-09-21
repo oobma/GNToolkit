@@ -357,6 +357,20 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
         if n_ignored:
             header_row.label(text=f"({n_ignored} ignored)", icon='HIDE_ON')
 
+        untracked_deps = sync_manager.find_untracked_dependencies()
+        if untracked_deps:
+            deps_box = layout.box()
+            deps_box.label(text=f"{len(untracked_deps)} untracked dependency group(s)",
+                           icon='PLUS')
+            for dep in untracked_deps:
+                row = deps_box.row(align=True)
+                row.label(text=f"{dep['child_name']}  (used by {dep['parent_name']})",
+                          icon='NODETREE')
+                track_op = row.operator("gn.sync_track_deps", text="Track",
+                                        icon='LINKED')
+                track_op.group_name = dep["child_name"]
+            deps_box.label(text="Commit them before (or with) their parents", icon='INFO')
+
         layout.separator()
 
         filters_row1 = layout.row(align=True)

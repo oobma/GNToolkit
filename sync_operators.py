@@ -45,6 +45,18 @@ def _get_all_geometry_trees():
     return [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
 
 
+def _untracked_deps_note() -> str:
+    """Report suffix for commits that leave untracked dependencies behind."""
+    try:
+        count = len(sync_manager.find_untracked_dependencies())
+    except Exception:
+        return ""
+    if not count:
+        return ""
+    return (f" — warning: {count} untracked dependency group(s) were NOT "
+            "committed (Sync Issues → Track)")
+
+
 # ---------------------------------------------------------------------------
 # Operator: Track a group (write JSON from blend)
 # ---------------------------------------------------------------------------
@@ -239,7 +251,11 @@ class GN_OT_SyncExport(bpy.types.Operator):
             # Force UI redraw so issue disappears immediately
             for area in context.screen.areas:
                 area.tag_redraw()
-            self.report({'INFO'}, "Commit to JSON completed")
+            note = _untracked_deps_note()
+            if note:
+                self.report({'WARNING'}, "Commit to JSON completed" + note)
+            else:
+                self.report({'INFO'}, "Commit to JSON completed")
             return {'FINISHED'}
         else:
             self.report({'ERROR'},
@@ -605,31 +621,36 @@ class GN_OT_RevealRepo(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
-# Operator: Track dependencies
+# Operator: Track untracked dependencies (contextual)
 # ---------------------------------------------------------------------------
 
-class GN_OT_SyncLinkDeps(bpy.types.Operator):
-    bl_idname = "gn.sync_link_deps"
+class GN_OT_SyncTrackDeps(bpy.types.Operator):
+    bl_idname = "gn.sync_track_deps"
     bl_label = "Track Dependencies"
-    bl_description = "Start tracking untracked groups that share the same JSON file"
+    bl_description = ("Start tracking untracked dependency groups found in the .blend: "
+                      "each one is written to its own JSON file in the folder (or into "
+                      "the master package) and recorded with its own entry")
     bl_options = {'REGISTER', 'UNDO'}
 
-    sync_uuid: StringProperty(name="UUID", description="UUID of the parent tracked group")
+    group_name: StringProperty(
+        name="Group",
+        description="Track only this dependency group (empty = every untracked one)",
+    )
 
     def execute(self, context):
-        if not self.sync_uuid:
-            tree = _get_active_tree(context)
-            if tree:
-                self.sync_uuid = find_uuid_for_tree(tree, sync_manager.metadata) or ""
-        if not self.sync_uuid:
-            self.report({'ERROR'}, "No tracked group found")
-            return {'CANCELLED'}
-
-        new_uuids = sync_manager.link_dependencies(self.sync_uuid)
+        only = [self.group_name] if self.group_name else None
+        result = sync_manager.track_untracked_dependencies(only_names=only)
         sync_manager.save()
-
-        if new_uuids:
-            self.report({'INFO'}, f"Now tracking {len(new_uuids)} dependency group(s)")
+        sync_manager.invalidate_cache()
+        for area in context.screen.areas:
+            area.tag_redraw()
+        if result["errors"]:
+            self.report({'WARNING'},
+                        f"Tracked {result['tracked']} dependency group(s), "
+                        f"{result['errors']} error(s) — see the log")
+        elif result["tracked"]:
+            self.report({'INFO'},
+                        f"Now tracking {result['tracked']} dependency group(s)")
         else:
             self.report({'INFO'}, "No untracked dependencies found")
         return {'FINISHED'}
@@ -781,7 +802,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                 stored_path = make_json_path_relative(fp, sync_manager._blend_dir())
                 add_tracked_group(
                     sync_manager.metadata, uid, gname, stored_path,
-                    blend_hash, json_hash, mtime,
+                    blend_hash, json_hash, mtime, layout="folder",
                 )
                 store_uuid_on_tree(tree, uid)
                 linked_by_name[gname] = uid
@@ -844,10 +865,11 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
             # Force UI redraw so issues disappear immediately
             for area in context.screen.areas:
                 area.tag_redraw()
-            self.report({'INFO'},
+            note = _untracked_deps_note()
+            self.report({'WARNING' if note else 'INFO'},
                         f"Committed {result['exported']} groups, "
                         f"skipped {result['skipped']}, "
-                        f"errors {result['errors']}")
+                        f"errors {result['errors']}" + note)
         except Exception as e:
             context.window_manager.progress_end()
             self.report({'ERROR'}, f"Commit failed: {e}")
@@ -880,10 +902,11 @@ class GN_OT_SyncExportModified(bpy.types.Operator):
             # Force UI redraw so issues disappear immediately
             for area in context.screen.areas:
                 area.tag_redraw()
-            self.report({'INFO'},
+            note = _untracked_deps_note()
+            self.report({'WARNING' if note else 'INFO'},
                         f"Committed {result['exported']} groups, "
                         f"skipped {result['skipped']}, "
-                        f"errors {result['errors']}")
+                        f"errors {result['errors']}" + note)
         except Exception as e:
             context.window_manager.progress_end()
             self.report({'ERROR'}, f"Commit failed: {e}")
@@ -1036,6 +1059,8 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         linked = 0
         skipped = 0
         divergent = 0
+        file_layout = ("package" if data.get("type") == "GN_UNIFIED_PACKAGE"
+                       and len(groups) > 1 else "folder")
 
         for gname in groups:
             tree = bpy.data.node_groups.get(gname)
@@ -1069,7 +1094,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 
             add_tracked_group(
                 sync_manager.metadata, uid, gname, json_path,
-                blend_hash, json_hash, mtime
+                blend_hash, json_hash, mtime, layout=file_layout,
             )
             store_uuid_on_tree(tree, uid)
             linked += 1
@@ -1552,19 +1577,29 @@ class GN_CommitReviewChoice(bpy.types.PropertyGroup):
     )
 
 
+class GN_CommitReviewDep(bpy.types.PropertyGroup):
+    """One untracked dependency group offered for tracking at commit time."""
+    group_name: StringProperty()
+    parent_name: StringProperty()
+    track: BoolProperty(name="Track", default=True)
+
+
 class GN_CommitReview(bpy.types.PropertyGroup):
     """Pending commit decisions (one per locally edited group)."""
     items: CollectionProperty(type=GN_CommitReviewChoice)
+    deps: CollectionProperty(type=GN_CommitReviewDep)
 
 
 def _populate_commit_review() -> dict:
     """Fill the scene review collection with the modified/conflicted groups.
 
-    Excludes ignored groups.  Returns ``{"modified": n, "conflicts": m}``.
+    Excludes ignored groups.  Also lists every untracked dependency group
+    (default: track it).  Returns ``{"modified": n, "conflicts": m}``.
     """
     from .sync_metadata import is_ignored
     review = bpy.context.scene.gnt_commit_review
     review.items.clear()
+    review.deps.clear()
     counts = {"modified": 0, "conflicts": 0}
     statuses = sync_manager.check_all_statuses()
     for uid, status in statuses.items():
@@ -1584,6 +1619,11 @@ def _populate_commit_review() -> dict:
             counts["conflicts"] += 1
         else:
             counts["modified"] += 1
+    for dep in sync_manager.find_untracked_dependencies():
+        item = review.deps.add()
+        item.group_name = dep["child_name"]
+        item.parent_name = dep["parent_name"]
+        item.track = True
     return counts
 
 
@@ -1598,8 +1638,9 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
         if not sync_manager.metadata.get("tracked_groups"):
             self.report({'ERROR'}, "No groups tracked. Use 'Track All' or 'Track from Existing JSON' first.")
             return {'CANCELLED'}
-        counts = _populate_commit_review()
-        if not context.scene.gnt_commit_review.items:
+        _populate_commit_review()
+        review = context.scene.gnt_commit_review
+        if not review.items and not review.deps:
             self.report({'INFO'}, "No locally edited groups to commit")
             return {'CANCELLED'}
         return context.window_manager.invoke_props_dialog(self, width=480)
@@ -1607,22 +1648,45 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         review = context.scene.gnt_commit_review
-        if not review.items:
+        if not review.items and not review.deps:
             layout.label(text="No groups to review", icon='INFO')
             return
-        layout.label(text="Decide per group — unedited groups are ignored:", icon='QUESTION')
-        layout.separator()
-        for item in review.items:
-            box = layout.box()
-            row = box.row(align=True)
-            row.label(text=item.blend_name,
-                      icon='ERROR' if item.is_conflict else 'LIGHT')
-            row.prop(item, "choice", text="", expand=True)
+        if review.items:
+            layout.label(text="Decide per group — unedited groups are ignored:", icon='QUESTION')
+            layout.separator()
+            for item in review.items:
+                box = layout.box()
+                row = box.row(align=True)
+                row.label(text=item.blend_name,
+                          icon='ERROR' if item.is_conflict else 'LIGHT')
+                row.prop(item, "choice", text="", expand=True)
+        if review.deps:
+            layout.separator()
+            deps_box = layout.box()
+            deps_box.label(text=f"{len(review.deps)} untracked dependency group(s) "
+                                "found — they will be filed and committed too:",
+                           icon='PLUS')
+            for dep in review.deps:
+                row = deps_box.row(align=True)
+                row.prop(dep, "track", text="")
+                row.label(text=f"{dep.group_name}  (used by {dep.parent_name})",
+                          icon='NODETREE')
 
     def execute(self, context):
         review = context.scene.gnt_commit_review
+        to_track = [dep.group_name for dep in review.deps if dep.track]
+        untracked_left = len(review.deps) - len(to_track)
+        tracked_new = 0
+        if to_track:
+            tracked_new = sync_manager.track_untracked_dependencies(
+                only_names=to_track)["tracked"]
         if not review.items:
-            return {'CANCELLED'}
+            sync_manager.save()
+            review.deps.clear()
+            for area in context.screen.areas:
+                area.tag_redraw()
+            self.report({'INFO'}, f"Tracked {tracked_new} new dependency group(s)")
+            return {'FINISHED'}
         committed = pulled = skipped = errors = 0
         for item in review.items:
             uid = item.sync_uuid
@@ -1645,16 +1709,23 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
                 errors += 1
         sync_manager.save()
         review.items.clear()
+        review.deps.clear()
         for area in context.screen.areas:
             area.tag_redraw()
         msg = f"Committed {committed}, pulled {pulled}, skipped {skipped}"
+        if tracked_new:
+            msg += f", tracked {tracked_new} new dependency group(s)"
         if errors:
             msg += f", {errors} failed"
-        self.report({'WARNING' if errors else 'INFO'}, msg)
+        if untracked_left:
+            msg += (f" — {untracked_left} untracked dependency group(s) "
+                    "left out of the commit")
+        self.report({'WARNING' if (errors or untracked_left) else 'INFO'}, msg)
         return {'FINISHED'}
 
 
 classes = (
+    GN_CommitReviewDep,
     GN_CommitReviewChoice,
     GN_CommitReview,
     GN_ImportItem,
@@ -1669,7 +1740,7 @@ classes = (
     GN_OT_SyncUnignore,
     GN_OT_SyncResolve,
     GN_OT_SyncCheck,
-    GN_OT_SyncLinkDeps,
+    GN_OT_SyncTrackDeps,
     GN_OT_SyncLinkAll,
     GN_OT_SyncLinkFolder,
     GN_OT_SyncExportAll,
