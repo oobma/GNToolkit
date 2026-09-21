@@ -26,6 +26,11 @@ from .constants import (
     parse_interface_socket_variant,
 )
 from .error_tracker import ImportErrorTracker
+from .modifier_utils import (
+    build_identifier_remap,
+    restore_modifier_inputs,
+    snapshot_modifier_inputs,
+)
 from .socket_utils import (
     normalize_socket_type,
     attempt_create_item,
@@ -1998,7 +2003,13 @@ def _import_node_tree_gen(
 
     # Get or create the node tree
     ng = bpy.data.node_groups.get(name)
+    mod_snapshots = None
+    old_iface_items = None
     if ng:
+        # Modifier inputs are keyed by interface-socket identifier; the
+        # rebuild below renumbers them, so capture the values first and
+        # restore them once the new interface exists.
+        mod_snapshots, old_iface_items = snapshot_modifier_inputs(ng)
         for node in ng.nodes:
             ng.nodes.remove(node)
         if hasattr(ng, 'interface'):
@@ -2281,6 +2292,16 @@ def _import_node_tree_gen(
     # verifies all Menu interface items and node-level Menu sockets,
     # and attempts to set any remaining default_values.
     _final_menu_defaults_pass(ng, data, interface_map, tracker)
+
+    # --- Step 7: Modifier inputs surviving the interface rebuild ---
+    if mod_snapshots:
+        remap = build_identifier_remap(old_iface_items, ng)
+        restored = restore_modifier_inputs(mod_snapshots, remap)
+        if restored:
+            tracker.record(
+                f"Restored {restored} modifier input(s) after rebuilding "
+                f"'{name}'", level="DEBUG",
+            )
 
     print(f"[OK] Reconstruction of node '{name}' completed.")
     yield (1.0, "done")

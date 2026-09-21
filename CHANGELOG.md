@@ -85,6 +85,27 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **NODES modifier inputs were silently reset on every Pull/import.**
+  Blender 5.2 stores modifier inputs keyed by the referenced tree's
+  interface-socket identifier; rebuilding a group renumbers the
+  interface, which orphaned the stored values and reset every configured
+  input to its default (e.g. a meshing chain dropping from 18 to 8
+  patches while the rebuilt graph itself was 100% faithful).  The
+  importer now snapshots every modifier that references the tree being
+  rebuilt — before the interface is cleared — and restores the values
+  through an identifier remap built by `(name, in_out)` matching
+  (`modifier_utils.py`); this covers Pull, batch pull, single-group
+  import and package import in one place.  The package import path
+  (`_apply_modifier_inputs`) also translates the serialized keys
+  (export-time identifiers) through the rebuild's interface map instead
+  of assuming they still match, and no longer depends on the tree being
+  built in the same order.  Menu inputs are plain integer indices (they
+  were already serialized) and are restored by the same pass.  The 5.1
+  legacy ID-property path (where Blender itself renames the stored keys)
+  is preserved as a harmless no-op.  Regression:
+  `tests/test_modifier_inputs_pull.py` (15 checks on 5.2 / 14 on 5.1,
+  in the release gate) — verified to fail (A5-A7) with the restore
+  disabled.
 - **Menu socket defaults on nodes were never serialized.** `MENU` was
   listed in `_NON_SCALAR_SOCKET_TYPES`, so `serialize_node` skipped
   `default_value` on every `NodeSocketMenu` input/output.  Per-node

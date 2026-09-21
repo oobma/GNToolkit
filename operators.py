@@ -21,42 +21,15 @@ from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
 from .importer import _import_node_tree_gen
+from .modifier_utils import (
+    iter_modifier_sockets,
+    modifier_input_is_attribute,
+    modifier_uses_rna_inputs,
+    remap_input_keys,
+)
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
 from .sync_manager import SyncManager
-
-
-def _modifier_uses_rna_inputs(mod) -> bool:
-    """True when the NODES modifier stores its inputs as RNA (Blender 5.2+)."""
-    return hasattr(mod, "properties") and hasattr(mod.properties, "inputs")
-
-
-def _modifier_input_is_attribute(raw_type) -> bool:
-    """Interpret a 5.2 modifier input ``type`` value (string or enum index).
-
-    A fresh input reads back the enum index of its default (VALUE); a
-    written value round-trips as the string.
-    """
-    if isinstance(raw_type, str):
-        return raw_type == "ATTRIBUTE"
-    return raw_type != 1
-
-
-def _iter_modifier_sockets(collection):
-    """Yield the socket subgroups of a 5.2 modifier inputs/outputs wrapper.
-
-    ``dir()`` may list identifiers that the ``[]`` accessor refuses to
-    resolve; every entry is resolved defensively and bad ones skipped.
-    """
-    for attr in dir(collection):
-        if not attr.startswith("Socket"):
-            continue
-        try:
-            item = collection[attr]
-        except (KeyError, TypeError):
-            continue
-        if item is not None:
-            yield attr, item
 
 
 def _serialize_modifier_inputs(mod) -> dict:
@@ -66,24 +39,24 @@ def _serialize_modifier_inputs(mod) -> dict:
     ``Socket_8_use_attribute``, ``Socket_8_attribute_name``) so packages
     round-trip identically on every engine.
     """
-    if _modifier_uses_rna_inputs(mod):
+    if modifier_uses_rna_inputs(mod):
         data = {}
         props = mod.properties
-        for attr, item in _iter_modifier_sockets(props.inputs):
+        for attr, item in iter_modifier_sockets(props.inputs):
             try:
                 raw_val = item["value"]
             except (KeyError, TypeError):
                 continue  # non-value sockets (Geometry, Menu, ...) have no value
             data[attr] = clean_value(raw_val)
             try:
-                data[attr + "_use_attribute"] = _modifier_input_is_attribute(item["type"])
+                data[attr + "_use_attribute"] = modifier_input_is_attribute(item["type"])
             except (KeyError, TypeError):
                 data[attr + "_use_attribute"] = False
             try:
                 data[attr + "_attribute_name"] = item["attribute_name"]
             except (KeyError, TypeError):
                 data[attr + "_attribute_name"] = ""
-        for attr, item in _iter_modifier_sockets(props.outputs):
+        for attr, item in iter_modifier_sockets(props.outputs):
             try:
                 data[attr + "_attribute_name"] = item["attribute_name"]
             except (KeyError, TypeError):
@@ -92,9 +65,15 @@ def _serialize_modifier_inputs(mod) -> dict:
     return {k: clean_value(v) for k, v in dict(mod).items()}
 
 
-def _apply_modifier_inputs(mod, inputs: dict) -> None:
-    """Apply a modifier's serialized inputs (legacy or RNA path)."""
-    if not _modifier_uses_rna_inputs(mod):
+def _apply_modifier_inputs(mod, inputs: dict, identifier_map: dict | None = None) -> None:
+    """Apply a modifier's serialized inputs (legacy or RNA path).
+
+    *identifier_map* translates the serialized keys (identifiers at export
+    time) to the rebuilt tree's current identifiers — the interface is
+    renumbered on every import.
+    """
+    inputs = remap_input_keys(inputs, identifier_map)
+    if not modifier_uses_rna_inputs(mod):
         for k, v in inputs.items():
             try:
                 mod[k] = unclean_value(v)
@@ -102,8 +81,8 @@ def _apply_modifier_inputs(mod, inputs: dict) -> None:
                 pass
         return
     props = mod.properties
-    input_ids = {attr for attr, _ in _iter_modifier_sockets(props.inputs)}
-    output_ids = {attr for attr, _ in _iter_modifier_sockets(props.outputs)}
+    input_ids = {attr for attr, _ in iter_modifier_sockets(props.inputs)}
+    output_ids = {attr for attr, _ in iter_modifier_sockets(props.outputs)}
     for k, v in inputs.items():
         try:
             if k.endswith("_use_attribute"):
@@ -477,7 +456,10 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                     ng = bpy.data.node_groups.get(m["node_group"])
                     if ng:
                         mod.node_group = ng
-                _apply_modifier_inputs(mod, m.get("inputs", {}))
+                _apply_modifier_inputs(
+                    mod, m.get("inputs", {}),
+                    self.group_interface_maps.get(m.get("node_group")),
+                )
 
     def modal(self, context, event):
         if event.type == 'ESC':
