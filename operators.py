@@ -328,6 +328,7 @@ def load_package_sources(filepath: str) -> tuple[dict, list]:
 class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
     bl_label = "Import JSON Package"
+    bl_options = {'REGISTER', 'UNDO'}
     bl_description = ("Recreate all Geometry Nodes groups (and modifiers) from a JSON package — "
                       "or pick any file inside a folder export ('Export package' with folder "
                       "structure) to recreate its NodeGroups/Modifiers folders; "

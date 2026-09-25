@@ -105,6 +105,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Package import was not undoable as a single step.** `GN_OT_ImportBatchJSON`
+  ("Import Package/Folder") mutated `bpy.data` from its modal timer without
+  declaring `bl_options = {'UNDO'}`, so the first Ctrl+Z after an import
+  restored the last registered undo step — which could predate the import and
+  silently roll back user work along with it. It now declares
+  `{'REGISTER', 'UNDO'}`: Blender pushes the undo event when the modal returns
+  `FINISHED`, making the whole import (groups + modifiers, including "Update
+  existing groups") one undoable/redoable step; ESC/cancel does not push and
+  headless/background runs are unaffected. The sync operators (Pull, batch
+  pull, picker import) already had `UNDO`.
 - **NODES modifier inputs were silently reset on every Pull/import.**
   Blender 5.2 stores modifier inputs keyed by the referenced tree's
   interface-socket identifier; rebuilding a group renumbers the
