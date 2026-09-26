@@ -147,6 +147,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Native crash when rebuilding a group whose modifiers carry array
+  inputs (5.2).** `IDPropertyArray` values captured by the modifier-input
+  snapshot are views into the modifier's id-properties storage, which is
+  freed when the interface is rebuilt; restoring the captured view crashed
+  Blender with an `EXCEPTION_ACCESS_VIOLATION` (reproduced in-place on the
+  582-group reference project). Snapshots now materialize arrays to tuples
+  (and drop dangling datablock pointers), so the values survive the
+  rebuild and the restore can never write a stale view. Regression:
+  `tests/test_modifier_array_restore.py` (3 checks on 5.2; skips on legacy
+  pre-5.2 modifier inputs).
 - **Package imports rebuild groups in dependency order (children first).**
   Rebuilding an existing project in arbitrary order resolves parent links
   through stale child-socket identifiers: with overlapping identifiers the

@@ -68,6 +68,42 @@ def _tree_interface_sockets(tree):
             yield (ident, getattr(sock, "name", ""), in_out)
 
 
+def _is_dangling(value) -> bool:
+    """True for a bpy ID value whose pointer no longer resolves.
+
+    Writing such a value back onto a modifier input crashes Blender natively
+    (EXCEPTION_ACCESS_VIOLATION in the restore, reproduced on the reference
+    project), so snapshots skip these values entirely.
+    """
+    if not isinstance(value, bpy.types.ID):
+        return False
+    try:
+        return not value.is_valid
+    except AttributeError:
+        return False
+    except Exception:
+        return True
+
+
+def _safe_snapshot_value(value):
+    """Materialize a captured modifier-input value into plain Python data.
+
+    IDPropertyArray views keep a pointer into the modifier's id-properties
+    storage, which is freed when the interface is rebuilt; the captured view
+    then reads garbage and writing it back crashes Blender natively.  Arrays
+    are therefore copied to tuples at capture time (the real values), and
+    dangling ID pointers are dropped to None.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, bpy.types.ID):
+        return None if _is_dangling(value) else value
+    try:
+        return tuple(value)
+    except Exception:
+        return None
+
+
 def snapshot_modifier_inputs(tree):
     """Capture every NODES modifier that references *tree*.
 
@@ -91,6 +127,7 @@ def snapshot_modifier_inputs(tree):
                         value = item["value"]
                     except (KeyError, TypeError):
                         pass
+                    value = _safe_snapshot_value(value)
                     try:
                         raw_type = item["type"]
                     except (KeyError, TypeError):
@@ -107,7 +144,8 @@ def snapshot_modifier_inputs(tree):
                     legacy = dict(mod)
                 except (TypeError, RuntimeError):
                     legacy = {}
-                entries = [(key, val, None, None) for key, val in legacy.items()]
+                entries = [(key, _safe_snapshot_value(val), None, None)
+                           for key, val in legacy.items()]
             if entries:
                 snapshots.append((mod, entries))
     return snapshots, old_items
@@ -154,7 +192,7 @@ def restore_modifier_inputs(snapshots, remap) -> int:
                         item["type"] = raw_type
                     if attribute_name is not None:
                         item["attribute_name"] = attribute_name
-                    if value is not None:
+                    if value is not None and not _is_dangling(value):
                         item["value"] = value
                     restored += 1
                 except (TypeError, AttributeError, ValueError, RuntimeError, KeyError):
