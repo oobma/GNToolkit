@@ -117,6 +117,24 @@ All notable changes to this project are documented in this file.
   groups in ~2.5 s. The description now centers the semantics — sync is
   one application of the change/conflict layer — while the supported
   scope stays explicit: Geometry Nodes groups today.
+- **Project audits: impact, duplicate logic and health (`audit.py`).**
+  Pure-Python audit layer over the data the addon already stores,
+  exposed through `gnt_check`:
+  - `--impact <group>` — reverse dependency graph + transitive closure
+    over the metadata's `depends_on` uuids: *what breaks if I change this
+    group?* Accepts a group name or uid, cycle-safe, reports direct vs
+    transitive dependents. Reference: a utility group with 209 dependents
+    in the 582-group project.
+  - `--duplicates` — content hash that ignores group identity (the group
+    name and the name-derived `node_tool_idname`) so the same logic under
+    two names is found deterministically.
+  - `--health` — consolidated JSON-side report: unreadable JSONs, git
+    conflict markers (so the checker does not die on a conflicted file),
+    missing files recorded in the metadata, `depends_on` references to
+    untracked groups, and duplicate buckets.
+  - All modes support `--json`; `--health --strict` exits 2 on
+    unreadable/conflicted files. Pure tests: `tests/test_audit.py`
+    (21 checks, no bpy) — in the release gate.
 
 ### Fixed
 

@@ -84,7 +84,19 @@ python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --json
 
 # Validate that every file parses and hashes (no baseline needed)
 python gnt_check.py NodeGroups/ --strict
+
+# Audit the project: dependency impact, duplicate logic, JSON health
+python gnt_check.py --impact "My Group" --baseline project.blend.gntsync
+python gnt_check.py NodeGroups/ --duplicates
+python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --health
 ```
+
+Audits answer the project questions that come before a change:
+**impact** (reverse dependency graph + transitive closure — *what breaks
+if I touch this group?*), **duplicates** (content fingerprints that
+ignore group identity — *is this logic copied under two names?*) and
+**health** (unreadable or conflicted JSONs, missing files, references to
+untracked groups). All support `--json`.
 
 Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
 errors. The canonical hashes are the same ones the addon computes inside

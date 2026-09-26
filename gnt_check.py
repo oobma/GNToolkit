@@ -9,6 +9,11 @@ opening Blender.  Use it in git hooks, CI or a release gate.
 Usage:
     python gnt_check.py <folder_or_package> [--baseline <file>] [--json] [--strict]
 
+Audit modes (same pure-Python core, no Blender):
+    python gnt_check.py --impact "<group>" --baseline project.blend.gntsync
+    python gnt_check.py <folder> --duplicates
+    python gnt_check.py <folder> [--baseline project.blend.gntsync] --health
+
 Baseline sources:
     * a .gntsync sidecar next to a .blend (paths relative to the sidecar dir)
     * a flat JSON mapping group name -> canonical hash
@@ -51,6 +56,13 @@ def _load_hash_utils():
     sys.modules["gnt_core"] = pkg
     _load_pure("gnt_core.constants", os.path.join(_ROOT, "constants.py"))
     return _load_pure("gnt_core.hash_utils", os.path.join(_ROOT, "hash_utils.py"))
+
+
+def _load_audit():
+    """Load audit.py (pure) after the synthetic package exists."""
+    if "gnt_core.hash_utils" not in sys.modules:
+        _load_hash_utils()
+    return _load_pure("gnt_core.audit", os.path.join(_ROOT, "audit.py"))
 
 
 def _is_gntsync(path: str) -> bool:
@@ -174,28 +186,146 @@ def _selftest() -> int:
     return 0 if ok else 1
 
 
+def _load_metadata(path: str):
+    """Load a .gntsync sidecar (requires tracked_groups); None otherwise."""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return None
+    if isinstance(data, dict) and isinstance(data.get("tracked_groups"), dict):
+        return data
+    return None
+
+
+def run_impact(baseline_path: str, target_name: str, as_json: bool) -> int:
+    if not baseline_path:
+        print("error: --impact requires --baseline (a .gntsync sidecar)")
+        return 2
+    metadata = _load_metadata(baseline_path)
+    if metadata is None:
+        print("error: baseline is not a .gntsync sidecar with tracked_groups")
+        return 2
+    audit = _load_audit()
+    result = audit.impact(metadata, target_name)
+    if result is None:
+        print(f"error: group not tracked: {target_name}")
+        return 2
+    if as_json:
+        print(json.dumps(result))
+        return 0
+    direct_uids = {e["uid"] for e in result["direct"]}
+    print(f'Impact of "{result["name"]}" ({result["uid"]}):')
+    print(f'  {len(result["direct"])} direct, '
+          f'{len(result["transitive"])} total dependents')
+    for e in result["transitive"]:
+        tag = "direct" if e["uid"] in direct_uids else "transitive"
+        print(f'  [{tag}] {e["name"]}')
+    return 0
+
+
+def run_duplicates(folder: str, as_json: bool) -> int:
+    audit = _load_audit()
+    records = [r for r in audit.scan_folder(folder)
+               if r["error"] is None and r["name"]]
+    hashed = [{"name": r["name"],
+               "hash": audit.content_hash_from_json_data(r["data"])}
+              for r in records]
+    buckets = audit.duplicates_from_records(hashed)
+    if as_json:
+        print(json.dumps(buckets))
+        return 0
+    if not buckets:
+        print(f"duplicates: none ({len(records)} groups checked)")
+        return 0
+    print(f"duplicates: {len(buckets)} bucket(s) with identical logic")
+    for b in buckets:
+        print(f'  [{len(b["names"])} groups] {b["hash"][:12]}...')
+        for n in b["names"]:
+            print(f'      {n}')
+    return 0
+
+
+def run_health(folder: str | None, baseline_path: str | None,
+               as_json: bool, strict: bool) -> int:
+    audit = _load_audit()
+    metadata = None
+    metadata_dir = None
+    if baseline_path:
+        metadata = _load_metadata(baseline_path)
+        if metadata is None:
+            print("error: baseline is not a .gntsync sidecar with tracked_groups")
+            return 2
+        metadata_dir = os.path.dirname(os.path.abspath(baseline_path))
+    if not folder and metadata is None:
+        print("error: --health needs a target folder and/or a .gntsync baseline")
+        return 2
+    report = audit.health(folder, metadata, metadata_dir)
+    if as_json:
+        print(json.dumps(report))
+    else:
+        print(f'health: {report["files"]} files, {report["groups"]} groups')
+        print(f'  unreadable: {len(report["unreadable"])} · '
+              f'conflicts: {len(report["conflicts"])} · '
+              f'duplicate buckets: {len(report["duplicates"])} · '
+              f'missing files: {len(report["missing_files"])} · '
+              f'external refs: {len(report["external_refs"])}')
+        for u in report["unreadable"]:
+            print(f"  [UNREADABLE] {u}")
+        for c in report["conflicts"]:
+            print(f"  [CONFLICT]   {c}")
+        for b in report["duplicates"]:
+            print(f'  [DUP] {len(b["names"])} groups: {", ".join(b["names"])}')
+        for m in report["missing_files"]:
+            print(f'  [MISSING] {m["name"]}  ({m["path"]})')
+        for e in report["external_refs"]:
+            print(f'  [EXTERNAL] {e["name"]} -> '
+                  f'{len(e["missing_uuids"])} untracked ref(s)')
+    hard = bool(report["unreadable"] or report["conflicts"])
+    return 2 if (strict and hard) else 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="gnt_check",
-        description="Headless JSON-side status check for GNToolkit (no Blender needed).")
-    ap.add_argument("target", nargs="?", help="folder of per-group JSONs or a package file")
+        description="Headless JSON-side check and audits for GNToolkit "
+                    "(no Blender needed).")
+    ap.add_argument("target", nargs="?",
+                    help="folder of per-group JSONs or a package file")
     ap.add_argument("--baseline", help=".gntsync sidecar or flat {name: hash} JSON")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--strict", action="store_true",
                     help="exit 2 if any file cannot be parsed")
     ap.add_argument("--selftest", action="store_true",
                     help="verify the pure-Python hasher and exit")
+    ap.add_argument("--impact", metavar="GROUP",
+                    help="report direct/transitive dependents of GROUP "
+                         "(requires --baseline)")
+    ap.add_argument("--duplicates", action="store_true",
+                    help="report groups with identical logic (content hash)")
+    ap.add_argument("--health", action="store_true",
+                    help="consolidated JSON-side health report")
     args = ap.parse_args(argv)
 
     if args.selftest:
         return _selftest()
-    if not args.target:
-        ap.error("a target folder/file is required (or use --selftest)")
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
+
+    if args.impact:
+        return run_impact(args.baseline, args.impact, args.json)
+    if args.duplicates:
+        if not args.target:
+            ap.error("--duplicates requires a target folder")
+        return run_duplicates(args.target, args.json)
+    if args.health:
+        return run_health(args.target, args.baseline, args.json, args.strict)
+
+    if not args.target:
+        ap.error("a target folder/file is required (or use --selftest)")
 
     report, has_changes, hard_fail = check(args.target, args.baseline, args.strict)
 
