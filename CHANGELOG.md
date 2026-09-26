@@ -102,6 +102,21 @@ All notable changes to this project are documented in this file.
 - **Import diagnostics**: skipped links (endpoint not in the node map)
   are recorded as DEBUG records, and the wiring WARNs include the
   resolution flags.
+- **Headless JSON-side status check (`gnt_check.py`).** The JSON side is
+  now usable without Blender: `python gnt_check.py <folder-or-package>
+  [--baseline project.blend.gntsync | flat.json]` hashes every group with
+  the same canonical hasher the addon uses inside Blender and reports
+  synced / changed / missing groups (exit 0/1/2, `--json` for machines,
+  `--strict` to fail on unreadable files, `--selftest` to prove the
+  hasher runs without bpy). Baseline accepts a `.gntsync` sidecar (paths
+  resolved against its directory) or a flat `{group: hash}` JSON. The
+  module loads `hash_utils`/`constants` through a synthetic package, so
+  no addon module is touched and `bpy` is never imported. The release
+  gate gained a `gnt_check` step (selftest + optional folder validation),
+  and the README documents the CI/hook workflow. Reference run: 582
+  groups in ~2.5 s. The product description (README, `bl_info`, module
+  docstring) now presents the addon as version control for node trees —
+  sync is one application of the change/conflict semantics.
 
 ### Fixed
 

@@ -1,6 +1,6 @@
 # GNToolkit
 
-**Git-style version control for Blender Geometry Nodes.**
+**Git-style version control for Blender node trees.**
 
 Node groups are serialized into deterministic JSON files — the DNA, or
 source of truth — while the .blend stays your working cache (RNA).
