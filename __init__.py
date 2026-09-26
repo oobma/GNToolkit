@@ -2,10 +2,11 @@
 """
 GNToolkit — Blender Add-on Package
 
-Git-style version control for Geometry Nodes: node groups are serialized
-to deterministic JSON (the DNA — source of truth) while the .blend stays
-a working cache (RNA), with per-group sync statuses, dependency-aware
-import and a Git collaboration loop.
+Git-style version control for node trees: node groups are serialized to
+deterministic JSON (the DNA — source of truth) while the .blend stays a
+working cache (RNA), with per-group sync statuses, dependency-aware
+import and a Git collaboration loop. The JSON side is pure Python, so the
+same status checks run headless (gnt_check) without opening Blender.
 """
 
 import bpy
@@ -28,7 +29,7 @@ bl_info = {
     "version": (0, 2, 4),
     "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GN Tools",
-    "description": "Git-style version control for Geometry Nodes: track node groups between .blend and JSON, commit, pull and resolve conflicts.",
+    "description": "Git-style version control for node trees: canonical JSON (DNA) vs .blend (RNA), per-group statuses, conflicts, Git collaboration, and pure-Python headless checks (gnt_check).",
     "category": "Node",
 }
 

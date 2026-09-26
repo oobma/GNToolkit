@@ -8,6 +8,12 @@ GNToolkit watches both sides: canonical change detection, per-group sync
 statuses, dependency-aware import and a commit/pull/conflict loop that
 plugs into Git, all from inside Blender.
 
+The status layer also runs **headless**: the JSON side is pure Python, so
+the same canonical hashes the addon uses in Blender can be checked without
+opening it — `python gnt_check.py <folder> --baseline <project>.gntsync`
+reports every synced/changed/missing group in seconds. Use it in a git
+hook, a CI pipeline or a release gate.
+
 ![Blender](https://img.shields.io/badge/Blender-4.2%E2%80%935.2-orange)
 ![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
 
@@ -49,6 +55,7 @@ plugs into Git, all from inside Blender.
 | Dependencies | Captured at export time | Tracked graph: transitive closure, dependency-first rebuild, reverse edges |
 | Project layer | Node trees | Node trees + modifiers + object usage |
 | State | None | Synced / Edited Locally / Changed in JSON / Conflict / Missing / ... |
+| Environment | Blender | Blender **and** plain Python — headless checks in CI/hooks |
 | Collaboration | Share files | Commit, pull, resolve conflicts, Git transport, per-group review |
 
 Snapshot tools are great at moving and sharing groups; GNToolkit answers
@@ -62,6 +69,27 @@ the question that comes after: *is the project versioned, and in sync?*
   JSON diffs are reviewable, the .blend is never merged.
 - Anyone building a reusable library of node groups that needs to be
   tracked, documented and shared as plain files.
+
+## Headless checks — no Blender required
+
+The JSON side of GNToolkit is pure Python (no `bpy`), so status checks can
+run anywhere a Python interpreter exists:
+
+```bash
+# Check a folder export against a project's .gntsync sidecar
+python gnt_check.py NodeGroups/ --baseline project.blend.gntsync
+
+# Machine-readable output for CI
+python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --json
+
+# Validate that every file parses and hashes (no baseline needed)
+python gnt_check.py NodeGroups/ --strict
+```
+
+Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
+errors. The canonical hashes are the same ones the addon computes inside
+Blender, so a hook and a `Refresh Status` always agree. The full status
+check of a 582-group project runs in ~3 seconds.
 
 ## Features
 
