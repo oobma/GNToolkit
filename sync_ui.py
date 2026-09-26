@@ -13,6 +13,7 @@ import os
 
 import bpy
 
+from . import audit
 from .geometry_validator import (
     IssueType,
     IssueSeverity,
@@ -337,6 +338,23 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             layout.label(text="No groups tracked", icon='INFO')
             return
 
+        # Project audit (works without a status refresh)
+        audit_state = context.scene.gnt_audit_state
+        audit_box = layout.box()
+        audit_head = audit_box.row(align=True)
+        audit_head.label(text="Audit", icon='VIEWZOOM')
+        audit_head.operator("gn.audit_project", text="Run", icon='PLAY')
+        audit_head.operator("gn.audit_clear", text="", icon='X')
+        if audit_state.summary:
+            audit_box.label(text=audit_state.summary, icon='INFO')
+        for item in audit_state.details[:30]:
+            audit_box.label(text=item.text,
+                            icon=AUDIT_KIND_ICONS.get(item.kind, 'INFO'))
+        extra = len(audit_state.details) - 30
+        if extra > 0:
+            audit_box.label(text=f"... and {extra} more", icon='INFO')
+        layout.separator()
+
         has_cache = bool(sync_manager._status_cache)
         load_report = sync_manager.load_report
 
@@ -475,6 +493,152 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
 
         items.sort(key=lambda x: (x[3], x[2].value))
         return items
+
+
+# ---------------------------------------------------------------------------
+# Project audit (duplicates, JSON health, dependency impact)
+# ---------------------------------------------------------------------------
+
+AUDIT_KIND_ICONS = {
+    "duplicate": 'DUPLICATE',
+    "missing": 'ERROR',
+    "unreadable": 'ERROR',
+    "conflict": 'ERROR',
+    "external": 'LINK_BLEND',
+    "impact": 'FORWARD',
+}
+
+
+class GN_AuditItem(bpy.types.PropertyGroup):
+    """One audit finding (Scene.gnt_audit_state.details)."""
+    kind: bpy.props.StringProperty()
+    text: bpy.props.StringProperty()
+
+
+class GN_AuditState(bpy.types.PropertyGroup):
+    """Last project-audit report (Scene.gnt_audit_state)."""
+    summary: bpy.props.StringProperty()
+    details: bpy.props.CollectionProperty(type=GN_AuditItem)
+
+
+def _audit_add(state, kind: str, text: str) -> None:
+    item = state.details.add()
+    item.kind = kind
+    item.text = text
+
+
+class GN_OT_AuditProject(bpy.types.Operator):
+    """Audit the project: duplicate logic, JSON health, dependency impact."""
+
+    bl_idname = "gn.audit_project"
+    bl_label = "Run Project Audit"
+    bl_description = (
+        "Check every tracked JSON for duplicate logic, missing/unreadable/"
+        "conflicted files and untracked references, and report the "
+        "dependency impact of the selected group")
+    bl_options = {'REGISTER'}
+
+    group_name: bpy.props.StringProperty(
+        name="Group", default="",
+        description="Tracked group for the impact report (defaults to the "
+                    "active node editor tree)")
+
+    def execute(self, context):
+        state = context.scene.gnt_audit_state
+        state.summary = ""
+        state.details.clear()
+
+        metadata = sync_manager.metadata
+        tracked = metadata.get("tracked_groups", {})
+        if not tracked:
+            self.report({'INFO'}, "No tracked groups")
+            return {'FINISHED'}
+
+        blend_dir = sync_manager._blend_dir()
+        records = []
+        n_missing = n_unreadable = n_conflict = 0
+        for uid, info in tracked.items():
+            name = info.get("blend_name") or uid
+            json_path = resolve_json_path(info.get("json_path", ""), blend_dir)
+            if not json_path or not os.path.isfile(json_path):
+                n_missing += 1
+                _audit_add(state, "missing", f"{name} — file not found")
+                continue
+            data, err = audit.group_data_from_file(json_path, name)
+            if err == "conflict":
+                n_conflict += 1
+                _audit_add(state, "conflict", f"{name} — git merge markers")
+            elif err == "unreadable":
+                n_unreadable += 1
+                _audit_add(state, "unreadable", f"{name} — not valid UTF-8/JSON")
+            elif err == "missing-group":
+                n_missing += 1
+                _audit_add(state, "missing",
+                           f"{name} — group not found inside "
+                           f"{os.path.basename(json_path)}")
+            else:
+                records.append({"name": name,
+                                "hash": audit.content_hash_from_json_data(data)})
+
+        buckets = audit.duplicates_from_records(records)
+        for b in buckets:
+            _audit_add(state, "duplicate",
+                       f'{len(b["names"])} groups with identical logic: '
+                       + ", ".join(b["names"]))
+
+        ext = audit.external_refs(metadata)
+        for e in ext:
+            _audit_add(state, "external",
+                       f'{e["name"]} — {len(e["missing_uuids"])} '
+                       f'untracked reference(s)')
+
+        target = self.group_name.strip()
+        if not target:
+            tree = _get_active_tree(context)
+            if tree is not None:
+                uid = find_uuid_for_tree(tree, metadata)
+                if uid:
+                    target = metadata["tracked_groups"].get(
+                        uid, {}).get("blend_name", "")
+        if target:
+            imp = audit.impact(metadata, target)
+            if imp is None:
+                _audit_add(state, "impact", f"{target} — not tracked")
+            else:
+                head = ", ".join(e["name"] for e in imp["direct"][:4])
+                more = len(imp["direct"]) - 4
+                suffix = f" — {head}" if head else ""
+                if more > 0:
+                    suffix += f" (+{more} more)"
+                _audit_add(state, "impact",
+                           f'{imp["name"]}: {len(imp["direct"])} direct, '
+                           f'{len(imp["transitive"])} total dependents{suffix}')
+
+        state.summary = (
+            f'{len(buckets)} duplicate bucket(s) · {len(ext)} external ref(s) '
+            f'· {n_missing} missing · {n_unreadable} unreadable '
+            f'· {n_conflict} conflict(s)')
+
+        n_findings = len(state.details)
+        if n_findings:
+            self.report({'WARNING'}, f"Audit: {n_findings} finding(s)")
+        else:
+            self.report({'INFO'}, "Audit: no findings")
+        return {'FINISHED'}
+
+
+class GN_OT_AuditClear(bpy.types.Operator):
+    """Clear the audit report."""
+
+    bl_idname = "gn.audit_clear"
+    bl_label = "Clear Audit Report"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        state = context.scene.gnt_audit_state
+        state.summary = ""
+        state.details.clear()
+        return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
@@ -896,4 +1060,8 @@ classes = (
     GN_OT_RevealJSONPath,
     GN_OT_ValidateGeometry,
     GN_SyncPrefs,
+    GN_AuditItem,
+    GN_AuditState,
+    GN_OT_AuditProject,
+    GN_OT_AuditClear,
 )

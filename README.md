@@ -98,6 +98,11 @@ ignore group identity — *is this logic copied under two names?*) and
 **health** (unreadable or conflicted JSONs, missing files, references to
 untracked groups). All support `--json`.
 
+The same audits are available inside Blender: the **Sync Issues** panel
+has an **Audit** section (Run / Clear) that reports duplicates, JSON
+health and the dependency impact of the group selected in the Node
+Editor.
+
 Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
 errors. The canonical hashes are the same ones the addon computes inside
 Blender, so a hook and a `Refresh Status` always agree. The full status

@@ -199,6 +199,31 @@ def scan_folder(folder: str) -> list:
     return records
 
 
+def group_data_from_file(path: str, group_name: str | None = None):
+    """Return (data, error) for one group inside a JSON file.
+
+    error: None | "unreadable" | "conflict" | "missing-group".
+    """
+    text = _read_text(path)
+    if text is None:
+        return None, "unreadable"
+    if _CONFLICT_MARKER in text:
+        return None, "conflict"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None, "unreadable"
+    if not isinstance(data, dict):
+        return None, "unreadable"
+    if data.get("type") == "GN_UNIFIED_PACKAGE":
+        groups = data.get("node_groups") or {}
+        gdata = groups.get(group_name) if group_name else None
+        if gdata is None:
+            return None, "missing-group"
+        return gdata, None
+    return data, None
+
+
 def external_refs(metadata) -> list:
     """Tracked groups whose depends_on points outside the tracked set."""
     tracked = _tracked(metadata)

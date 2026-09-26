@@ -134,7 +134,16 @@ All notable changes to this project are documented in this file.
     untracked groups, and duplicate buckets.
   - All modes support `--json`; `--health --strict` exits 2 on
     unreadable/conflicted files. Pure tests: `tests/test_audit.py`
-    (21 checks, no bpy) — in the release gate.
+    (26 checks, no bpy) — in the release gate.
+  - **In the addon**, the Sync Issues panel gains an **Audit** box
+    (Run / Clear) that fills a Scene-level report (`Scene.gnt_audit_state`,
+    same pattern as the import picker): summary line plus one entry per
+    finding (duplicate buckets, untracked references, missing/unreadable/
+    conflicted files, and the impact of the group selected in the Node
+    Editor — or an explicit group passed to `gn.audit_project`). JSONs are
+    read through `audit.group_data_from_file`, so a conflicted file is
+    reported instead of crashing the audit. UI test:
+    `tests/test_audit_ui.py` (8 checks on 5.1 and 5.2) — in the gate.
 
 ### Fixed
 
