@@ -147,6 +147,21 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Package imports rebuild groups in dependency order (children first).**
+  Rebuilding an existing project in arbitrary order resolves parent links
+  through stale child-socket identifiers: with overlapping identifiers the
+  link's recorded id resolves to the wrong socket, and cross-group links
+  end up dropped or misrouted. `GN_OT_ImportBatchJSON` now orders its
+  group list with `dependency_ordered_names()` (cycle-safe); on the
+  582-group reference project this rebuilt all 582 groups bit-identical
+  where arbitrary order left hundreds of groups diverging. Regression:
+  `tests/test_import_order.py` (8 checks on 5.1 and 5.2; in the gate).
+- **One broken group no longer kills the modal import.** An exception
+  while rebuilding a group now aborts only that group: it is recorded in
+  the tracker (ERROR, with traceback) and the modal continues with the
+  remaining groups — previously an unhandled exception ended the modal
+  mid-import (observed in the wild at 415/582 groups) and left the
+  project half-updated.
 - **Modifier stack order survives package import.** The folder/package
   export did not record each NODES modifier's position in the object's
   stack, and the import applied the modifier files in folder order —

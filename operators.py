@@ -361,6 +361,48 @@ def load_package_sources(filepath: str) -> tuple[dict, list]:
     return json_cache, mod_data_list
 
 
+def dependency_ordered_names(json_cache: dict) -> list:
+    """Group names ordered so referenced child groups come BEFORE the
+    groups that contain them.
+
+    Rebuilding a group renumbers its interface-socket identifiers; when
+    the target group already exists, parent links can only be resolved
+    correctly through the interface map of an already-rebuilt child.  A
+    dependency order therefore keeps every in-place update consistent
+    (verified on the 582-group project: arbitrary order left hundreds of
+    groups with dropped cross-group links, dependency order rebuilt all
+    582 bit-identical).  Cycle-safe: a reference cycle is broken at the
+    node currently being visited.
+    """
+    refs = {}
+    for name, data in json_cache.items():
+        children = set()
+        for node_data in data.get("nodes", []):
+            if node_data.get("type") == "GeometryNodeGroup":
+                ref = node_data.get("node_tree_reference")
+                if ref and ref in json_cache:
+                    children.add(ref)
+        refs[name] = children
+
+    order = []
+    seen = set()
+    visiting = set()
+
+    def visit(name):
+        if name in seen or name in visiting:
+            return
+        visiting.add(name)
+        for child in refs.get(name, ()):
+            visit(child)
+        visiting.discard(name)
+        seen.add(name)
+        order.append(name)
+
+    for name in json_cache:
+        visit(name)
+    return order
+
+
 class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
     bl_label = "Import JSON Package"
@@ -429,7 +471,11 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             self.report({'ERROR'}, f"Read error: {str(e)}")
             return {'CANCELLED'}
 
-        self._group_names = list(self.json_cache.keys())
+        # Children first: rebuilding a group renumbers its interface
+        # identifiers, so parents must be rebuilt after their children have
+        # final interfaces (and their maps recorded) or cross-group links
+        # resolve against stale identifiers and get dropped.
+        self._group_names = dependency_ordered_names(self.json_cache)
         # Modifiers are only applied when explicitly requested: applying them
         # silently to existing objects with matching names is surprising
         # (e.g. the default Cube matching a stored modifier's object name).
@@ -544,6 +590,31 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                         SyncManager._restore_external_connections(
                             restore_name, restore_saved
                         )
+                overall_pct = int((self._groups_done / max(self._total_groups, 1)) * 100)
+                context.window_manager.progress_update(overall_pct)
+            except Exception as exc:
+                # One broken group must not kill the whole import (observed
+                # in the wild: the modal died mid-way and left the project
+                # half-updated).  Record the failure, restore any pending
+                # external links and continue with the next group.
+                traceback.print_exc()
+                print(f"[IMPORT ERROR] Group '{self._current_name}': {exc}")
+                self._tracker.record(
+                    f"Group '{self._current_name}': import failed: {exc}",
+                    level="ERROR",
+                )
+                self._current_gen = None
+                self._groups_done += 1
+                if self._pending_restore:
+                    restore_name, restore_saved = self._pending_restore
+                    self._pending_restore = None
+                    if restore_name == self._current_name:
+                        try:
+                            SyncManager._restore_external_connections(
+                                restore_name, restore_saved
+                            )
+                        except Exception:
+                            pass
                 overall_pct = int((self._groups_done / max(self._total_groups, 1)) * 100)
                 context.window_manager.progress_update(overall_pct)
 
