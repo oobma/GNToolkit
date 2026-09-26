@@ -114,9 +114,9 @@ All notable changes to this project are documented in this file.
   no addon module is touched and `bpy` is never imported. The release
   gate gained a `gnt_check` step (selftest + optional folder validation),
   and the README documents the CI/hook workflow. Reference run: 582
-  groups in ~2.5 s. The product description (README, `bl_info`, module
-  docstring) now presents the addon as version control for node trees —
-  sync is one application of the change/conflict semantics.
+  groups in ~2.5 s. The description now centers the semantics — sync is
+  one application of the change/conflict layer — while the supported
+  scope stays explicit: Geometry Nodes groups today.
 
 ### Fixed
 

@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "gn_toolkit"
 name = "GNToolkit"
 version = "0.2.4"
-tagline = "Git-style version control for Blender node trees"
+tagline = "Git-style version control for Geometry Nodes projects"
 maintainer = "oobma <ambooart@gmail.com>"
 
 type = "add-on"
