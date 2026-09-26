@@ -103,6 +103,10 @@ has an **Audit** section (Run / Clear) that reports duplicates, JSON
 health and the dependency impact of the group selected in the Node
 Editor.
 
+The checker is the standalone `gnt_check.py` script from this repository
+— fetch it at the same tag as your addon (the canonical hasher must
+match) and run it with any Python 3.10+ interpreter; no Blender needed.
+
 Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
 errors. The canonical hashes are the same ones the addon computes inside
 Blender, so a hook and a `Refresh Status` always agree. The full status
