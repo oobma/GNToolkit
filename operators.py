@@ -102,6 +102,39 @@ def _apply_modifier_inputs(mod, inputs: dict, identifier_map: dict | None = None
             pass
 
 
+def apply_modifier_tasks(mod_data_list: list, interface_maps: dict | None) -> int:
+    """Attach/update NODES modifiers from serialized tasks, in stack order.
+
+    Each task may carry the original stack position as ``order`` (position
+    in ``obj.modifiers`` at export time).  Tasks are applied grouped by
+    object and sorted by that order, so chained modifiers (A -> B) keep
+    their evaluation order; tasks from older packages without ``order``
+    keep their incoming order after the ordered ones.
+
+    Returns the number of tasks applied.
+    """
+    interface_maps = interface_maps or {}
+    tasks = sorted(mod_data_list,
+                   key=lambda m: (m.get("object", ""),
+                                  m.get("order", 1 << 30)))
+    applied = 0
+    for m in tasks:
+        obj = bpy.data.objects.get(m.get("object", ""))
+        if not obj:
+            continue
+        mod = obj.modifiers.get(m["modifier_name"])
+        if not mod:
+            mod = obj.modifiers.new(m["modifier_name"], 'NODES')
+        if m.get("node_group"):
+            ng = bpy.data.node_groups.get(m["node_group"])
+            if ng:
+                mod.node_group = ng
+        _apply_modifier_inputs(mod, m.get("inputs", {}),
+                               interface_maps.get(m.get("node_group")))
+        applied += 1
+    return applied
+
+
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_batch_json"
     bl_label = "Export JSON Package"
@@ -150,12 +183,13 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 mod_names = FilenameAllocator()
                 count_mod = 0
                 for obj in bpy.data.objects:
-                    for mod in obj.modifiers:
+                    for idx, mod in enumerate(obj.modifiers):
                         if mod.type == 'NODES':
                             data = {
                                 "object": obj.name,
                                 "modifier_name": mod.name,
                                 "node_group": mod.node_group.name if mod.node_group else None,
+                                "order": idx,
                                 "inputs": _serialize_modifier_inputs(mod),
                             }
                             stem = mod_names.allocate(f"{obj.name}_{mod.name}",
@@ -189,12 +223,13 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     master_data["node_groups"][tree.name] = serialize_node_tree(tree)
 
                 for obj in bpy.data.objects:
-                    for mod in obj.modifiers:
+                    for idx, mod in enumerate(obj.modifiers):
                         if mod.type == 'NODES':
                             master_data["modifiers"].append({
                                 "object": obj.name,
                                 "modifier_name": mod.name,
                                 "node_group": mod.node_group.name if mod.node_group else None,
+                                "order": idx,
                                 "inputs": _serialize_modifier_inputs(mod),
                             })
                 write_json_file(self.filepath, master_data, dump_args)
@@ -263,12 +298,13 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
 
         obj = context.active_object
         if obj:
-            for mod in obj.modifiers:
+            for idx, mod in enumerate(obj.modifiers):
                 if mod.type == 'NODES' and mod.node_group and mod.node_group.name == tree.name:
                     master_data["modifiers"].append({
                         "object": obj.name,
                         "modifier_name": mod.name,
                         "node_group": mod.node_group.name,
+                        "order": idx,
                         "inputs": _serialize_modifier_inputs(mod),
                     })
 
@@ -445,22 +481,9 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         return False
 
     def _process_modifiers(self, context):
-        """Apply modifier tasks synchronously (they are fast)."""
+        """Apply modifier tasks in stack order (they are fast)."""
         context.workspace.status_text_set("Importing: modifiers...")
-        for m in self._mod_data_list:
-            obj = bpy.data.objects.get(m.get("object", ""))
-            if obj:
-                mod = obj.modifiers.get(m["modifier_name"])
-                if not mod:
-                    mod = obj.modifiers.new(m["modifier_name"], 'NODES')
-                if m.get("node_group"):
-                    ng = bpy.data.node_groups.get(m["node_group"])
-                    if ng:
-                        mod.node_group = ng
-                _apply_modifier_inputs(
-                    mod, m.get("inputs", {}),
-                    self.group_interface_maps.get(m.get("node_group")),
-                )
+        apply_modifier_tasks(self._mod_data_list, self.group_interface_maps)
 
     def modal(self, context, event):
         if event.type == 'ESC':

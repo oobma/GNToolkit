@@ -147,6 +147,21 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Modifier stack order survives package import.** The folder/package
+  export did not record each NODES modifier's position in the object's
+  stack, and the import applied the modifier files in folder order —
+  chained modifiers (e.g. a convert-then-mesh chain) were attached
+  reversed and the evaluated result was different or empty in a freshly
+  recreated scene (verified on the 582-group project: 6 vertices with the
+  original order, 0 with the folder order). Modifier entries now carry
+  `order` (their index in `obj.modifiers`) and the import applies them
+  sorted per object via the new `apply_modifier_tasks()` helper;
+  packages exported by older versions (no `order`) keep the previous
+  behavior. New regression: `tests/test_modifier_order.py` (9 checks on
+  5.1 and 5.2 — order, evaluated geometry, an order-sensitivity control
+  and the legacy fallback; in the gate). Note: object transforms,
+  modifier enable/disable flags and mesh geometry still do not
+  round-trip by design.
 - **Package import was not undoable as a single step.** `GN_OT_ImportBatchJSON`
   ("Import Package/Folder") mutated `bpy.data` from its modal timer without
   declaring `bl_options = {'UNDO'}`, so the first Ctrl+Z after an import
