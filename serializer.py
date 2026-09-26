@@ -201,9 +201,13 @@ def serialize_node(node, skip_output_defaults: bool = False):
         }
         # Skip default_value for sockets that can't be meaningfully restored:
         # - NodeReroute: multi-type sockets, type depends on connections
+        # - Connected inputs: the link drives the value (and the importer
+        #   ignores connected defaults by design, so re-exports would show
+        #   phantom differences)
         # - Non-scalar types (Geometry, Object, etc.): can't assign scalar
         if (node.bl_idname != "NodeReroute"
                 and hasattr(inp, 'default_value')
+                and not getattr(inp, 'is_linked', False)
                 and inp.type not in _NON_SCALAR_SOCKET_TYPES
                 and not (inp.type == 'MENU' and not inp.default_value)):
             inp_data["default_value"] = clean_value(inp.default_value)
@@ -220,6 +224,7 @@ def serialize_node(node, skip_output_defaults: bool = False):
         if (node.bl_idname != "NodeReroute"
                 and not skip_output_defaults
                 and hasattr(out, 'default_value')
+                and not getattr(out, 'is_linked', False)
                 and out.type not in _NON_SCALAR_SOCKET_TYPES
                 and not (out.type == 'MENU' and not out.default_value)):
             out_data["default_value"] = clean_value(out.default_value)

@@ -650,15 +650,17 @@ def _configure_special_node(new_node, node_data: dict, node_type: str,
 
     elif node_type == "GeometryNodeMenuSwitch":
         if hasattr(new_node, 'enum_items'):
-            menu_names = []
-            if node_data.get("menu_items_data"):
+            # Recreate the items in the SERIALIZED SOCKET order (Item_*) so
+            # the item names and their value sockets keep their positions;
+            # menu_items_data is only a fallback (its order can differ from
+            # the sockets, which shuffled item names/values on rebuild).
+            menu_names = [
+                inp["name"]
+                for inp in node_data.get("inputs", [])
+                if inp.get("identifier", "").startswith("Item_")
+            ]
+            if not menu_names and node_data.get("menu_items_data"):
                 menu_names = [m["name"] for m in node_data["menu_items_data"]]
-            else:
-                menu_names = [
-                    inp["name"]
-                    for inp in node_data.get("inputs", [])
-                    if inp.get("identifier", "").startswith("Item_")
-                ]
 
             if menu_names:
                 _reset_collection(new_node.enum_items, tracker)
@@ -1092,6 +1094,7 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
         # "socket not found" warnings and the pointless write attempts.
         node_props = node_data.get("properties", {}) if isinstance(node_data.get("properties"), dict) else {}
 
+        name_counts = {}
         for inp_data in node_data.get("inputs", []):
             if not node_socket_is_active(node.bl_idname, node_props,
                                          inp_data.get("name", ""), inp_data.get("type", ""),
@@ -1103,13 +1106,16 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
             sid = inp_data.get("identifier")
             sname = inp_data.get("name")
             serialized_sid = sid
+            nidx = name_counts.get(sname, 0)
+            name_counts[sname] = nidx + 1
 
             if node.name + "_IN" in zone_socket_remap:
                 remapped = zone_socket_remap[node.name + "_IN"].get(sid)
                 if remapped:
                     sid = remapped
 
-            sock = find_robust_socket(node, node.inputs, sid, sname, inp_data.get("type"), dynamic_hint=is_dynamic)
+            sock = find_robust_socket(node, node.inputs, sid, sname, inp_data.get("type"),
+                                      dynamic_hint=is_dynamic, name_index=nidx)
 
             if sock:
                 if "hide" in inp_data and hasattr(sock, "hide"):
@@ -1202,19 +1208,23 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                     print(f"[DEFAULT_VALUE] Node '{node.name}': input socket '{sname}' "
                           f"(id={sid}) not found — default_value kept at Blender default")
 
+        out_name_counts = {}
         for out_data in node_data.get("outputs", []):
             prog = _tick()
             if prog:
                 yield prog
             sid = out_data.get("identifier")
             sname = out_data.get("name")
+            oidx = out_name_counts.get(sname, 0)
+            out_name_counts[sname] = oidx + 1
 
             if node.name + "_OUT" in zone_socket_remap:
                 remapped = zone_socket_remap[node.name + "_OUT"].get(sid)
                 if remapped:
                     sid = remapped
 
-            sock = find_robust_socket(node, node.outputs, sid, sname, out_data.get("type"), dynamic_hint=is_dynamic)
+            sock = find_robust_socket(node, node.outputs, sid, sname, out_data.get("type"),
+                                      dynamic_hint=is_dynamic, name_index=oidx)
             if sock:
                 if "hide" in out_data and hasattr(sock, "hide"):
                     sock.hide = out_data["hide"]
@@ -1730,16 +1740,22 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
         ref_name = node.node_tree.name
         ref_map = group_interface_maps.get(ref_name, {})
 
+        name_counts = {}
         for inp_data in node_data.get("inputs", []):
             raw_val = inp_data.get("default_value")
             if raw_val is None:
                 continue
             sname = inp_data.get("name", "")
             sid = inp_data.get("identifier", "")
+            nidx = name_counts.get(sname, 0)
+            name_counts[sname] = nidx + 1
             # Resolve the socket by its UNIQUE identifier first: socket
             # names are frequently duplicated on the referenced interface
             # (e.g. two "Switch Target End" sockets), and a name match
-            # would always hit the first one.
+            # would always hit the first one.  When the interface map is
+            # unavailable (in-place rebuilds), disambiguate duplicates by
+            # POSITION: the serialized record order matches the rebuild
+            # socket order, so the Nth record maps to the Nth match.
             sock = None
             if ref_map and sid:
                 mapped = ref_map.get(sid)
@@ -1748,9 +1764,11 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
                         (s for s in node.inputs if s.identifier == mapped), None,
                     )
             if sock is None:
-                sock = next(
-                    (s for s in node.inputs if s.name == sname), None,
-                )
+                cands = [s for s in node.inputs if s.name == sname]
+                if 0 <= nidx < len(cands):
+                    sock = cands[nidx]
+                elif cands:
+                    sock = cands[0]
             if sock is None:
                 continue
             if not hasattr(sock, 'default_value'):

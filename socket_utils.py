@@ -111,7 +111,8 @@ def attempt_create_item(coll, raw_type: str, name: str) -> bool:
 from .hash_utils import node_socket_is_active  # noqa: E402  (pure rule, shared with the canonical hash)
 
 
-def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hint=None, name_only=False):
+def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hint=None,
+                       name_only=False, name_index=None):
     """Search for a socket safely, evading identifier collisions.
 
     For volatile nodes (``dynamic_hint is True``), Blender recycles
@@ -128,11 +129,36 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
     rebuilt in this pass, where the serialized (stale) identifier may
     match a DIFFERENT socket after the roundtrip and silently rewire the
     link (matching by the bare id is worse than matching by name).
+
+    ``name_index`` disambiguates sockets that SHARE a name (e.g. two
+    "Switch Target End" inputs of a group node): callers that iterate the
+    serialized socket records in order pass the record's 0-based index
+    among its same-named peers, and resolution maps the Nth record to the
+    Nth match (the rebuild preserves the interface order, so position is
+    the stable key — identifiers are renumbered/recycled).  When omitted
+    (None) the historical identifier-first resolution is used unchanged.
     """
+    def _name_pick(cands):
+        if not cands:
+            return None
+        idx = 0 if name_index is None else name_index
+        if 0 <= idx < len(cands):
+            return cands[idx]
+        return cands[0]
+
     # Data-type-driven nodes: resolve by name+type first.
     type_first = node.bl_idname in ("FunctionNodeCompare", "FunctionNodeRandomValue")
     if type_first and expected_type and not name_only:
         s = next((x for x in sockets if x.name == sname and x.type == expected_type), None)
+        if s:
+            return s
+
+    # Group nodes with positional disambiguation requested: resolve by
+    # name+type first (their interface identifiers are rebuilt/recycled).
+    if node.bl_idname == "GeometryNodeGroup" and not name_only and name_index is not None:
+        cands = [x for x in sockets if x.name == sname
+                 and (expected_type is None or x.type == expected_type)]
+        s = _name_pick(cands)
         if s:
             return s
 
@@ -145,10 +171,10 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
     # 1.5 Active protection for volatile nodes — ID may be recycled
     if dynamic_hint is True:
         if expected_type:
-            s = next((x for x in sockets if x.name == sname and x.type == expected_type), None)
+            s = _name_pick([x for x in sockets if x.name == sname and x.type == expected_type])
             if s:
                 return s
-        s = next((x for x in sockets if x.name == sname), None)
+        s = _name_pick([x for x in sockets if x.name == sname])
         if s:
             return s
 
@@ -165,12 +191,12 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
 
     # 3. Fallback: name + type
     if expected_type:
-        s = next((x for x in sockets if x.name == sname and x.type == expected_type), None)
+        s = _name_pick([x for x in sockets if x.name == sname and x.type == expected_type])
         if s:
             return s
 
     # 4. Fallback: name only
-    s = next((x for x in sockets if x.name == sname), None)
+    s = _name_pick([x for x in sockets if x.name == sname])
     if s:
         return s
 

@@ -147,6 +147,26 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Group inputs with duplicated socket names round-trip again.** The
+  final re-apply pass resolved same-named sockets by the FIRST name match
+  whenever the interface map was unavailable (in-place rebuilds), so the
+  second duplicate's value overwrote the first: a Switch input flipped on
+  re-import and two reference groups hashed differently. Defaults and
+  re-apply now disambiguate duplicates by POSITION (the Nth serialized
+  record maps to the Nth same-named socket), matching the positional
+  semantics already used for link wiring; all 582 reference groups hash
+  identical again and in-place rebuilds are idempotent. Regression:
+  `tests/test_dup_socket_defaults.py` (5 checks, 5.1 and 5.2, in the
+  gate).
+- **Menu Switch items are rebuilt in serialized socket order.**
+  `menu_items_data` order can differ from the item sockets, which shuffled
+  item names/values on rebuild; the `Item_*` sockets now drive the
+  recreation (`menu_items_data` stays as fallback).
+- **Connected-socket defaults are no longer serialized.** The canonical
+  hash and the importer already ignore defaults of linked sockets (the
+  link drives the value), so writing them only produced phantom
+  differences on every re-export of a real project. Existing JSON files
+  import unchanged.
 - **Native crash when rebuilding a group whose modifiers carry array
   inputs (5.2).** `IDPropertyArray` values captured by the modifier-input
   snapshot are views into the modifier's id-properties storage, which is
