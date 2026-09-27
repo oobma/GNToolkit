@@ -109,7 +109,10 @@ def apply_modifier_tasks(mod_data_list: list, interface_maps: dict | None) -> in
     in ``obj.modifiers`` at export time).  Tasks are applied grouped by
     object and sorted by that order, so chained modifiers (A -> B) keep
     their evaluation order; tasks from older packages without ``order``
-    keep their incoming order after the ordered ones.
+    keep their incoming order after the ordered ones.  The viewport/render
+    enable flags (``show_viewport`` / ``show_render``) are restored when
+    present — a modifier the artist switched off must stay off after a
+    rebuild, or the visible result changes.
 
     Returns the number of tasks applied.
     """
@@ -129,6 +132,10 @@ def apply_modifier_tasks(mod_data_list: list, interface_maps: dict | None) -> in
             ng = bpy.data.node_groups.get(m["node_group"])
             if ng:
                 mod.node_group = ng
+        if "show_viewport" in m:
+            mod.show_viewport = bool(m["show_viewport"])
+        if "show_render" in m:
+            mod.show_render = bool(m["show_render"])
         _apply_modifier_inputs(mod, m.get("inputs", {}),
                                interface_maps.get(m.get("node_group")))
         applied += 1
@@ -190,6 +197,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "modifier_name": mod.name,
                                 "node_group": mod.node_group.name if mod.node_group else None,
                                 "order": idx,
+                                "show_viewport": mod.show_viewport,
+                                "show_render": mod.show_render,
                                 "inputs": _serialize_modifier_inputs(mod),
                             }
                             stem = mod_names.allocate(f"{obj.name}_{mod.name}",
@@ -230,6 +239,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "modifier_name": mod.name,
                                 "node_group": mod.node_group.name if mod.node_group else None,
                                 "order": idx,
+                                "show_viewport": mod.show_viewport,
+                                "show_render": mod.show_render,
                                 "inputs": _serialize_modifier_inputs(mod),
                             })
                 write_json_file(self.filepath, master_data, dump_args)
@@ -305,6 +316,8 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
                         "modifier_name": mod.name,
                         "node_group": mod.node_group.name,
                         "order": idx,
+                        "show_viewport": mod.show_viewport,
+                        "show_render": mod.show_render,
                         "inputs": _serialize_modifier_inputs(mod),
                     })
 

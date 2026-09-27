@@ -147,6 +147,12 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Modifier enable flags survive package import.** `show_viewport` and
+  `show_render` are now serialized with each modifier task and restored on
+  import — a modifier the artist switched off used to come back enabled
+  after a recreation, changing the visible result. Older packages without
+  the keys import unchanged. Regression: `tests/test_modifier_flags.py`
+  (7 checks, 5.1 and 5.2, in the gate).
 - **Group inputs with duplicated socket names round-trip again.** The
   final re-apply pass resolved same-named sockets by the FIRST name match
   whenever the interface map was unavailable (in-place rebuilds), so the
