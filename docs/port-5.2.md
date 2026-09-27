@@ -4,8 +4,8 @@ Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
 the headless suites on Blender 5.1.1 and 5.2.0 LTS, including the
 new-node E2E for the 25 new instantiable 5.2 node classes and every GN
 socket type. The currently maintained suites are
-`tests/smoke_test_5.1.py` (**129 checks**, 5.1) and
-`tests/test_52_new_nodes_e2e.py` (**40 checks**, 5.2-only); the
+`tests/smoke_test_5.1.py` (**160 checks**, 5.1) and
+`tests/test_52_new_nodes_e2e.py` (**47 checks**, 5.2-only); the
 per-test table below reflects the suite state as of 2026-08-13.
 This document records the research and the changes the port required so
 future maintenance does not repeat the investigation.
@@ -26,6 +26,14 @@ loader, duplicated-socket regression, git transport), and the recreation
 suite (`tests/recreate_from_folder_test.py`) verifies a full folder
 round-trip of the 439-group reference project **byte-identically on
 5.1.1 and 5.2.0** (see the 0.2.4 section of the CHANGELOG).
+
+Updated: 2026-09-27 — the post-0.2.4 fixes grew the smoke suite to
+**160 checks** and the new-node E2E to **47 checks**; the reference
+project (now 582 groups, including 5.2-only types) recreates **582/582**
+in 5.2 and the object-by-object verifier reports **35 pass + 1 skip**
+with an empty allowlist (the 8 former menu-driven divergences were
+root-caused: rebuilt Menu Switch items now keep their serialized
+`Item_*` identifiers — see the `[Unreleased]` section of the CHANGELOG).
 
 ---
 
@@ -53,17 +61,18 @@ Pre-port (2026-08-11) the 5.2 failures were: smoke T11 (modifier RNA),
 e2e 6, reload 1, pull-fidelity 1, manual-flow 4, stress 6 — all sharing
 one root cause (data-type-driven socket layouts) except the modifier RNA.
 
-**Current state (2026-09-09):** the maintained suites are
-`tests/smoke_test_5.1.py` (131 checks) and
-`tests/test_52_new_nodes_e2e.py` (40 checks, 5.2-only); the per-test
+**Current state (2026-09-27):** the maintained suites are
+`tests/smoke_test_5.1.py` (160 checks) and
+`tests/test_52_new_nodes_e2e.py` (47 checks, 5.2-only); the per-test
 table above reflects the suite state as of 2026-08-13 (test #1 was 41
-checks then — it grew to 96 with the 0.2.3 additions and to 131 with
-the 0.2.4 additions).
+checks then — it grew to 96 with the 0.2.3 additions, 131 at the 0.2.4
+release and 160 with the post-0.2.4 fixes).
 
 ## What the port changed (implemented 2026-08-11)
 
-- **HASH_VERSION → 4** (`constants.py`; current value is **5** after the
-  frame-parenting fix). The canonical hash now applies
+- **HASH_VERSION → 4** (`constants.py`; the current value is **8** —
+  frame parenting, interface variants and later fixes bumped it). The
+  canonical hash now applies
   a version-independent *active-socket* rule to nodes whose socket
   layout follows the data type/mode/operation, drops engine-dependent
   UI properties, and collapses duplicated link tuples:
@@ -370,7 +379,7 @@ type. Verified facts worth keeping (do NOT re-investigate):
   List outputs) and `list_items` collections on the nodes must be
   round-tripped (0.2.3 fix).
 
-## 11. Interface socket variant matrix (2026-09-19, releasing in 0.2.4)
+## 11. Interface socket variant matrix (2026-09-19, released in 0.2.4)
 
 Triggered by the 582-group folder export dropping 10
 `NodeSocketVectorFactor2D` sockets (10 `[ERROR]`, 23 WARN, 14 lost
@@ -413,10 +422,10 @@ exact roundtrip (or documented fallback + WARN).
 
 They fall back to their base type with a WARN in the report
 ("cannot be recreated by this Blender version"), the tree stores
-`gnt_degraded_sockets` (id → requested name) so re-exports keep the
-original name instead of silently downgrading the JSON, and the
-canonical hash (v7) maps them to the fallback so sync shows no phantom
-divergence.
+  `gnt_degraded_sockets` (id → requested name) so re-exports keep the
+  original name instead of silently downgrading the JSON, and the
+  canonical hash (v8) maps them to the fallback so sync shows no phantom
+  divergence.
 
 **DO NOT attempt to recreate them by writing `item.bl_socket_idname`:**
 it is writable in RNA and appears to work, but the underlying item

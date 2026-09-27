@@ -337,8 +337,8 @@ and the .blend hash against the stored hash:
 ## Compatibility
 
 Blender **4.2 – 5.2 LTS** (tested on 4.2.1, 5.1.1 and 5.2.0; the maintained
-suites are `tests/smoke_test_5.1.py` — 143 checks —,
-`tests/test_52_new_nodes_e2e.py` — 40 checks, 5.2-only — and
+suites are `tests/smoke_test_5.1.py` — 160 checks —,
+`tests/test_52_new_nodes_e2e.py` — 47 checks, 5.2-only — and
 `tests/test_42_smoke.py` — 21 checks, run under 4.2). The 5.2 port
 details are recorded in [docs/port-5.2.md](docs/port-5.2.md). What the
 port required:
@@ -349,7 +349,8 @@ port required:
 - Data-type-driven node sockets (Compare, Random Value, Boolean Math
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
-  and 5.2 produce identical fingerprints (HASH_VERSION 5) and projects
+  and 5.2 produce identical fingerprints (the rule shipped as
+  HASH_VERSION 5; the algorithm is versioned and currently at 8) and projects
   track across versions without noise.
 
 ## Installation
@@ -381,7 +382,7 @@ Exports are **unified packages**:
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.2.4",
   "type": "GN_UNIFIED_PACKAGE",
   "export_method": "GN_TOOLKIT",
   "node_groups": {
