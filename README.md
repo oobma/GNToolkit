@@ -394,6 +394,13 @@ Exports are **unified packages**:
 Each node group entry contains its interface, nodes (with socket defaults),
 links and tree properties — enough to fully reconstruct the group.
 
+A package is **node logic, not scene data**. It stores node groups and
+their NODES modifier setups — which object uses them, where in the stack,
+visibility flags and input values — but **not** objects, meshes,
+materials or transforms. On import, stored modifiers attach to the
+objects that already exist with the same name; geometry never travels
+through the package.
+
 ## Project structure
 
 | File | Role |

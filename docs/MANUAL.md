@@ -438,6 +438,14 @@ snapshot), zone pairs are created directly via `pair_with_output` (no
 Node Editor area involved), the depsgraph is flushed before the operator
 returns, and every rebuilt tree is validated for dangling links.
 
+**Import on a fresh file recreates the groups but no objects or modifiers**
+
+Expected. The package stores node logic only — no objects, meshes or
+materials — so there is nothing for the stored modifiers to attach to.
+Run the import on the working .blend (or recreate the objects first):
+with **Apply Modifiers** checked, each stored modifier attaches to the
+object with the same name.
+
 **The System Console shows nothing**
 
 Interactive sessions may not flush print output to the System Console;
@@ -458,3 +466,8 @@ break the links of an unrebuilt parent group.
   the JSON files you explicitly commit to.
 - All state for the sync layer lives in the sidecar — keep it next to
   the .blend when moving or backing up projects.
+- The JSON holds **node logic, not scene data**: node groups, and the
+  NODES modifier setups that use them (object name, position in the
+  stack, visibility flags and input values). Objects, meshes, materials
+  and transforms are **not** stored — geometry does not travel through
+  the package.
