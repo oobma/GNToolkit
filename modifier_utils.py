@@ -25,11 +25,17 @@ def modifier_uses_rna_inputs(mod) -> bool:
 def iter_modifier_sockets(collection):
     """Yield the socket subgroups of a 5.2 modifier inputs/outputs wrapper.
 
-    ``dir()`` may list identifiers that the ``[]`` accessor refuses to
-    resolve; every entry is resolved defensively and bad ones skipped.
+    Socket entries are keyed by their interface *identifier*: ``Socket_N``
+    for sockets added in recent versions, ``Input_N`` for sockets inherited
+    from older files — a name-prefix filter silently dropped the legacy
+    ones (the 130-vs-66 Curvatures Probe case: an explicit Resolution=32
+    fell back to the interface default 16 on every 5.2 import/Pull).
+    ``dir()`` may also list non-socket attributes that the ``[]`` accessor
+    refuses to resolve; every entry is resolved defensively and bad ones
+    skipped.
     """
     for attr in dir(collection):
-        if not attr.startswith("Socket"):
+        if attr.startswith("_"):
             continue
         try:
             item = collection[attr]

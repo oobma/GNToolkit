@@ -147,6 +147,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Modifier inputs with legacy identifiers survive 5.2 imports again.** On
+  Blender 5.2, NODES modifier inputs are keyed by interface-socket identifier:
+  sockets added recently use `Socket_N`, but sockets inherited from older files
+  keep `Input_N`. The input iterator filtered for the `Socket` prefix, so every
+  legacy-keyed input (e.g. an explicit Resolution=32 on a Curvatures Probe) was
+  silently dropped on export, import and Pull, falling back to the interface
+  default and changing the evaluated result. Regression:
+  `tests/test_modifier_inputs_pull.py` (D1/D2, 5.1 and 5.2).
 - **Modifier enable flags survive package import.** `show_viewport` and
   `show_render` are now serialized with each modifier task and restored on
   import — a modifier the artist switched off used to come back enabled
