@@ -10,7 +10,9 @@ the GNToolkit JSON storage, compared with the current unified-package model.
 > JSON** accepts single-group files, per-file commits write back to
 > standalone files (normalized to one-group packages), and
 > **Import Package/Folder** merges a whole folder into one cache for
-> dependency-first recreation (verified 439/439 hash-identical).
+> dependency-first recreation (verified 439/439 hash-identical at the
+> time; the reference project now has 582 groups and recreates 582/582
+> in Blender 5.2).
 > Still open: the layout policy for a dependency-based hierarchy
 > (duplication vs `_shared/`), multi-parent `_shared/` conventions, and
 > rename cascades — those conclusions below remain valid.
@@ -93,8 +95,8 @@ parents: where does their file live?).
 | Per-file lock (`JsonLock`) | Already exists (reusable) | Trivial |
 | Cycle tolerance in pull | Already exists | Low |
 | Multi-file import (merge folder into one cache) | Exists only in snapshot (operators.py:244) | Medium |
-| **Multi-file sync** (parent pull reads N dependency files) | **Missing** — today 1 package per path | Medium |
-| **Surgical per-file commit** (today surgical per group inside the package) | **Missing** (extension) | Medium |
+| Multi-file sync (parent pull reads N dependency files) | **Implemented (0.2.4)** — every tracked group resolves its own JSON path; folder pulls read the per-group files | — |
+| Surgical per-file commit (today surgical per group inside the package) | **Implemented (0.2.4)** — commits write back to standalone files (normalized to one-group packages) | — |
 | **DAG layout policy** (duplicate vs `_shared/`) | **Missing** (design decision) | Medium |
 | **Renames**: move file + cascade `node_tree_reference` in all parents + re-stamp | **Missing** | High |
 | Orphans (group with no parents: where does its file live) | **Missing** | Low |
