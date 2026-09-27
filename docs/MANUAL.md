@@ -8,10 +8,8 @@ layer converges cleanly. Each step describes **what to do** and **what
 should happen**; do not move to the next step until the current one
 completes as described.
 
-Applies to GNToolkit 0.2.4 on Blender 4.2 – 5.2 LTS (tested on 5.1.1 and
-5.2.0; the same code and the same workflow run on both). The **Audit**
-box and the **untracked-dependency** rows documented here are part of the
-unreleased main branch (they ship in the next release).
+Applies to GNToolkit 0.2.5 on Blender 4.2 – 5.2 LTS (tested on 5.1.1 and
+5.2.0; the same code and the same workflow run on both).
 
 ---
 
@@ -37,7 +35,7 @@ unreleased main branch (they ship in the next release).
 
 **What should happen**
 
-- The panel shows **GNToolkit 0.2.4**.
+- The panel shows **GNToolkit 0.2.5**.
 - No addon import errors appear in the System Console
   (Window → Toggle System Console).
 

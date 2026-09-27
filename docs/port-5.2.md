@@ -33,7 +33,7 @@ project (now 582 groups, including 5.2-only types) recreates **582/582**
 in 5.2 and the object-by-object verifier reports **35 pass + 1 skip**
 with an empty allowlist (the 8 former menu-driven divergences were
 root-caused: rebuilt Menu Switch items now keep their serialized
-`Item_*` identifiers — see the `[Unreleased]` section of the CHANGELOG).
+`Item_*` identifiers — see the `[0.2.5]` section of the CHANGELOG).
 
 ---
 
