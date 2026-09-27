@@ -633,6 +633,63 @@ def _populate_zone_output_items(node, node_data: dict, tracker: ImportErrorTrack
 
 
 # ---------------------------------------------------------------------------
+# Step 1 helper: MenuSwitch item identifiers
+# ---------------------------------------------------------------------------
+
+def _rebuild_menu_switch_items(node, menu_names: list, target_ids: list,
+                               tracker: ImportErrorTracker) -> None:
+    """Recreate MenuSwitch items with the serialized ``Item_*`` identifiers.
+
+    A fresh MenuSwitch node carries two default items (Item_0, Item_1) and
+    ``enum_items.new()`` continues a per-node monotonic counter (Item_2,
+    ...) even after a ``clear()``; identifiers cannot be assigned through
+    RNA in 5.x.  Modifier menu values are matched against these identifier
+    suffixes, so rebuilding with different suffixes makes every serialized
+    selection resolve to nothing.  The desired suffixes are reproduced by
+    growing the collection up to the highest wanted one and removing the
+    unwanted items (removing does not renumber the survivors).
+    """
+    want = sorted(set(target_ids))
+    if not want or len(want) != len(menu_names):
+        want = list(range(len(menu_names)))
+    coll = node.enum_items
+
+    def ids():
+        return [
+            int(s.identifier[5:])
+            for s in node.inputs
+            if getattr(s, 'identifier', '').startswith('Item_')
+            and s.identifier[5:].isdigit()
+        ]
+
+    try:
+        for _ in range(128):
+            cur = ids()
+            if cur and max(cur) >= want[-1]:
+                break
+            coll.new(name="Item")
+        cur = ids()
+        for i in range(len(cur) - 1, -1, -1):
+            if cur[i] not in want:
+                coll.remove(coll[i])
+        for i, name_val in enumerate(menu_names):
+            coll[i].name = name_val
+        if ids() != want:
+            tracker.record(
+                f"MenuSwitch '{node.name}': item identifiers {ids()} do not "
+                f"match the serialized {want}; menu values select by suffix "
+                f"and may not resolve",
+                level="DEBUG",
+            )
+    except (TypeError, AttributeError, ValueError, RuntimeError,
+            IndexError) as exc:
+        tracker.record(
+            f"MenuSwitch '{node.name}': could not rebuild enum items: {exc}",
+            level="DEBUG",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Step 1 helper: Node-specific configuration
 # ---------------------------------------------------------------------------
 
@@ -663,15 +720,14 @@ def _configure_special_node(new_node, node_data: dict, node_type: str,
                 menu_names = [m["name"] for m in node_data["menu_items_data"]]
 
             if menu_names:
-                _reset_collection(new_node.enum_items, tracker)
-                for name_val in menu_names:
-                    try:
-                        new_node.enum_items.new(name=name_val)
-                    except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
-                        tracker.record(
-                            f"MenuSwitch '{new_node.name}': could not create enum item '{name_val}': {exc}",
-                            level="DEBUG",
-                        )
+                menu_ids = [
+                    int(inp["identifier"][5:])
+                    for inp in node_data.get("inputs", [])
+                    if inp.get("identifier", "").startswith("Item_")
+                    and inp["identifier"][5:].isdigit()
+                ]
+                _rebuild_menu_switch_items(new_node, menu_names, menu_ids,
+                                           tracker)
         map_dynamic_sockets(node_data, new_node, zone_socket_remap, new_node.name)
 
     elif node_type == "GeometryNodeCaptureAttribute":
