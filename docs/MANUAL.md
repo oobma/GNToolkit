@@ -9,7 +9,9 @@ should happen**; do not move to the next step until the current one
 completes as described.
 
 Applies to GNToolkit 0.2.4 on Blender 4.2 – 5.2 LTS (tested on 5.1.1 and
-5.2.0; the same code and the same workflow run on both).
+5.2.0; the same code and the same workflow run on both). The **Audit**
+box and the **untracked-dependency** rows documented here are part of the
+unreleased main branch (they ship in the next release).
 
 ---
 
@@ -133,6 +135,12 @@ discards the session (Blender asks for confirmation).
   triangle; likewise the **JSON files** list in the Sync panel).
 - Each issue row provides per-group actions: **Pull**, **Ignore**
   (and Commit / Keep JSON / Keep Blend for other states).
+- If a tracked group gained a **new nested group with no JSON yet**,
+  Sync Issues also lists it as an *untracked dependency* — one row per
+  child with a **Track** button (see workflow 2 for the bulk path).
+- The **Audit** box at the bottom (Run / Clear) reports duplicate logic,
+  JSON health and the dependency impact of the group selected in the
+  Node Editor — see workflow 6.
 
 ---
 
@@ -289,6 +297,9 @@ issues.
 
 - Only locally edited groups appear in the dialog — unedited groups are
   ignored.
+- Untracked dependency children appear as extra rows (default: **track**)
+  so they are filed and committed together with their parent — the plain
+  **Commit** buttons only warn about them and never write implicitly.
 - The report shows the applied decisions
   ("Committed N, pulled M, skipped K").
 - Groups with unedited content stay untouched and synced.
@@ -378,6 +389,34 @@ file and modifiers in `Modifiers/*.json`.
 - A JSON with merge-conflict markers is listed in the panel (and
   reported when tracking/importing); after resolving it with your git
   client, **Pull from JSON** applies the resolved content.
+- Git operations run without freezing Blender: the row buttons are
+  disabled while a job is queued and the final result is reported in the
+  status bar (not in a popup — the operator already finished).
+- **Git Sync** and the fetch performed when opening a .blend respect
+  Blender's *Allow Online Access* setting (and the **Fetch remotes on
+  open** toggle, on by default); `git status` and **Git Commit…** are
+  local and work offline.
+
+---
+
+## Additional workflow 6 — Audit the project
+
+**What to do**
+
+1. In the Sync panel / Sync Issues area, click **Run** in the **Audit**
+   box (the group selected in the Node Editor is used for the impact
+   report). **Clear** dismisses the report.
+
+**What should happen**
+
+- The report answers three project questions: **duplicates** (groups
+  sharing a content fingerprint under different names), **JSON health**
+  (missing, unreadable or conflicted files, references to untracked
+  groups) and **impact** (what breaks if the selected group changes,
+  following the dependency graph transitively).
+- The same audits run headless with `python gnt_check.py --duplicates`,
+  `--health` and `--impact "My Group"` — see the README's "Headless
+  checks" section.
 
 ---
 

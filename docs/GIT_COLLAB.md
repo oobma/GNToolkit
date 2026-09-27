@@ -129,6 +129,23 @@ on the PATH.
 - `ahead`/`behind` reflect the last fetch (like `git status -b`) — run
   **Git Sync** (or a fetch in your client) to see the latest remote
   state.
+- Git operations never freeze Blender: the row buttons are disabled
+  while a job is queued/active and the final result (committed files,
+  refusal reason, …) is reported in the **status bar** — there is no
+  popup, because the operator already finished.
+
+### Network access and the on-open fetch
+
+- **Fetch remotes on open** (Collaboration panel, **on by default**):
+  opening a .blend fetches every tracked repository's remote in the
+  background so the row's `behind N` reflects the shared repository
+  without touching **Git Sync** first. Offline setups and repositories
+  without a remote are a silent no-op.
+- The on-open fetch and **Git Sync** (pull/push) require Blender's
+  *Allow Online Access* setting. Without it the operations report that
+  online access is disabled instead of failing halfway.
+- The local `git status` refresh, **Git Commit…** and the whole manual
+  flow with your own git client work **offline**.
 
 ### Notes and limits
 
