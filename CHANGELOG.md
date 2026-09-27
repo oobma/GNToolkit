@@ -2,6 +2,355 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Untracked dependency groups are detected and filed before a commit.**
+  A tracked group that gains a new nested group locally used to commit a
+  reference to a group that exists in no JSON — the collaborator (or a
+  later folder import) got a dangling Group node with no sockets. The
+  Sync Issues panel now lists every untracked dependency group found in
+  the .blend (one row per child: name, parent and a **Track** button),
+  and **Commit with Review…** shows one row per child (default: track)
+  so they are filed and committed together with their parent. Tracking
+  follows the layout recorded for the parent at tracking time (`layout`
+  metadata, inferred from the file for older entries): folder exports
+  get a per-group JSON next to the parent's file — reusing an existing
+  file when it already holds the group, never rewriting it — while
+  master packages get the group added to the same file (surgical
+  update). Plain **Commit** / **Commit Modified** / **Commit All**
+  buttons only warn ("N untracked dependency group(s) were NOT
+  committed") — no surprise writes. The hidden `gn.sync_link_deps`
+  operator (it scanned the parent's JSON, so a brand-new .blend group
+  was invisible to it) is removed. Regression:
+  `tests/test_untracked_deps.py` (20 checks on 5.1 and 5.2, in the
+  release gate).
+
+- **Headless JSON-side status check (`gnt_check.py`).** The JSON side is
+  now usable without Blender: `python gnt_check.py <folder-or-package>
+  [--baseline project.blend.gntsync | flat.json]` hashes every group with
+  the same canonical hasher the addon uses inside Blender and reports
+  synced / changed / missing groups (exit 0/1/2, `--json` for machines,
+  `--strict` to fail on unreadable files, `--selftest` to prove the
+  hasher runs without bpy). Baseline accepts a `.gntsync` sidecar (paths
+  resolved against its directory) or a flat `{group: hash}` JSON. The
+  module loads `hash_utils`/`constants` through a synthetic package, so
+  no addon module is touched and `bpy` is never imported. The release
+  gate gained a `gnt_check` step (selftest + optional folder validation),
+  and the README documents the CI/hook workflow. Reference run: 582
+  groups in ~2.5 s. The description now centers the semantics — sync is
+  one application of the change/conflict layer — while the supported
+  scope stays explicit: Geometry Nodes groups today.
+
+- **Project audits: impact, duplicate logic and health (`audit.py`).**
+  Pure-Python audit layer over the data the addon already stores,
+  exposed through `gnt_check`:
+  - `--impact <group>` — reverse dependency graph + transitive closure
+    over the metadata's `depends_on` uuids: *what breaks if I change this
+    group?* Accepts a group name or uid, cycle-safe, reports direct vs
+    transitive dependents. Reference: a utility group with 209 dependents
+    in the 582-group project.
+  - `--duplicates` — content hash that ignores group identity (the group
+    name and the name-derived `node_tool_idname`) so the same logic under
+    two names is found deterministically.
+  - `--health` — consolidated JSON-side report: unreadable JSONs, git
+    conflict markers (so the checker does not die on a conflicted file),
+    missing files recorded in the metadata, `depends_on` references to
+    untracked groups, and duplicate buckets.
+  - All modes support `--json`; `--health --strict` exits 2 on
+    unreadable/conflicted files. Pure tests: `tests/test_audit.py`
+    (26 checks, no bpy) — in the release gate.
+  - **In the addon**, the Sync Issues panel gains an **Audit** box
+    (Run / Clear) that fills a Scene-level report (`Scene.gnt_audit_state`,
+    same pattern as the import picker): summary line plus one entry per
+    finding (duplicate buckets, untracked references, missing/unreadable/
+    conflicted files, and the impact of the group selected in the Node
+    Editor — or an explicit group passed to `gn.audit_project`). JSONs are
+    read through `audit.group_data_from_file`, so a conflicted file is
+    reported instead of crashing the audit. UI test:
+    `tests/test_audit_ui.py` (8 checks on 5.1 and 5.2) — in the gate.
+
+- **"Fetch remotes on open" is now an explicit preference (on by
+  default).** The silent fetch that every tracked repository received
+  when a .blend was opened now lives behind a Collaboration-panel toggle
+  and respects Blender's *Allow Online Access* setting, so network access
+  is never implicit; `Git Sync`/fetch require online access while the
+  local `git status` refresh and Git Commit keep working offline.
+- **File logging and friendlier write-permission errors.** Link/Export/
+  Import progress messages go through a `GNToolkit` logger that writes
+  `gntoolkit.log` in `bpy.app.tempdir` (overwritten per session) while
+  keeping the terminal output identical; a JSON write to a read-only or
+  unwritable location reports "save the .blend file in a writable
+  location and try again" instead of a generic failure.
+
+### Fixed
+
+- **Rebuilt Menu Switch items keep their serialized `Item_*`
+  identifiers.** A fresh Menu Switch node carries two default items
+  (`Item_0`, `Item_1`) and creating items after `clear()` continues the
+  node's counter (`Item_2`, ...); identifiers cannot be assigned through
+  RNA in 5.x. Modifier menu values are matched against those identifier
+  suffixes, so a rebuilt menu whose serialized value pointed at
+  `Item_0`/`Item_1` resolved to no item and every menu-driven chain
+  evaluated empty (the 8 known object divergences of the headless
+  recreation verifier: displaced surfaces rendered undisplaced). The
+  rebuild now grows the item collection up to the highest serialized
+  suffix and removes the unwanted items, reproducing the original
+  identifiers exactly; the recreation verifier reports 35/35 with the
+  allowlist now EMPTY (any divergence fails again). Regression:
+  `tests/verify_project_recreation.py` and `tests/test_52_new_nodes_e2e.py`.
+
+- **Modifier inputs with legacy identifiers survive 5.2 imports again.** On
+  Blender 5.2, NODES modifier inputs are keyed by interface-socket identifier:
+  sockets added recently use `Socket_N`, but sockets inherited from older files
+  keep `Input_N`. The input iterator filtered for the `Socket` prefix, so every
+  legacy-keyed input (e.g. an explicit Resolution=32 on a Curvatures Probe) was
+  silently dropped on export, import and Pull, falling back to the interface
+  default and changing the evaluated result. Regression:
+  `tests/test_modifier_inputs_pull.py` (D1/D2, 5.1 and 5.2).
+
+- **Modifier enable flags survive package import.** `show_viewport` and
+  `show_render` are now serialized with each modifier task and restored on
+  import — a modifier the artist switched off used to come back enabled
+  after a recreation, changing the visible result. Older packages without
+  the keys import unchanged. Regression: `tests/test_modifier_flags.py`
+  (7 checks, 5.1 and 5.2, in the gate).
+
+- **Group inputs with duplicated socket names round-trip again.** The
+  final re-apply pass resolved same-named sockets by the FIRST name match
+  whenever the interface map was unavailable (in-place rebuilds), so the
+  second duplicate's value overwrote the first: a Switch input flipped on
+  re-import and two reference groups hashed differently. Defaults and
+  re-apply now disambiguate duplicates by POSITION (the Nth serialized
+  record maps to the Nth same-named socket), matching the positional
+  semantics already used for link wiring; all 582 reference groups hash
+  identical again and in-place rebuilds are idempotent. Regression:
+  `tests/test_dup_socket_defaults.py` (5 checks, 5.1 and 5.2, in the
+  gate).
+
+- **Menu Switch items are rebuilt in serialized socket order.**
+  `menu_items_data` order can differ from the item sockets, which shuffled
+  item names/values on rebuild; the `Item_*` sockets now drive the
+  recreation (`menu_items_data` stays as fallback).
+
+- **Connected-socket defaults are no longer serialized.** The canonical
+  hash and the importer already ignore defaults of linked sockets (the
+  link drives the value), so writing them only produced phantom
+  differences on every re-export of a real project. Existing JSON files
+  import unchanged.
+
+- **Native crash when rebuilding a group whose modifiers carry array
+  inputs (5.2).** `IDPropertyArray` values captured by the modifier-input
+  snapshot are views into the modifier's id-properties storage, which is
+  freed when the interface is rebuilt; restoring the captured view crashed
+  Blender with an `EXCEPTION_ACCESS_VIOLATION` (reproduced in-place on the
+  582-group reference project). Snapshots now materialize arrays to tuples
+  (and drop dangling datablock pointers), so the values survive the
+  rebuild and the restore can never write a stale view. Regression:
+  `tests/test_modifier_array_restore.py` (3 checks on 5.2; skips on legacy
+  pre-5.2 modifier inputs).
+
+- **Package imports rebuild groups in dependency order (children first).**
+  Rebuilding an existing project in arbitrary order resolves parent links
+  through stale child-socket identifiers: with overlapping identifiers the
+  link's recorded id resolves to the wrong socket, and cross-group links
+  end up dropped or misrouted. `GN_OT_ImportBatchJSON` now orders its
+  group list with `dependency_ordered_names()` (cycle-safe); on the
+  582-group reference project this rebuilt all 582 groups bit-identical
+  where arbitrary order left hundreds of groups diverging. Regression:
+  `tests/test_import_order.py` (8 checks on 5.1 and 5.2; in the gate).
+
+- **One broken group no longer kills the modal import.** An exception
+  while rebuilding a group now aborts only that group: it is recorded in
+  the tracker (ERROR, with traceback) and the modal continues with the
+  remaining groups — previously an unhandled exception ended the modal
+  mid-import (observed in the wild at 415/582 groups) and left the
+  project half-updated.
+
+- **Modifier stack order survives package import.** The folder/package
+  export did not record each NODES modifier's position in the object's
+  stack, and the import applied the modifier files in folder order —
+  chained modifiers (e.g. a convert-then-mesh chain) were attached
+  reversed and the evaluated result was different or empty in a freshly
+  recreated scene (verified on the 582-group project: 6 vertices with the
+  original order, 0 with the folder order). Modifier entries now carry
+  `order` (their index in `obj.modifiers`) and the import applies them
+  sorted per object via the new `apply_modifier_tasks()` helper;
+  packages exported by older versions (no `order`) keep the previous
+  behavior. New regression: `tests/test_modifier_order.py` (9 checks on
+  5.1 and 5.2 — order, evaluated geometry, an order-sensitivity control
+  and the legacy fallback; in the gate). Note: object transforms,
+  modifier enable/disable flags and mesh geometry still do not
+  round-trip by design.
+
+- **Package import was not undoable as a single step.** `GN_OT_ImportBatchJSON`
+  ("Import Package/Folder") mutated `bpy.data` from its modal timer without
+  declaring `bl_options = {'UNDO'}`, so the first Ctrl+Z after an import
+  restored the last registered undo step — which could predate the import and
+  silently roll back user work along with it. It now declares
+  `{'REGISTER', 'UNDO'}`: Blender pushes the undo event when the modal returns
+  `FINISHED`, making the whole import (groups + modifiers, including "Update
+  existing groups") one undoable/redoable step; ESC/cancel does not push and
+  headless/background runs are unaffected. The sync operators (Pull, batch
+  pull, picker import) already had `UNDO`.
+
+- **NODES modifier inputs were silently reset on every Pull/import.**
+  Blender 5.2 stores modifier inputs keyed by the referenced tree's
+  interface-socket identifier; rebuilding a group renumbers the
+  interface, which orphaned the stored values and reset every configured
+  input to its default (e.g. a meshing chain dropping from 18 to 8
+  patches while the rebuilt graph itself was 100% faithful).  The
+  importer now snapshots every modifier that references the tree being
+  rebuilt — before the interface is cleared — and restores the values
+  through an identifier remap built by `(name, in_out)` matching
+  (`modifier_utils.py`); this covers Pull, batch pull, single-group
+  import and package import in one place.  The package import path
+  (`_apply_modifier_inputs`) also translates the serialized keys
+  (export-time identifiers) through the rebuild's interface map instead
+  of assuming they still match, and no longer depends on the tree being
+  built in the same order.  Menu inputs are plain integer indices (they
+  were already serialized) and are restored by the same pass.  The 5.1
+  legacy ID-property path (where Blender itself renames the stored keys)
+  is preserved as a harmless no-op.  Regression:
+  `tests/test_modifier_inputs_pull.py` (15 checks on 5.2 / 14 on 5.1,
+  in the release gate) — verified to fail (A5-A7) with the restore
+  disabled.
+
+- **Menu socket defaults on nodes were never serialized.** `MENU` was
+  listed in `_NON_SCALAR_SOCKET_TYPES`, so `serialize_node` skipped
+  `default_value` on every `NodeSocketMenu` input/output.  Per-node
+  overrides on Group nodes were reset to the referenced interface
+  default on import, silently changing geometry: a menu-switched meshing
+  chain produced no meshed instances where the original produced the
+  full patch set (the reconstructed object "disappeared").  Menu sockets
+  now serialize their string enum identifier (empty identifiers are
+  still omitted, matching the importer); node-level menu defaults are
+  deferred to the importer's final menu pass (where `enum_items` already
+  exist) instead of warning on the early attempt.  Regression: smoke T21
+  (5.1), E2E T9 (5.2) and the name-agnostic folder diagnostic
+  `tests/diag_menu_defaults.py` (every node-level menu default must
+  reach the JSON and every rebuilt group must hash identically).
+  Packages exported with the old serializer keep the lossy value and now
+  show "Changed in JSON" until re-exported.
+
+- **Nested interface panels were flattened on import.** `_rebuild_interface`
+  created every PANEL with `new_panel()` but never attached it to its parent
+  (the panel `parent` is read-only in the Python API; nesting requires
+  `interface.move_to_parent()`), so a panel inside a panel came back at the
+  root of the interface while its sockets kept pointing at it.  Panels now
+  nest exactly as serialized.  The canonical hash keeps the interface item
+  `parent` (empty parents excluded) so this class of divergence is visible
+  in sync from now on: HASH_VERSION 8, stored baselines are re-stamped
+  automatically.  Regression: smoke T22.
+
+- **Interface socket presentation flags were lost.** `is_panel_toggle`
+  and `structure_type` were skipped by the serializer and `optional_label`
+  was never applied on Menu sockets, so a bool socket acting as its
+  panel's toggle came back as a plain checkbox inside the panel and
+  list/field structure types reset to AUTO (12 / 5 / 9 sockets in the
+  reference project).  All three now roundtrip and are covered by the
+  canonical hash (HASH_VERSION 8); Blender only accepts `is_panel_toggle`
+  once the socket is nested in its panel, which the importer guarantees
+  by parenting every item before applying properties.  Regression: smoke
+  T22.
+
+- **Blender 5.x interface sockets are now handled as a complete,
+  self-verified matrix.** `parse_interface_socket_variant()` decomposes
+  every `NodeSocket<Base><Subtype>[2D|3D|4D]` name (Vector's 30 classes,
+  the Float/Int/String subtypes, and the integer-vector family) into base
+  type + dimensions + subtype; the importer builds them in that order.
+  The 12 GN-valid classes the Python API cannot build (Float/Int
+  `Unsigned`, the 10 integer-vector variants — no UNSIGNED enum value, no
+  `dimensions` on Int, and the `bl_socket_idname` recast crashes Blender
+  with an access violation) now fall back to their base type and are
+  **visible in the import report** (one WARN each: "cannot be recreated
+  by this Blender version").  The tree remembers the requested names so a
+  re-export never silently downgrades the JSON, and the canonical hash
+  maps them to the fallback so sync shows no phantom "Changed in JSON"
+  (HASH_VERSION 7).  New test `tests/verify_folder_recreation.py` sweeps
+  every class discovered from `bpy.types` (never a hand list) and fails
+  when a future Blender exposes one the parser does not know.
+
+- **Blender 5.2 vector interface sockets with subtype + extra dimensions
+  were dropped on import (`NodeSocketVectorFactor2D` and the whole
+  family).** The 5.2 interface API accepts only the base socket types and
+  the remap/subtype tables only covered the float/int/string/vector-3D
+  subtypes plus the plain 2D vector variants, so `new_socket()` raised on
+  e.g. `NodeSocketVectorFactor2D`.  A 582-group folder export with 10
+  such sockets logged 10 `[ERROR] Failed to create interface item …`,
+  lost the 14 links into/out of them (6 groups) and kept none of their
+  saved defaults.  The base+dimensions+subtype recipe now recreates every
+  creatable variant (including the 4D ones) exactly.
+
+- **4-component vector defaults serialized as `mathutils.Quaternion`
+  reprs.** `clean_value` handled `Vector`/`Color`/`Euler` but not
+  `Quaternion`/`Matrix`, so a 4D vector subtype default (e.g.
+  `NodeSocketVectorEuler4D`) became an unparseable string
+  (`"<Quaternion …>"`).  Quaternions now serialize as `[w, x, y, z]`,
+  matrices as rows, and `unclean_value` builds 4-component values for
+  `…4D` socket types.
+
+- **Spurious "Changed in JSON" for groups whose JSON carries `-0.0`.**
+  `round(-1e-9, 6)` writes `-0.0`, which `json.dumps` prints differently
+  from `0.0`; Blender stores float32 and flips the sign on re-export, so
+  two identical trees hashed differently (2 groups on the real project).
+  The canonical hash now normalises `-0.0` to `0.0` (stored baselines
+  migrate automatically via the re-baseline mechanism).
+
+- **Git jobs no longer run in a worker thread.** Every git call now
+  happens on the main thread: a job is a small generator of stages
+  executed by the existing timer pump — short local commands
+  (`status`/`add`/`commit`/`rev-parse`) run inline (tens of
+  milliseconds), fetch/pull/push are started as child processes and
+  polled across ticks (output to temporary files, never pipes, so a
+  verbose command cannot deadlock on a full buffer), and the Python
+  batches (tracked-path resolution, conflict scans over hundreds of
+  files) yield control between chunks. The job bodies receive the blend
+  directory and the sync metadata in their payload, resolved on the main
+  thread at submit time: they no longer reach into Blender data
+  (`bpy.data.filepath`) off the main thread, which the previous
+  worker did through the sync manager.   `shutdown_git_worker` is now
+  `shutdown_git_jobs`. A repo whose `git status` fails shows the error
+  in its panel row instead of failing the whole refresh.
+
+- **JSON writes are atomic.** Packages, standalone exports and the
+  `.gntsync` sidecar go through `file_utils.write_json_file`, which
+  writes to a temporary file in the destination directory and swaps it
+  into place with `os.replace` — previously `open(path, 'w')` truncated
+  the destination first, so a crash, a full disk or a stalled write
+  could leave a half-written source of truth and destroy the previous
+  good copy. A failed write now leaves the old file untouched (and no
+  `.tmp` files behind).
+
+- **Folder exports can no longer silently overwrite each other.** File
+  names use the same lossy cleaning rule as always (alphanumerics,
+  spaces and underscores kept; `A/B` and `A:B` both become `A_B`), so
+  the second file used to replace the first and the report counted node
+  trees instead of files. The exporter now allocates
+  unique stems (`A_B`, `A_B~<hash>` for the colliding one), falls back
+  to `unnamed` for empty names and prefixes Windows reserved device
+  names (`CON` → `_CON` — `CON.json` cannot be created), and reports
+  the number of files actually written plus every adjusted name
+  (`old → new`). The cleaning rule itself is unchanged, so existing
+  folder-export paths keep working (verified against the 439 group
+  names of the reference project: 0 differences). The active-group
+  export dialog sanitizes its default file name too.
+
+- **"Pull from JSON" raised `name 'conflicts' is not defined` after the
+  import.** The batch pull's completion log still referenced a
+  `conflicts` counter removed in an earlier refactor, so the operator
+  reported `Pull failed` (the import itself had already been applied).
+  Found by the new Blender 4.2 platform suite; the log now reports the
+  counters that exist (`imported`, `skipped`, `errors`, `auto-linked`,
+  `still differ`).
+
+- **"Reveal" buttons were Windows-only.** Both *Reveal JSON in Explorer*
+  and *Reveal Repository* called `os.startfile`, which does not exist on
+  macOS/Linux (the operators only warned). They now use Blender's native
+  `bpy.ops.wm.path_open`, so the folder opens in the system file browser
+  on every platform.
+
 ## [0.2.4] - 2026-09-09
 
 ### Added
@@ -40,10 +389,6 @@ All notable changes to this project are documented in this file.
     reflects the shared repository as-is without touching Git Sync
     first. Offline/repository-less setups are a no-op (10s timeout,
     errors swallowed — `git status` semantics otherwise unchanged).
-    The network part is gated by the new **Fetch remotes on open**
-    preference (Collaboration panel, on by default) and by Blender's
-    *Allow Online Access* setting; the local `git status` refresh always
-    runs.
 - **Folder workflow (per-group JSON files as full sync participants).**
   The "Use Folder Structure" export (`NodeGroups/` + `Modifiers/`) is no
   longer a one-shot snapshot — it round-trips through the sync layer:
@@ -68,26 +413,6 @@ All notable changes to this project are documented in this file.
     `export_all_modified`/`link_group` normalize a standalone single-group
     file into a one-group `GN_UNIFIED_PACKAGE` on the first commit
     (previously a `KeyError` — committing to a per-group export failed).
-- **Untracked dependency groups are detected and filed before a commit.**
-  A tracked group that gains a new nested group locally used to commit a
-  reference to a group that exists in no JSON — the collaborator (or a
-  later folder import) got a dangling Group node with no sockets. The
-  Sync Issues panel now lists every untracked dependency group found in
-  the .blend (one row per child: name, parent and a **Track** button),
-  and **Commit with Review…** shows one row per child (default: track)
-  so they are filed and committed together with their parent. Tracking
-  follows the layout recorded for the parent at tracking time (`layout`
-  metadata, inferred from the file for older entries): folder exports
-  get a per-group JSON next to the parent's file — reusing an existing
-  file when it already holds the group, never rewriting it — while
-  master packages get the group added to the same file (surgical
-  update). Plain **Commit** / **Commit Modified** / **Commit All**
-  buttons only warn ("N untracked dependency group(s) were NOT
-  committed") — no surprise writes. The hidden `gn.sync_link_deps`
-  operator (it scanned the parent's JSON, so a brand-new .blend group
-  was invisible to it) is removed. Regression:
-  `tests/test_untracked_deps.py` (20 checks on 5.1 and 5.2, in the
-  release gate).
 - **Encoding robustness**: JSON reads accept UTF-8 with or without BOM
   (`utf-8-sig`) and a non-UTF-8 file (e.g. saved as ANSI/Windows-1252 by
   an editor) no longer crashes with a raw traceback — the tolerant reader
@@ -102,244 +427,9 @@ All notable changes to this project are documented in this file.
 - **Import diagnostics**: skipped links (endpoint not in the node map)
   are recorded as DEBUG records, and the wiring WARNs include the
   resolution flags.
-- **Headless JSON-side status check (`gnt_check.py`).** The JSON side is
-  now usable without Blender: `python gnt_check.py <folder-or-package>
-  [--baseline project.blend.gntsync | flat.json]` hashes every group with
-  the same canonical hasher the addon uses inside Blender and reports
-  synced / changed / missing groups (exit 0/1/2, `--json` for machines,
-  `--strict` to fail on unreadable files, `--selftest` to prove the
-  hasher runs without bpy). Baseline accepts a `.gntsync` sidecar (paths
-  resolved against its directory) or a flat `{group: hash}` JSON. The
-  module loads `hash_utils`/`constants` through a synthetic package, so
-  no addon module is touched and `bpy` is never imported. The release
-  gate gained a `gnt_check` step (selftest + optional folder validation),
-  and the README documents the CI/hook workflow. Reference run: 582
-  groups in ~2.5 s. The description now centers the semantics — sync is
-  one application of the change/conflict layer — while the supported
-  scope stays explicit: Geometry Nodes groups today.
-- **Project audits: impact, duplicate logic and health (`audit.py`).**
-  Pure-Python audit layer over the data the addon already stores,
-  exposed through `gnt_check`:
-  - `--impact <group>` — reverse dependency graph + transitive closure
-    over the metadata's `depends_on` uuids: *what breaks if I change this
-    group?* Accepts a group name or uid, cycle-safe, reports direct vs
-    transitive dependents. Reference: a utility group with 209 dependents
-    in the 582-group project.
-  - `--duplicates` — content hash that ignores group identity (the group
-    name and the name-derived `node_tool_idname`) so the same logic under
-    two names is found deterministically.
-  - `--health` — consolidated JSON-side report: unreadable JSONs, git
-    conflict markers (so the checker does not die on a conflicted file),
-    missing files recorded in the metadata, `depends_on` references to
-    untracked groups, and duplicate buckets.
-  - All modes support `--json`; `--health --strict` exits 2 on
-    unreadable/conflicted files. Pure tests: `tests/test_audit.py`
-    (26 checks, no bpy) — in the release gate.
-  - **In the addon**, the Sync Issues panel gains an **Audit** box
-    (Run / Clear) that fills a Scene-level report (`Scene.gnt_audit_state`,
-    same pattern as the import picker): summary line plus one entry per
-    finding (duplicate buckets, untracked references, missing/unreadable/
-    conflicted files, and the impact of the group selected in the Node
-    Editor — or an explicit group passed to `gn.audit_project`). JSONs are
-    read through `audit.group_data_from_file`, so a conflicted file is
-    reported instead of crashing the audit. UI test:
-    `tests/test_audit_ui.py` (8 checks on 5.1 and 5.2) — in the gate.
 
 ### Fixed
 
-- **Rebuilt Menu Switch items keep their serialized `Item_*`
-  identifiers.** A fresh Menu Switch node carries two default items
-  (`Item_0`, `Item_1`) and creating items after `clear()` continues the
-  node's counter (`Item_2`, ...); identifiers cannot be assigned through
-  RNA in 5.x. Modifier menu values are matched against those identifier
-  suffixes, so a rebuilt menu whose serialized value pointed at
-  `Item_0`/`Item_1` resolved to no item and every menu-driven chain
-  evaluated empty (the 8 known object divergences of the headless
-  recreation verifier: displaced surfaces rendered undisplaced). The
-  rebuild now grows the item collection up to the highest serialized
-  suffix and removes the unwanted items, reproducing the original
-  identifiers exactly; the recreation verifier reports 35/35 with the
-  allowlist now EMPTY (any divergence fails again). Regression:
-  `tests/verify_project_recreation.py` and `tests/test_52_new_nodes_e2e.py`.
-- **Modifier inputs with legacy identifiers survive 5.2 imports again.** On
-  Blender 5.2, NODES modifier inputs are keyed by interface-socket identifier:
-  sockets added recently use `Socket_N`, but sockets inherited from older files
-  keep `Input_N`. The input iterator filtered for the `Socket` prefix, so every
-  legacy-keyed input (e.g. an explicit Resolution=32 on a Curvatures Probe) was
-  silently dropped on export, import and Pull, falling back to the interface
-  default and changing the evaluated result. Regression:
-  `tests/test_modifier_inputs_pull.py` (D1/D2, 5.1 and 5.2).
-- **Modifier enable flags survive package import.** `show_viewport` and
-  `show_render` are now serialized with each modifier task and restored on
-  import — a modifier the artist switched off used to come back enabled
-  after a recreation, changing the visible result. Older packages without
-  the keys import unchanged. Regression: `tests/test_modifier_flags.py`
-  (7 checks, 5.1 and 5.2, in the gate).
-- **Group inputs with duplicated socket names round-trip again.** The
-  final re-apply pass resolved same-named sockets by the FIRST name match
-  whenever the interface map was unavailable (in-place rebuilds), so the
-  second duplicate's value overwrote the first: a Switch input flipped on
-  re-import and two reference groups hashed differently. Defaults and
-  re-apply now disambiguate duplicates by POSITION (the Nth serialized
-  record maps to the Nth same-named socket), matching the positional
-  semantics already used for link wiring; all 582 reference groups hash
-  identical again and in-place rebuilds are idempotent. Regression:
-  `tests/test_dup_socket_defaults.py` (5 checks, 5.1 and 5.2, in the
-  gate).
-- **Menu Switch items are rebuilt in serialized socket order.**
-  `menu_items_data` order can differ from the item sockets, which shuffled
-  item names/values on rebuild; the `Item_*` sockets now drive the
-  recreation (`menu_items_data` stays as fallback).
-- **Connected-socket defaults are no longer serialized.** The canonical
-  hash and the importer already ignore defaults of linked sockets (the
-  link drives the value), so writing them only produced phantom
-  differences on every re-export of a real project. Existing JSON files
-  import unchanged.
-- **Native crash when rebuilding a group whose modifiers carry array
-  inputs (5.2).** `IDPropertyArray` values captured by the modifier-input
-  snapshot are views into the modifier's id-properties storage, which is
-  freed when the interface is rebuilt; restoring the captured view crashed
-  Blender with an `EXCEPTION_ACCESS_VIOLATION` (reproduced in-place on the
-  582-group reference project). Snapshots now materialize arrays to tuples
-  (and drop dangling datablock pointers), so the values survive the
-  rebuild and the restore can never write a stale view. Regression:
-  `tests/test_modifier_array_restore.py` (3 checks on 5.2; skips on legacy
-  pre-5.2 modifier inputs).
-- **Package imports rebuild groups in dependency order (children first).**
-  Rebuilding an existing project in arbitrary order resolves parent links
-  through stale child-socket identifiers: with overlapping identifiers the
-  link's recorded id resolves to the wrong socket, and cross-group links
-  end up dropped or misrouted. `GN_OT_ImportBatchJSON` now orders its
-  group list with `dependency_ordered_names()` (cycle-safe); on the
-  582-group reference project this rebuilt all 582 groups bit-identical
-  where arbitrary order left hundreds of groups diverging. Regression:
-  `tests/test_import_order.py` (8 checks on 5.1 and 5.2; in the gate).
-- **One broken group no longer kills the modal import.** An exception
-  while rebuilding a group now aborts only that group: it is recorded in
-  the tracker (ERROR, with traceback) and the modal continues with the
-  remaining groups — previously an unhandled exception ended the modal
-  mid-import (observed in the wild at 415/582 groups) and left the
-  project half-updated.
-- **Modifier stack order survives package import.** The folder/package
-  export did not record each NODES modifier's position in the object's
-  stack, and the import applied the modifier files in folder order —
-  chained modifiers (e.g. a convert-then-mesh chain) were attached
-  reversed and the evaluated result was different or empty in a freshly
-  recreated scene (verified on the 582-group project: 6 vertices with the
-  original order, 0 with the folder order). Modifier entries now carry
-  `order` (their index in `obj.modifiers`) and the import applies them
-  sorted per object via the new `apply_modifier_tasks()` helper;
-  packages exported by older versions (no `order`) keep the previous
-  behavior. New regression: `tests/test_modifier_order.py` (9 checks on
-  5.1 and 5.2 — order, evaluated geometry, an order-sensitivity control
-  and the legacy fallback; in the gate). Note: object transforms,
-  modifier enable/disable flags and mesh geometry still do not
-  round-trip by design.
-- **Package import was not undoable as a single step.** `GN_OT_ImportBatchJSON`
-  ("Import Package/Folder") mutated `bpy.data` from its modal timer without
-  declaring `bl_options = {'UNDO'}`, so the first Ctrl+Z after an import
-  restored the last registered undo step — which could predate the import and
-  silently roll back user work along with it. It now declares
-  `{'REGISTER', 'UNDO'}`: Blender pushes the undo event when the modal returns
-  `FINISHED`, making the whole import (groups + modifiers, including "Update
-  existing groups") one undoable/redoable step; ESC/cancel does not push and
-  headless/background runs are unaffected. The sync operators (Pull, batch
-  pull, picker import) already had `UNDO`.
-- **NODES modifier inputs were silently reset on every Pull/import.**
-  Blender 5.2 stores modifier inputs keyed by the referenced tree's
-  interface-socket identifier; rebuilding a group renumbers the
-  interface, which orphaned the stored values and reset every configured
-  input to its default (e.g. a meshing chain dropping from 18 to 8
-  patches while the rebuilt graph itself was 100% faithful).  The
-  importer now snapshots every modifier that references the tree being
-  rebuilt — before the interface is cleared — and restores the values
-  through an identifier remap built by `(name, in_out)` matching
-  (`modifier_utils.py`); this covers Pull, batch pull, single-group
-  import and package import in one place.  The package import path
-  (`_apply_modifier_inputs`) also translates the serialized keys
-  (export-time identifiers) through the rebuild's interface map instead
-  of assuming they still match, and no longer depends on the tree being
-  built in the same order.  Menu inputs are plain integer indices (they
-  were already serialized) and are restored by the same pass.  The 5.1
-  legacy ID-property path (where Blender itself renames the stored keys)
-  is preserved as a harmless no-op.  Regression:
-  `tests/test_modifier_inputs_pull.py` (15 checks on 5.2 / 14 on 5.1,
-  in the release gate) — verified to fail (A5-A7) with the restore
-  disabled.
-- **Menu socket defaults on nodes were never serialized.** `MENU` was
-  listed in `_NON_SCALAR_SOCKET_TYPES`, so `serialize_node` skipped
-  `default_value` on every `NodeSocketMenu` input/output.  Per-node
-  overrides on Group nodes were reset to the referenced interface
-  default on import, silently changing geometry: a menu-switched meshing
-  chain produced no meshed instances where the original produced the
-  full patch set (the reconstructed object "disappeared").  Menu sockets
-  now serialize their string enum identifier (empty identifiers are
-  still omitted, matching the importer); node-level menu defaults are
-  deferred to the importer's final menu pass (where `enum_items` already
-  exist) instead of warning on the early attempt.  Regression: smoke T21
-  (5.1), E2E T9 (5.2) and the name-agnostic folder diagnostic
-  `tests/diag_menu_defaults.py` (every node-level menu default must
-  reach the JSON and every rebuilt group must hash identically).
-  Packages exported with the old serializer keep the lossy value and now
-  show "Changed in JSON" until re-exported.
-- **Nested interface panels were flattened on import.** `_rebuild_interface`
-  created every PANEL with `new_panel()` but never attached it to its parent
-  (the panel `parent` is read-only in the Python API; nesting requires
-  `interface.move_to_parent()`), so a panel inside a panel came back at the
-  root of the interface while its sockets kept pointing at it.  Panels now
-  nest exactly as serialized.  The canonical hash keeps the interface item
-  `parent` (empty parents excluded) so this class of divergence is visible
-  in sync from now on: HASH_VERSION 8, stored baselines are re-stamped
-  automatically.  Regression: smoke T22.
-- **Interface socket presentation flags were lost.** `is_panel_toggle`
-  and `structure_type` were skipped by the serializer and `optional_label`
-  was never applied on Menu sockets, so a bool socket acting as its
-  panel's toggle came back as a plain checkbox inside the panel and
-  list/field structure types reset to AUTO (12 / 5 / 9 sockets in the
-  reference project).  All three now roundtrip and are covered by the
-  canonical hash (HASH_VERSION 8); Blender only accepts `is_panel_toggle`
-  once the socket is nested in its panel, which the importer guarantees
-  by parenting every item before applying properties.  Regression: smoke
-  T22.
-- **Blender 5.x interface sockets are now handled as a complete,
-  self-verified matrix.** `parse_interface_socket_variant()` decomposes
-  every `NodeSocket<Base><Subtype>[2D|3D|4D]` name (Vector's 30 classes,
-  the Float/Int/String subtypes, and the integer-vector family) into base
-  type + dimensions + subtype; the importer builds them in that order.
-  The 12 GN-valid classes the Python API cannot build (Float/Int
-  `Unsigned`, the 10 integer-vector variants — no UNSIGNED enum value, no
-  `dimensions` on Int, and the `bl_socket_idname` recast crashes Blender
-  with an access violation) now fall back to their base type and are
-  **visible in the import report** (one WARN each: "cannot be recreated
-  by this Blender version").  The tree remembers the requested names so a
-  re-export never silently downgrades the JSON, and the canonical hash
-  maps them to the fallback so sync shows no phantom "Changed in JSON"
-  (HASH_VERSION 7).  New test `tests/verify_folder_recreation.py` sweeps
-  every class discovered from `bpy.types` (never a hand list) and fails
-  when a future Blender exposes one the parser does not know.
-- **Blender 5.2 vector interface sockets with subtype + extra dimensions
-  were dropped on import (`NodeSocketVectorFactor2D` and the whole
-  family).** The 5.2 interface API accepts only the base socket types and
-  the remap/subtype tables only covered the float/int/string/vector-3D
-  subtypes plus the plain 2D vector variants, so `new_socket()` raised on
-  e.g. `NodeSocketVectorFactor2D`.  A 582-group folder export with 10
-  such sockets logged 10 `[ERROR] Failed to create interface item …`,
-  lost the 14 links into/out of them (6 groups) and kept none of their
-  saved defaults.  The base+dimensions+subtype recipe now recreates every
-  creatable variant (including the 4D ones) exactly.
-- **4-component vector defaults serialized as `mathutils.Quaternion`
-  reprs.** `clean_value` handled `Vector`/`Color`/`Euler` but not
-  `Quaternion`/`Matrix`, so a 4D vector subtype default (e.g.
-  `NodeSocketVectorEuler4D`) became an unparseable string
-  (`"<Quaternion …>"`).  Quaternions now serialize as `[w, x, y, z]`,
-  matrices as rows, and `unclean_value` builds 4-component values for
-  `…4D` socket types.
-- **Spurious "Changed in JSON" for groups whose JSON carries `-0.0`.**
-  `round(-1e-9, 6)` writes `-0.0`, which `json.dumps` prints differently
-  from `0.0`; Blender stores float32 and flips the sign on re-export, so
-  two identical trees hashed differently (2 groups on the real project).
-  The canonical hash now normalises `-0.0` to `0.0` (stored baselines
-  migrate automatically via the re-baseline mechanism).
 - **"Missing in Blend" returned after every save for restored groups.**
   Blender does not persist zero-user node groups across save/reload; a
   group restored from JSON (or batch-imported) that nothing references
@@ -383,66 +473,16 @@ All notable changes to this project are documented in this file.
     spaces arrived quoted (`?? "dir/a b.json"`); status now runs with
     `-uall -z` (NUL-separated, unquoted, individual files), and a
     "No commits yet on <branch>" head line parses as that branch.
-- **Git jobs no longer run in a worker thread.** Every git call now
-  happens on the main thread: a job is a small generator of stages
-  executed by the existing timer pump — short local commands
-  (`status`/`add`/`commit`/`rev-parse`) run inline (tens of
-  milliseconds), fetch/pull/push are started as child processes and
-  polled across ticks (output to temporary files, never pipes, so a
-  verbose command cannot deadlock on a full buffer), and the Python
-  batches (tracked-path resolution, conflict scans over hundreds of
-  files) yield control between chunks. The job bodies receive the blend
-  directory and the sync metadata in their payload, resolved on the main
-  thread at submit time: they no longer reach into Blender data
-  (`bpy.data.filepath`) off the main thread, which the previous
-  worker did through the sync manager.   `shutdown_git_worker` is now
-  `shutdown_git_jobs`. A repo whose `git status` fails shows the error
-  in its panel row instead of failing the whole refresh.
-- **JSON writes are atomic.** Packages, standalone exports and the
-  `.gntsync` sidecar go through `file_utils.write_json_file`, which
-  writes to a temporary file in the destination directory and swaps it
-  into place with `os.replace` — previously `open(path, 'w')` truncated
-  the destination first, so a crash, a full disk or a stalled write
-  could leave a half-written source of truth and destroy the previous
-  good copy. A failed write now leaves the old file untouched (and no
-  `.tmp` files behind).
-- **Folder exports can no longer silently overwrite each other.** File
-  names use the same lossy cleaning rule as always (alphanumerics,
-  spaces and underscores kept; `A/B` and `A:B` both become `A_B`), so
-  the second file used to replace the first and the report counted node
-  trees instead of files. The exporter now allocates
-  unique stems (`A_B`, `A_B~<hash>` for the colliding one), falls back
-  to `unnamed` for empty names and prefixes Windows reserved device
-  names (`CON` → `_CON` — `CON.json` cannot be created), and reports
-  the number of files actually written plus every adjusted name
-  (`old → new`). The cleaning rule itself is unchanged, so existing
-  folder-export paths keep working (verified against the 439 group
-  names of the reference project: 0 differences). The active-group
-  export dialog sanitizes its default file name too.
-- **"Pull from JSON" raised `name 'conflicts' is not defined` after the
-  import.** The batch pull's completion log still referenced a
-  `conflicts` counter removed in an earlier refactor, so the operator
-  reported `Pull failed` (the import itself had already been applied).
-  Found by the new Blender 4.2 platform suite; the log now reports the
-  counters that exist (`imported`, `skipped`, `errors`, `auto-linked`,
-  `still differ`).
-- **"Reveal" buttons were Windows-only.** Both *Reveal JSON in Explorer*
-  and *Reveal Repository* called `os.startfile`, which does not exist on
-  macOS/Linux (the operators only warned). They now use Blender's native
-  `bpy.ops.wm.path_open`, so the folder opens in the system file browser
-  on every platform.
 
 ### Tests
 
-- Smoke suite (Blender 5.1): **143 checks** (+T8 encoding checks, T8b
+- Smoke suite (Blender 5.1): **131 checks** (+T8 encoding checks, T8b
   standalone write-back, T8c folder loader, T8d duplicated-socket
   regression, T8e git transport — 15 checks over a real temporary
   repository: status/commit/log/sync-fast-forward/divergence-refusal/
   conflict markers, with a bare local remote; skipped with a warning
-  when git is not installed; T19 atomic-write checks; T20 export
-  filename checks: reserved names, collision suffixes, one file per
-  group under the real folder export). New-node E2E (Blender 5.2):
-  40 checks (unchanged).
+  when git is not installed). New-node E2E (Blender 5.2): 40 checks
+  (unchanged).
 - Reproduction suite `tests/repro_folder_flow.py` (24 checks on 5.1 and 5.2):
   the full folder workflow — export by folders, per-group track, commit
   to a standalone file, folder batch track, master package track,
@@ -458,20 +498,6 @@ All notable changes to this project are documented in this file.
   (fast-forward), "Changed in JSON" + pull into the .blend, addon
   commit (standalone→package conversion visible to the colleague) and
   push. Passes 18/18 on 5.1.1 and 5.2.0.
-- Git job pipeline diagnostic `tests/diag_git_worker.py` (out-of-battery,
-  run manually; drives the pump by hand since background mode has no
-  timers): submit → stages → results → handlers, the status/commit/sync
-  jobs, the fetch-on-load path, the operator path, and that no git
-  thread is created and nothing runs before the pump ticks. Passes 30/30
-  on 5.1.1 and 5.2.0.
-- Blender 4.2 platform suite `tests/test_42_smoke.py` (21 checks): the
-  extension ZIP is installed from disk into an **isolated** extensions
-  directory under Blender **4.2.1 LTS** (the declared
-  `blender_version_min`), then the sync core runs end to end with
-  4.2-compatible nodes — install/enable, folder export, Track Folder,
-  local edit, Commit All (standalone → package write-back), external
-  JSON edit, Pull from JSON, status transitions. Found the `conflicts`
-  `NameError` fixed above. Passes 21/21 on 4.2.1.
 
 ## [0.2.3] - 2026-08-15
 
