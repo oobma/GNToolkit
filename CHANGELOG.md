@@ -147,6 +147,20 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Rebuilt Menu Switch items keep their serialized `Item_*`
+  identifiers.** A fresh Menu Switch node carries two default items
+  (`Item_0`, `Item_1`) and creating items after `clear()` continues the
+  node's counter (`Item_2`, ...); identifiers cannot be assigned through
+  RNA in 5.x. Modifier menu values are matched against those identifier
+  suffixes, so a rebuilt menu whose serialized value pointed at
+  `Item_0`/`Item_1` resolved to no item and every menu-driven chain
+  evaluated empty (the 8 known object divergences of the headless
+  recreation verifier: displaced surfaces rendered undisplaced). The
+  rebuild now grows the item collection up to the highest serialized
+  suffix and removes the unwanted items, reproducing the original
+  identifiers exactly; the recreation verifier reports 35/35 with the
+  allowlist now EMPTY (any divergence fails again). Regression:
+  `tests/verify_project_recreation.py` and `tests/test_52_new_nodes_e2e.py`.
 - **Modifier inputs with legacy identifiers survive 5.2 imports again.** On
   Blender 5.2, NODES modifier inputs are keyed by interface-socket identifier:
   sockets added recently use `Socket_N`, but sockets inherited from older files
