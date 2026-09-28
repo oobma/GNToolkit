@@ -14,6 +14,9 @@ Audit modes (same pure-Python core, no Blender):
     python gnt_check.py <folder> --duplicates
     python gnt_check.py <folder> [--baseline project.blend.gntsync] --health
 
+Cross-project identity (same pure-Python core, no Blender):
+    python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups [--strict]
+
 Baseline sources:
     * a .gntsync sidecar next to a .blend (paths relative to the sidecar dir)
     * a flat JSON mapping group name -> canonical hash
@@ -22,6 +25,7 @@ Exit codes:
     0  all groups clean (or, without a baseline, everything parsed)
     1  changes or missing groups detected
     2  usage / IO / parse errors (with --strict, unparseable files also exit 2)
+    In --cross mode, --strict exits 1 when divergent forks are found.
 """
 
 from __future__ import annotations
@@ -285,6 +289,43 @@ def run_health(folder: str | None, baseline_path: str | None,
     return 2 if (strict and hard) else 0
 
 
+def run_cross(targets, as_json: bool, strict: bool) -> int:
+    audit = _load_audit()
+    for target in targets:
+        if not os.path.exists(target):
+            print(f"error: target not found: {target}")
+            return 2
+    report = audit.cross_project(targets)
+    total_groups = sum(p["groups"] for p in report["projects"])
+    if as_json:
+        print(json.dumps(report))
+    else:
+        print(f'cross-project: {len(report["projects"])} project(s), '
+              f'{total_groups} group(s)')
+        for p in report["projects"]:
+            extra = (f', {p["unreadable"]} unreadable'
+                     if p["unreadable"] else "")
+            print(f'  [{p["label"]}] {p["groups"]} groups{extra}')
+        print(f'shared logic: {len(report["shared"])} bucket(s)')
+        for b in report["shared"]:
+            print(f'  [{b["hash"][:12]}...]')
+            for g in b["groups"]:
+                print(f'      {g["project"]}: {g["name"]}')
+        print(f'divergent forks: {len(report["forks"])} group(s)')
+        for f in report["forks"]:
+            print(f'  {f["name"]}')
+            for v in f["versions"]:
+                who = ", ".join(f'{g["project"]}:{g["name"]}'
+                                for g in v["groups"])
+                print(f'      [{v["hash"][:12]}... x{v["count"]}] {who}')
+    if total_groups == 0:
+        print("error: no readable group JSONs in the given targets")
+        return 2
+    if strict and report["forks"]:
+        return 1
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="gnt_check",
@@ -305,6 +346,11 @@ def main(argv=None) -> int:
                     help="report groups with identical logic (content hash)")
     ap.add_argument("--health", action="store_true",
                     help="consolidated JSON-side health report")
+    ap.add_argument("--cross", nargs="+", metavar="PATH",
+                    help="compare two or more projects (folders of JSONs "
+                         "or JSON files) by content hash: shared logic and "
+                         "divergent forks; with --strict, divergent forks "
+                         "exit 1")
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -323,6 +369,10 @@ def main(argv=None) -> int:
         return run_duplicates(args.target, args.json)
     if args.health:
         return run_health(args.target, args.baseline, args.json, args.strict)
+    if args.cross:
+        if len(args.cross) < 2:
+            ap.error("--cross needs at least two targets")
+        return run_cross(args.cross, args.json, args.strict)
 
     if not args.target:
         ap.error("a target folder/file is required (or use --selftest)")

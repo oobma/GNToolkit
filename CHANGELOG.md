@@ -6,6 +6,17 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Cross-project identity (`gnt_check --cross`).** Compare two or more
+  projects (folders of per-group JSONs, or standalone/package JSON files)
+  by canonical content hash, without Blender: *shared* buckets (the same
+  logic shipped in several projects, even under different names), *forks*
+  (a group name present in several projects with diverging versions, with
+  the per-version spread) and per-project group/unreadable counts.
+  Deterministic, supports `--json`; `--strict` exits non-zero when
+  divergent forks exist (a library repository can gate on it). Pure
+  `audit.cross_project`, covered by `tests/test_cross_project.py` in the
+  release gate.
+
 - **Copyable CI template for project repositories (`docs/GITHUB_ACTIONS.md`).**
   A GitHub Actions workflow that fetches `gnt_check.py` at a pinned tag and
   runs the JSON-side status check (`--strict`) plus the duplicate and health

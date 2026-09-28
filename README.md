@@ -89,14 +89,20 @@ python gnt_check.py NodeGroups/ --strict
 python gnt_check.py --impact "My Group" --baseline project.blend.gntsync
 python gnt_check.py NodeGroups/ --duplicates
 python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --health
+
+# Compare two or more projects by content: shared logic, diverging forks
+python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups
 ```
 
 Audits answer the project questions that come before a change:
 **impact** (reverse dependency graph + transitive closure — *what breaks
 if I touch this group?*), **duplicates** (content fingerprints that
-ignore group identity — *is this logic copied under two names?*) and
+ignore group identity — *is this logic copied under two names?*),
 **health** (unreadable or conflicted JSONs, missing files, references to
-untracked groups). All support `--json`.
+untracked groups) and **cross** (compare two or more projects — *is this
+same group shipped in another project, under any name, and which shared
+groups have diverged?*; `--strict` exits non-zero when forks diverge). All
+support `--json`.
 
 The same audits are available inside Blender: the **Sync Issues** panel
 has an **Audit** section (Run / Clear) that reports duplicates, JSON

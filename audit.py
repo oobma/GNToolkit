@@ -13,6 +13,10 @@ Three questions answered from data the addon already stores:
 * health     — "is the JSON side of the project sound?" — missing files,
                unreadable JSONs, git conflict markers, external
                references and duplicate buckets.
+* cross      — "is the same logic shipped in another project?" — content
+               identity compared across two or more project folders or
+               packages: shared buckets, diverging forks, per-project
+               counts.
 
 Used by gnt_check (headless CLI) and by the addon's Audit operator.
 """
@@ -285,3 +289,113 @@ def health(folder: str | None = None, metadata: dict | None = None,
                                                      metadata_dir or "")
         report["external_refs"] = external_refs(metadata)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Cross-project identity
+# ---------------------------------------------------------------------------
+
+def _scan_target(path: str) -> list:
+    """Records for a folder of per-group JSONs or a single JSON file.
+
+    Same record shape as ``scan_folder``; a ``GN_UNIFIED_PACKAGE`` file
+    yields one record per packed group.
+    """
+    if os.path.isdir(path):
+        return scan_folder(path)
+    text = _read_text(path)
+    if text is None:
+        return [{"path": path, "name": None, "data": None,
+                 "error": "unreadable"}]
+    if _CONFLICT_MARKER in text:
+        return [{"path": path, "name": None, "data": None,
+                 "error": "conflict"}]
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return [{"path": path, "name": None, "data": None,
+                 "error": "unreadable"}]
+    if not isinstance(data, dict):
+        return [{"path": path, "name": None, "data": None,
+                 "error": "unreadable"}]
+    if data.get("type") == "GN_UNIFIED_PACKAGE":
+        return [{"path": path, "name": gname, "data": gdata, "error": None}
+                for gname, gdata in (data.get("node_groups") or {}).items()]
+    return [{"path": path, "name": data.get("name"), "data": data,
+             "error": None}]
+
+
+def _target_labels(targets: list) -> list:
+    """Project labels: the base name, or the given path when base names
+    collide (so two ``NodeGroups`` folders stay tellable apart)."""
+    base = [os.path.basename(os.path.normpath(t)) or t for t in targets]
+    counts: dict = {}
+    for b in base:
+        counts[b] = counts.get(b, 0) + 1
+    return [t if counts[b] > 1 else b
+            for t, b in zip(targets, base)]
+
+
+def cross_project(targets) -> dict:
+    """Compare group logic across projects by canonical content hash.
+
+    targets: iterable of paths (folders of per-group JSONs, or JSON files
+    — standalone or ``GN_UNIFIED_PACKAGE``).
+
+    Returns ``{"projects", "shared", "forks"}``:
+
+    * projects — ``{"label", "path", "groups", "unreadable"}`` per target.
+    * shared   — hashes present in two or more distinct projects, each as
+                 ``{"hash", "groups": [{"project", "name"}...]}``.
+    * forks    — group names present in two or more projects with two or
+                 more distinct hashes, each as ``{"name", "versions"}``
+                 with ``{"hash", "count", "groups"}`` per version
+                 (biggest first).
+
+    All lists are sorted deterministically.
+    """
+    targets = list(targets)
+    labels = _target_labels(targets)
+    projects = []
+    entries = []
+    for label, path in zip(labels, targets):
+        records = _scan_target(path)
+        good = [r for r in records if r["error"] is None and r["name"]]
+        projects.append({"label": label, "path": path,
+                         "groups": len(good),
+                         "unreadable": sum(1 for r in records
+                                           if r["error"] is not None)})
+        for rec in good:
+            entries.append((label, rec["name"],
+                            content_hash_from_json_data(rec["data"])))
+
+    by_hash: dict = {}
+    by_name: dict = {}
+    for label, name, h in entries:
+        by_hash.setdefault(h, []).append({"project": label, "name": name})
+        by_name.setdefault(name, {}).setdefault(h, []).append(
+            {"project": label, "name": name})
+
+    def sort_groups(groups):
+        return sorted(groups, key=lambda g: (g["project"], g["name"]))
+
+    shared = [{"hash": h, "groups": sort_groups(groups)}
+              for h, groups in by_hash.items()
+              if len({g["project"] for g in groups}) >= 2]
+    shared.sort(key=lambda b: (-len(b["groups"]), b["hash"]))
+
+    forks = []
+    for name, versions in by_name.items():
+        if len(versions) < 2:
+            continue
+        if len({g["project"] for groups in versions.values()
+                for g in groups}) < 2:
+            continue
+        vlist = [{"hash": h, "count": len(groups),
+                  "groups": sort_groups(groups)}
+                 for h, groups in versions.items()]
+        vlist.sort(key=lambda v: (-v["count"], v["hash"]))
+        forks.append({"name": name, "versions": vlist})
+    forks.sort(key=lambda f: f["name"])
+
+    return {"projects": projects, "shared": shared, "forks": forks}
