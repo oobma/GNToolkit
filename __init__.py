@@ -26,7 +26,7 @@ from .sync_manager import sync_manager, SyncStatus
 bl_info = {
     "name": "GNToolkit",
     "author": "oobma / AI assistant",
-    "version": (0, 2, 5),
+    "version": (0, 2, 6),
     "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GN Tools",
     "description": "Git-style version control for Geometry Nodes: canonical JSON (DNA) vs .blend (RNA), per-group statuses, conflicts, Git collaboration, and pure-Python headless checks (gnt_check).",

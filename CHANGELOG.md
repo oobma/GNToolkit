@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.6] - 2026-09-28
+
+### Fixed
+
+- **UTF-8 BOM removed from `sync_operators.py`.** Python tolerates a BOM
+  when importing, so the release gate never blinked — but the Blender
+  Extensions Platform review utility (`extensions_review`) parses every
+  shipped file with `ast.parse` on decoded text and reported
+  `SyntaxError: invalid non-printable character U+FEFF` on line 1. A
+  "syntax error" in the submitted package is exactly the kind of thing a
+  review flags, so the three bytes are gone. Verified by re-running the
+  review utility against the rebuilt package: no parse errors remain.
+
+- **Repo row display name no longer builds on a literal backslash**
+  (`git_integration.py`): `root.rstrip("\\/")` became
+  `os.path.basename(os.path.normpath(root))` — same result for drive
+  roots and UNC paths, and it silences the review utility's
+  `non_portable_backslash` and `error_prone_string_strip` warnings.
+
 ## [0.2.5] - 2026-09-28
 
 ### Added
