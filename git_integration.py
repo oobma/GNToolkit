@@ -351,7 +351,7 @@ def _repo_inputs():
 def _build_repo_entry(root, paths, st):
     """Decorate a status dict with root/name/tracked_changed and defaults."""
     st["root"] = root
-    st["name"] = os.path.basename(root.rstrip("\\/")) or root
+    st["name"] = os.path.basename(os.path.normpath(root)) or root
     st["tracked_changed"] = []
     if st.get("ok"):
         for p in paths:

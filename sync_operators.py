@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 gn_toolkit.sync_operators — Blender operators for DNA/RNA sync actions.
 
