@@ -27,6 +27,16 @@ All notable changes to this project are documented in this file.
   until that tag exists on GitHub, pin `v0.2.5` (identical `gnt_check.py`).
   Deliberately kept unreleased until the v0.2.6 GitHub release.
 
+### Changed
+
+- **Public framing.** The tagline and store copy now read *"version
+  control with semantics for Blender node trees"* (Geometry Nodes is the
+  first supported tree type) instead of "for Geometry Nodes": README,
+  `blender_manifest.toml` tagline, `bl_info` description and the store
+  text. The tagline ships inside the manifest, so the platform listing
+  shows it from the next version upload; the store description can be
+  updated from the extension edit page right away.
+
 ## [0.2.6] - 2026-09-28
 
 ### Fixed

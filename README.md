@@ -1,12 +1,13 @@
 # GNToolkit
 
-**Git-style version control for Blender Geometry Nodes.**
+**Version control with semantics for Blender node trees.**
 
 Node groups are serialized into deterministic JSON files — the DNA, or
 source of truth — while the .blend stays your working cache (RNA).
 GNToolkit watches both sides: canonical change detection, per-group sync
 statuses, dependency-aware import and a commit/pull/conflict loop that
-plugs into Git, all from inside Blender.
+plugs into Git, all from inside Blender. Geometry Nodes is the first
+supported tree type.
 
 The status layer also runs **headless**: the JSON side is pure Python, so
 the same canonical hashes the addon uses in Blender can be checked without
