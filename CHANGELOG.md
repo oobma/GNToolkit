@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Copyable CI template for project repositories (`docs/GITHUB_ACTIONS.md`).**
+  A GitHub Actions workflow that fetches `gnt_check.py` at a pinned tag and
+  runs the JSON-side status check (`--strict`) plus the duplicate and health
+  audits on every pull request touching `NodeGroups/` or the `.gntsync`
+  sidecar: an accidental overwrite, a missing file or an unresolved merge
+  conflict fails the PR before anyone merges. The template is part of this
+  repository only — it never enters the extension zip. Pinned to `v0.2.6`;
+  until that tag exists on GitHub, pin `v0.2.5` (identical `gnt_check.py`).
+  Deliberately kept unreleased until the v0.2.6 GitHub release.
+
 ## [0.2.6] - 2026-09-28
 
 ### Fixed
