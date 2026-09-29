@@ -6,7 +6,8 @@ Three questions answered from data the addon already stores:
 
 * impact     — "what breaks if I change this group?" — reverse dependency
                graph + transitive closure over the metadata's depends_on
-               uuids (cycles are safe).
+               uuids (cycles are safe), plus the objects using the group
+               as a modifier (Modifiers exports or the live .blend).
 * duplicates — "do I have the same logic copied under two names?" —
                content hash that ignores group identity (the group name
                and the name-derived ``node_tool_idname``).
@@ -108,6 +109,79 @@ def impact(metadata, name_or_uid: str):
         "direct": [entry(u) for u in direct],
         "transitive": [entry(u) for u in order],
     }
+
+
+def _metadata_path(rel: str, metadata_dir: str) -> str:
+    """Resolve a tracked ``json_path`` against the sidecar/.blend folder.
+
+    Blender stores tree paths relative to the .blend with a leading ``//``
+    (e.g. ``//582/NodeGroups/x.json``); plain relative paths are joined to
+    ``metadata_dir`` and absolute paths are kept as-is.
+    """
+    path = (rel or "").strip()
+    if path.startswith("//"):
+        path = path[2:]
+    if metadata_dir and not os.path.isabs(path):
+        path = os.path.join(metadata_dir, path)
+    return os.path.normpath(path)
+
+
+def scan_modifier_records(folder: str) -> list:
+    """Records from a folder of ``Modifiers/*.json`` exports.
+
+    Each record is ``{"object", "modifier", "node_group"}``.  Unreadable or
+    malformed files, and files without object/node_group, are skipped.
+    """
+    records = []
+    if not folder or not os.path.isdir(folder):
+        return records
+    for name in sorted(os.listdir(folder)):
+        if not name.lower().endswith(".json"):
+            continue
+        text = _read_text(os.path.join(folder, name))
+        if text is None:
+            continue
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        obj = data.get("object")
+        group = data.get("node_group")
+        if not obj or not group:
+            continue
+        records.append({"object": obj,
+                        "modifier": data.get("modifier_name") or "",
+                        "node_group": group})
+    return records
+
+
+def modifier_consumers(records: list, group_name: str) -> list:
+    """Objects/modifiers using ``group_name``, sorted by (object, modifier)."""
+    users = [{"object": r["object"], "modifier": r["modifier"]}
+             for r in records if r.get("node_group") == group_name]
+    users.sort(key=lambda u: (u["object"], u["modifier"]))
+    return users
+
+
+def modifiers_dir_for(metadata, metadata_dir: str = "") -> str:
+    """Sibling ``Modifiers`` folder of the tracked JSONs, when it exists.
+
+    Derives ``<root>/<subfolder>/<file>.json`` -> ``<root>/Modifiers`` from
+    the tracked metadata.  Returns "" when it cannot be determined or the
+    folder does not exist.
+    """
+    for info in _tracked(metadata).values():
+        rel = (info or {}).get("json_path") or ""
+        if not rel:
+            continue
+        path = _metadata_path(rel, metadata_dir)
+        candidate = os.path.join(os.path.dirname(os.path.dirname(path)),
+                                 "Modifiers")
+        if os.path.isdir(candidate):
+            return candidate
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +326,7 @@ def missing_json_files(metadata, metadata_dir: str) -> list:
         if not rel:
             out.append({"uid": uid, "name": name, "path": None})
             continue
-        path = os.path.normpath(os.path.join(metadata_dir, rel))
+        path = _metadata_path(rel, metadata_dir)
         if not os.path.isfile(path):
             out.append({"uid": uid, "name": name, "path": path})
     out.sort(key=lambda e: e["name"])

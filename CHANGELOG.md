@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Dependency impact now covers object/modifier consumers.** Besides the
+  groups that depend on a group (direct + transitive closure from the sidecar
+  metadata), `gnt_check.py --impact` — auto-discovering the `Modifiers/`
+  exports next to the sidecar or via `--modifiers DIR` — and the Sync Issues
+  audit report the **objects using the group as a modifier** (from the
+  exports, or the live .blend inside Blender). `--json` gains a `modifiers`
+  list.
+
+- **Optional impact step in the CI template** (`docs/CI_TEMPLATE.md`):
+  `gnt_check.py --impact "Group" --baseline …` as an informational check.
+
+### Fixed
+
+- **`--health` / `missing_json_files` now resolve Blender-relative paths.**
+  Tracked `json_path`s are stored as `//582/NodeGroups/…`; joining them
+  naively made every file look missing on real sidecars (583/583 false
+  positives on the reference project). Paths are now resolved against the
+  sidecar folder, `//` marker included.
+
 ## [0.2.7] - 2026-09-29
 
 ### Added

@@ -605,14 +605,27 @@ class GN_OT_AuditProject(bpy.types.Operator):
             if imp is None:
                 _audit_add(state, "impact", f"{target} — not tracked")
             else:
+                consumers = []
+                for obj in bpy.data.objects:
+                    for mod in obj.modifiers:
+                        if (mod.type == 'NODES'
+                                and mod.node_group is not None
+                                and mod.node_group.name == imp["name"]):
+                            consumers.append(f"{obj.name} ({mod.name})")
                 head = ", ".join(e["name"] for e in imp["direct"][:4])
                 more = len(imp["direct"]) - 4
                 suffix = f" — {head}" if head else ""
                 if more > 0:
                     suffix += f" (+{more} more)"
-                _audit_add(state, "impact",
-                           f'{imp["name"]}: {len(imp["direct"])} direct, '
-                           f'{len(imp["transitive"])} total dependents{suffix}')
+                line = (f'{imp["name"]}: {len(imp["direct"])} direct, '
+                        f'{len(imp["transitive"])} total dependents{suffix}')
+                if consumers:
+                    extra = len(consumers) - 4
+                    line += (f" · used by {len(consumers)} object modifier(s): "
+                             + ", ".join(consumers[:4]))
+                    if extra > 0:
+                        line += f" (+{extra} more)"
+                _audit_add(state, "impact", line)
 
         state.summary = (
             f'{len(buckets)} duplicate bucket(s) · {len(ext)} external ref(s) '

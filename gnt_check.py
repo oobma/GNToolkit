@@ -10,7 +10,7 @@ Usage:
     python gnt_check.py <folder_or_package> [--baseline <file>] [--json] [--strict]
 
 Audit modes (same pure-Python core, no Blender):
-    python gnt_check.py --impact "<group>" --baseline project.blend.gntsync
+    python gnt_check.py --impact "<group>" --baseline project.blend.gntsync [--modifiers DIR]
     python gnt_check.py <folder> --duplicates
     python gnt_check.py <folder> [--baseline project.blend.gntsync] --health
 
@@ -202,7 +202,8 @@ def _load_metadata(path: str):
     return None
 
 
-def run_impact(baseline_path: str, target_name: str, as_json: bool) -> int:
+def run_impact(baseline_path: str, target_name: str, as_json: bool,
+               modifiers_path: str = "") -> int:
     if not baseline_path:
         print("error: --impact requires --baseline (a .gntsync sidecar)")
         return 2
@@ -215,6 +216,18 @@ def run_impact(baseline_path: str, target_name: str, as_json: bool) -> int:
     if result is None:
         print(f"error: group not tracked: {target_name}")
         return 2
+    if modifiers_path:
+        if not os.path.isdir(modifiers_path):
+            print(f"error: --modifiers folder not found: {modifiers_path}")
+            return 2
+        mods_dir = modifiers_path
+    else:
+        mods_dir = audit.modifiers_dir_for(metadata,
+                                           os.path.dirname(baseline_path))
+    consumers = audit.modifier_consumers(
+        audit.scan_modifier_records(mods_dir) if mods_dir else [],
+        result["name"])
+    result["modifiers"] = consumers
     if as_json:
         print(json.dumps(result))
         return 0
@@ -225,6 +238,10 @@ def run_impact(baseline_path: str, target_name: str, as_json: bool) -> int:
     for e in result["transitive"]:
         tag = "direct" if e["uid"] in direct_uids else "transitive"
         print(f'  [{tag}] {e["name"]}')
+    if consumers:
+        print(f'Used by {len(consumers)} object modifier(s):')
+        for c in consumers:
+            print(f'  [object] {c["object"]} — "{c["modifier"]}"')
     return 0
 
 
@@ -342,6 +359,10 @@ def main(argv=None) -> int:
     ap.add_argument("--impact", metavar="GROUP",
                     help="report direct/transitive dependents of GROUP "
                          "(requires --baseline)")
+    ap.add_argument("--modifiers", metavar="DIR",
+                    help="folder of Modifiers JSON exports; --impact also "
+                         "lists the objects/modifiers using the group "
+                         "(default: auto-discovered next to the sidecar)")
     ap.add_argument("--duplicates", action="store_true",
                     help="report groups with identical logic (content hash)")
     ap.add_argument("--health", action="store_true",
@@ -362,7 +383,8 @@ def main(argv=None) -> int:
         pass
 
     if args.impact:
-        return run_impact(args.baseline, args.impact, args.json)
+        return run_impact(args.baseline, args.impact, args.json,
+                          args.modifiers or "")
     if args.duplicates:
         if not args.target:
             ap.error("--duplicates requires a target folder")
