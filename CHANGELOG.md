@@ -39,6 +39,19 @@ All notable changes to this project are documented in this file.
   shows it from the next version upload; the store description can be
   updated from the extension edit page right away.
 
+- **Author metadata aligned with the manifest**: `bl_info` now mirrors the
+  `blender_manifest.toml` maintainer.
+
+### Fixed
+
+- **The JSON lock no longer interrogates the operating system**
+  (`sync_manager.py`). The stale-lock check used a Windows-only OS call
+  (`ctypes.windll.kernel32.OpenProcess`) to test whether the PID that took
+  the lock was still alive; it is replaced by time-based staleness — a lock
+  older than 3× `LOCK_TIMEOUT_SECONDS` (15 s) is treated as orphaned — while
+  keeping the same-PID re-entrancy. Same behaviour, and no OS-level or
+  platform-specific calls remain in the add-on.
+
 ## [0.2.6] - 2026-09-28
 
 ### Fixed
