@@ -17,15 +17,17 @@ All notable changes to this project are documented in this file.
   `audit.cross_project`, covered by `tests/test_cross_project.py` in the
   release gate.
 
-- **Copyable CI template for project repositories (`docs/GITHUB_ACTIONS.md`).**
-  A GitHub Actions workflow that fetches `gnt_check.py` at a pinned tag and
+- **Copyable CI template for project repositories (`docs/CI_TEMPLATE.md`).**
+  A ready-to-copy CI recipe that fetches `gnt_check.py` at a pinned tag and
   runs the JSON-side status check (`--strict`) plus the duplicate and health
-  audits on every pull request touching `NodeGroups/` or the `.gntsync`
+  audits on every proposed change touching `NodeGroups/` or the `.gntsync`
   sidecar: an accidental overwrite, a missing file or an unresolved merge
-  conflict fails the PR before anyone merges. The template is part of this
-  repository only — it never enters the extension zip. Pinned to `v0.2.6`;
-  until that tag exists on GitHub, pin `v0.2.5` (identical `gnt_check.py`).
-  Deliberately kept unreleased until the v0.2.6 GitHub release.
+  conflict fails the change before anyone merges. The two commands are the
+  same on any CI runner — the document includes an example workflow for a
+  hosted CI service. The template is part of this repository only — it never
+  enters the extension zip. Pinned to `v0.2.6`; until that tag exists, pin
+  `v0.2.5` (identical `gnt_check.py`). Deliberately kept unreleased until the
+  v0.2.6 release.
 
 ### Changed
 

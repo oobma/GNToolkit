@@ -1,14 +1,19 @@
-# Reviewing node changes in pull requests (GitHub Actions)
+# Reviewing node changes in CI
 
 **Status: unreleased.** This template lives in the repository (it is never
-shipped inside the extension zip) and is pinned to `v0.2.6`. Until the
-`v0.2.6` tag exists on GitHub, pin `v0.2.5` instead — `gnt_check.py` is
-identical in both.
+shipped inside the extension zip). The workflow downloads `gnt_check.py` from
+a **tagged release** of this repository, so the pinned tag matters: the
+`v0.2.6` tag is not published yet — until it is, use `v0.2.5` in the download
+URL below. `gnt_check.py` is identical in both tags, so the checks behave the
+same either way.
 
 The JSON side of GNToolkit runs without Blender, so a project repository can
-review node changes in CI: every pull request that touches the tracked JSONs
-or the `.gntsync` sidecar gets its status checked and its health audited
-before anyone merges — no Blender on the runner, seconds of CPU.
+review node changes in CI: every proposed change touching the tracked JSONs or
+the `.gntsync` sidecar gets its status checked and its health audited before
+anyone merges — no Blender on the runner, seconds of CPU. Any CI service that
+can check out a repository tag and run Python 3.11+ works: the commands below
+are the whole integration. The example at the end is written for one hosted CI
+service; only the wrapper changes between services.
 
 ## What it catches
 
@@ -23,12 +28,24 @@ before anyone merges — no Blender on the runner, seconds of CPU.
 It does not look at the `.blend`: accidents that live only in the working
 file never reach git, and are the addon's job (status panel at pull time).
 
-## Setup (once per project repository)
+## The commands
 
-1. Copy the workflow below to `.github/workflows/gnt-check.yml`.
-2. Adjust the two paths: your folder of per-group JSONs (here `NodeGroups`)
-   and your sidecar (here `project.blend.gntsync`).
-3. Commit. No secrets, no runner setup.
+Fetch `gnt_check.py` at the addon tag and run the checks:
+
+```
+python gnt_check.py NodeGroups --baseline project.blend.gntsync --strict
+python gnt_check.py NodeGroups --duplicates
+python gnt_check.py NodeGroups --baseline project.blend.gntsync --health --strict
+```
+
+`gnt_check.py` must come from the same tag as the addon: the canonical hashes
+must match the ones the team computes inside Blender.
+
+## Example — hosted CI workflow (GitHub Actions)
+
+Adjust the two paths (your folder of per-group JSONs, here `NodeGroups`, and
+your sidecar, here `project.blend.gntsync`) and the pinned tag, then commit.
+No secrets, no runner setup.
 
 ```yaml
 name: GNToolkit check
@@ -64,16 +81,13 @@ jobs:
           python gnt/gnt_check.py NodeGroups --baseline project.blend.gntsync --health --strict
 ```
 
-`gnt_check.py` is fetched at the same tag as the addon: the canonical
-hashes must match the ones the team computes inside Blender.
-
 ## What the status step reports (exit codes)
 
 - `0` — every tracked group matches the sidecar.
-- `1` — changes or missing groups: the pull request must update the sidecar
+- `1` — changes or missing groups: the change must update the sidecar
   (Refresh Status inside Blender) or restore the group that was overwritten.
 - `2` — unreadable files or unresolved conflict markers (with `--strict`):
-  fix the merge before this pull request can pass.
+  fix the merge before it can pass.
 
 The duplicate audit is informational (always exits `0`); the health audit
 fails under `--strict` only on hard problems (unreadable files, conflict
@@ -93,8 +107,8 @@ A non-zero exit blocks the commit.
 
 `--json` prints one dict for the status report (`files`, `groups`, `clean`,
 `changed`, `missing`, `unparseable`, `dt_seconds`); the audits support it
-too (`--duplicates`, `--health`, `--impact`). Use it to build richer pull
-request summaries later without changing this template.
+too (`--duplicates`, `--health`, `--impact`). Use it to build richer change
+summaries later without changing this template.
 
 ## Why it can be trusted
 

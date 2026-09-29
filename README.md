@@ -119,14 +119,15 @@ errors. The canonical hashes are the same ones the addon computes inside
 Blender, so a hook and a `Refresh Status` always agree. The full status
 check of a 582-group project runs in ~3 seconds.
 
-### Reviewing node changes in pull requests
+### Reviewing node changes in CI
 
-`docs/GITHUB_ACTIONS.md` has a copyable GitHub Actions workflow (unreleased,
-pinned to the `v0.2.6` tag; until that tag exists, pin `v0.2.5`) that runs
-the status check and the audits on every pull request touching `NodeGroups/`
-or the `.gntsync` sidecar. An accidental overwrite, a missing file or an
-unresolved merge conflict fails the PR before anyone merges. It is part of
-this repository — never part of the extension zip.
+`docs/CI_TEMPLATE.md` has a copyable CI recipe (unreleased, pinned to the
+`v0.2.6` tag; until that tag exists, pin `v0.2.5`) that runs the status check
+and the audits on every proposed change touching `NodeGroups/` or the
+`.gntsync` sidecar — in the CI service of your choice. An accidental
+overwrite, a missing file or an unresolved merge conflict fails the change
+before anyone merges. It is part of this repository — never part of the
+extension zip.
 
 ## Features
 
