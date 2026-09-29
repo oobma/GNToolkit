@@ -79,30 +79,12 @@ class SyncStatus(Enum):
 class JsonLock:
     """Simple lock file to prevent concurrent JSON writes.
 
-    Uses PID-based staleness detection to avoid blocking on orphaned
-    locks from crashed Blender sessions.
+    Uses timestamp-based staleness detection: a lock older than
+    3× LOCK_TIMEOUT_SECONDS is treated as orphaned (crashed session).
     """
 
     def __init__(self, json_path: str):
         self.lock_path = json_path + ".lock"
-
-    def _is_pid_alive(self, pid: int) -> bool:
-        """Check if a process with the given PID is still running."""
-        try:
-            if os.name == "nt":
-                import ctypes
-                kernel32 = ctypes.windll.kernel32
-                PROCESS_QUERY_INFORMATION = 0x0400
-                handle = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid)
-                if handle == 0:
-                    return False
-                kernel32.CloseHandle(handle)
-                return True
-            else:
-                os.kill(pid, 0)
-                return True
-        except (OSError, AttributeError, Exception):
-            return False
 
     def acquire(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> bool:
         start = time.time()
@@ -128,8 +110,8 @@ class JsonLock:
                     if lock_pid == os.getpid():
                         return True
 
-                    # Stale if: PID dead OR age > 15s
-                    if not self._is_pid_alive(lock_pid) or age > LOCK_TIMEOUT_SECONDS * 3:
+                    # Stale if age exceeds the grace window
+                    if age > LOCK_TIMEOUT_SECONDS * 3:
                         try:
                             os.remove(self.lock_path)
                             continue
@@ -172,7 +154,7 @@ class JsonLock:
                 age = time.time() - lock_time
                 if lock_pid == os.getpid():
                     return False
-                if not self._is_pid_alive(lock_pid) or age > LOCK_TIMEOUT_SECONDS * 3:
+                if age > LOCK_TIMEOUT_SECONDS * 3:
                     return False
                 return True
             # Malformed lock file — treat as not locked
