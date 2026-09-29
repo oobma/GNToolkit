@@ -3,9 +3,9 @@
 **Status: unreleased.** This template lives in the repository (it is never
 shipped inside the extension zip). The workflow downloads `gnt_check.py` from
 a **tagged release** of this repository, so the pinned tag matters: the
-`v0.2.6` tag is not published yet — until it is, use `v0.2.5` in the download
-URL below. `gnt_check.py` is identical in both tags, so the checks behave the
-same either way.
+`v0.2.7` tag is not published yet — until it is, use `v0.2.5` in the download
+URL below. The template's commands are unchanged between tags, so the checks
+behave the same either way.
 
 The JSON side of GNToolkit runs without Blender, so a project repository can
 review node changes in CI: every proposed change touching the tracked JSONs or
@@ -68,9 +68,9 @@ jobs:
 
       - name: Fetch GNToolkit (pinned to the addon tag)
         run: |
-          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.2.6.zip
+          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.2.7.zip
           unzip -q gnt.zip
-          mv GNToolkit-0.2.6 gnt
+          mv GNToolkit-0.2.7 gnt
 
       - name: JSON-side status check
         run: python gnt/gnt_check.py NodeGroups --baseline project.blend.gntsync --strict

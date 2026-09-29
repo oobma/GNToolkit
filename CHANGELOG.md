@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.2.7] - 2026-09-29
 
 ### Added
 
@@ -25,9 +25,8 @@ All notable changes to this project are documented in this file.
   conflict fails the change before anyone merges. The two commands are the
   same on any CI runner — the document includes an example workflow for a
   hosted CI service. The template is part of this repository only — it never
-  enters the extension zip. Pinned to `v0.2.6`; until that tag exists, pin
-  `v0.2.5` (identical `gnt_check.py`). Deliberately kept unreleased until the
-  v0.2.6 release.
+  enters the extension zip. Pinned to `v0.2.7`; until that tag exists, pin
+  `v0.2.5` (the template's commands are unchanged between tags).
 
 ### Changed
 

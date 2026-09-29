@@ -121,13 +121,13 @@ check of a 582-group project runs in ~3 seconds.
 
 ### Reviewing node changes in CI
 
-`docs/CI_TEMPLATE.md` has a copyable CI recipe (unreleased, pinned to the
-`v0.2.6` tag; until that tag exists, pin `v0.2.5`) that runs the status check
-and the audits on every proposed change touching `NodeGroups/` or the
-`.gntsync` sidecar — in the CI service of your choice. An accidental
-overwrite, a missing file or an unresolved merge conflict fails the change
-before anyone merges. It is part of this repository — never part of the
-extension zip.
+`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.2.7` tag;
+until that tag exists, pin `v0.2.5` — the template's commands are unchanged
+between tags) that runs the status check and the audits on every proposed
+change touching `NodeGroups/` or the `.gntsync` sidecar — in the CI service
+of your choice. An accidental overwrite, a missing file or an unresolved
+merge conflict fails the change before anyone merges. It is part of this
+repository — never part of the extension zip.
 
 ## Features
 
@@ -376,7 +376,7 @@ port required:
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.2.6.zip`).
+   `GNToolkit-v0.2.7.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    downloaded zip (the zip contains the `GNToolkit/` addon folder).
 3. Enable **"GNToolkit"** in the list.
@@ -399,7 +399,7 @@ Exports are **unified packages**:
 
 ```json
 {
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "GN_UNIFIED_PACKAGE",
   "export_method": "GN_TOOLKIT",
   "node_groups": {
