@@ -96,8 +96,8 @@ python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups
 ```
 
 Audits answer the project questions that come before a change:
-**impact** (reverse dependency graph + transitive closure — *what breaks
-if I touch this group?*), **duplicates** (content fingerprints that
+**impact** (reverse dependency graph + transitive closure, plus the objects
+using it as a modifier — *what breaks if I touch this group?*), **duplicates** (content fingerprints that
 ignore group identity — *is this logic copied under two names?*),
 **health** (unreadable or conflicted JSONs, missing files, references to
 untracked groups) and **cross** (compare two or more projects — *is this

@@ -41,6 +41,10 @@ python gnt_check.py NodeGroups --baseline project.blend.gntsync --health --stric
 `gnt_check.py` must come from the same tag as the addon: the canonical hashes
 must match the ones the team computes inside Blender.
 
+Optionally, `--impact "Group"` reports what depends on a group — directly
+and transitively — plus the objects using it as a modifier (from the
+`Modifiers/` exports): informational, handy for a review comment.
+
 ## Example — hosted CI workflow (GitHub Actions)
 
 Adjust the two paths (your folder of per-group JSONs, here `NodeGroups`, and
@@ -79,6 +83,13 @@ jobs:
         run: |
           python gnt/gnt_check.py NodeGroups --duplicates
           python gnt/gnt_check.py NodeGroups --baseline project.blend.gntsync --health --strict
+```
+
+Optional extra step (add it and set your group name — informational):
+
+```yaml
+      - name: Impact of a group (optional, informational)
+        run: python gnt/gnt_check.py --impact "My Group" --baseline project.blend.gntsync
 ```
 
 ## What the status step reports (exit codes)
