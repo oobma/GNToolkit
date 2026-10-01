@@ -133,7 +133,9 @@ def main():
     import bpy
 
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    out = argv[argv.index("--out") + 1] if "--out" in argv else DEFAULT_OUT
+    out = DEFAULT_OUT
+    if "--out" in argv and argv.index("--out") + 1 < len(argv):
+        out = argv[argv.index("--out") + 1]
     minify = "--minify" in argv
     make_local = "--make-local" in argv
 
@@ -165,7 +167,6 @@ def main():
         print(f"[OK] {len(os.listdir(ng_dir))} group file(s) exported to {ng_dir}")
     else:
         print("[WARN] no NodeGroups folder was produced — check the console output")
-    sys.exit(0)
 
 
 main()
