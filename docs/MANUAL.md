@@ -418,6 +418,38 @@ file and modifiers in `Modifiers/*.json`.
 
 ---
 
+## Additional workflow 7 — Headless export (no UI)
+
+Export every Geometry Nodes group of a .blend to a folder export (one
+JSON file per group, plus `Modifiers/`) without opening Blender's UI:
+
+```bash
+blender --background --factory-startup project.blend --python scripts\export_all_json.py -- --out D:\NodeGroups
+```
+
+**What should happen**
+
+- The script writes `<out>/NodeGroups/*.json` (one file per group) and
+  `<out>/Modifiers/*.json`, plus a `<out>/<project>.json` package marker.
+- The folder export is a full sync participant: inside Blender use
+  **Track from Existing JSON** (pick any file inside `<out>`) or
+  **Track Folder…** to link each group to its own file.
+- Headless checks then work without Blender:
+
+  ```bash
+  python gnt_check.py D:\NodeGroups\NodeGroups --strict
+  ```
+
+- `--minify` produces compact JSON. Without `--out` the script writes
+  next to the .blend (or to `./gnt_export` when unsaved).
+
+The script is `scripts/export_all_json.py` in the repository — fetch it
+at the same tag as your addon; it is not part of the extension zip. It
+enables the addon automatically when missing (legacy install, extension
+module or the repo copy next to the script).
+
+---
+
 ## References between groups and the package
 
 Two principles drive everything below:

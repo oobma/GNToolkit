@@ -125,7 +125,7 @@ The whole .blend can be exported to a folder export (one JSON per group,
 plus `Modifiers/`) without opening Blender's UI:
 
 ```bash
-blender --background --factory-startup project.blend --python tools\export_all_json.py -- --out D:\NodeGroups
+blender --background --factory-startup project.blend --python scripts\export_all_json.py -- --out D:\NodeGroups
 ```
 
 The output is the canonical JSON (the source of truth) — ready for
@@ -136,10 +136,11 @@ inside Blender:
 python gnt_check.py D:\NodeGroups\NodeGroups --strict
 ```
 
-`--minify` produces compact JSON. The script lives in the repository's
-`tools/` folder (never in the extension zip) and enables the addon
-automatically when missing (legacy install, extension module or the repo
-copy next to the script).
+`--minify` produces compact JSON. The script is `scripts/export_all_json.py`
+from this repository — fetch it at the same tag as your addon (it is not
+part of the extension zip) and it enables the addon automatically when
+missing (legacy install, extension module or the repo copy next to the
+script).
 
 ### Reviewing node changes in CI
 

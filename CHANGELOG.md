@@ -43,9 +43,9 @@ All notable changes to this project are documented in this file.
   project audit gains a `library-linked` bucket; batch Pull reports
   `linked-skipped`.
 
-- **Headless export script** (`tools/export_all_json.py`): export every
+- **Headless export script** (`scripts/export_all_json.py`): export every
   Geometry Nodes group to a GNToolkit folder export in
-  `blender --background`, documented in the README.
+  `blender --background`, documented in the README and the manual.
 
 ### Removed
 
