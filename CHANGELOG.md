@@ -45,8 +45,7 @@ All notable changes to this project are documented in this file.
 
 - **Headless export script** (`tools/export_all_json.py`): export every
   Geometry Nodes group to a GNToolkit folder export in
-  `blender --background` — the GNToolkit replacement for the NodeBpy
-  "export everything" script, documented in the README.
+  `blender --background`, documented in the README.
 
 ### Removed
 

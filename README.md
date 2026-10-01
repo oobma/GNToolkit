@@ -119,7 +119,7 @@ errors. The canonical hashes are the same ones the addon computes inside
 Blender, so a hook and a `Refresh Status` always agree. The full status
 check of a 582-group project runs in ~3 seconds.
 
-### Headless export — no UI, no NodeBpy
+### Headless export — no UI
 
 The whole .blend can be exported to a folder export (one JSON per group,
 plus `Modifiers/`) without opening Blender's UI:
@@ -128,10 +128,9 @@ plus `Modifiers/`) without opening Blender's UI:
 blender --background --factory-startup project.blend --python tools\export_all_json.py -- --out D:\NodeGroups
 ```
 
-This is the GNToolkit replacement for the NodeBpy "export everything"
-script: the same headless flow, but the output is the canonical JSON
-(the source of truth) — ready for `gnt_check.py`, git, and
-`Track from Existing JSON` / `Track Folder…` inside Blender:
+The output is the canonical JSON (the source of truth) — ready for
+`gnt_check.py`, git, and `Track from Existing JSON` / `Track Folder…`
+inside Blender:
 
 ```bash
 python gnt_check.py D:\NodeGroups\NodeGroups --strict
