@@ -8,9 +8,13 @@ or headless:
     blender --background --factory-startup file.blend --python scripts\export_all_json.py -- --out <folder>
 
 Without --out it writes next to the .blend (or to ./gnt_export when
-unsaved).  --minify produces compact JSON.  The addon is enabled
-automatically when missing (legacy install, extension module or the repo
-copy next to this script).
+unsaved).  --minify produces compact JSON.  --make-local turns every
+library-linked tree that participates in the export (geometry groups,
+their transitive group-node references and geometry-nodes modifiers)
+into a local copy BEFORE exporting, so the folder export is fully
+self-contained and trackable (library-linked trees cannot be pulled
+back later).  The addon is enabled automatically when missing (legacy
+install, extension module or the repo copy next to this script).
 
 The folder export can then be versioned and used with
 'Track from Existing JSON' / 'Track Folder…' inside Blender, and checked
@@ -54,6 +58,73 @@ def _enable_addon():
     return False
 
 
+def _make_linked_local():
+    """Turn the library-linked trees that participate in the export into
+    local copies.
+
+    Covers: every linked GEOMETRY group, the transitive closure reached
+    through group nodes from any geometry group, and any tree used by a
+    Geometry Nodes modifier.  Copy-first / remap-after / remove-last, so
+    cross-references between linked trees survive.  Returns the number of
+    trees made local."""
+    import bpy
+
+    def library_path(tree):
+        lib = getattr(tree, "library", None)
+        return lib is not None
+
+    roots = {ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY'}
+    closure = set(roots)
+    changed = True
+    while changed:
+        changed = False
+        for tree in bpy.data.node_groups:
+            if tree in closure:
+                continue
+            if any(n.type == 'GROUP'
+                   and getattr(n, "node_tree", None) in closure
+                   for n in tree.nodes):
+                closure.add(tree)
+                changed = True
+    for obj in bpy.data.objects:
+        for mod in obj.modifiers:
+            if mod.type == 'NODES' and getattr(mod, "node_group", None) is not None:
+                closure.add(mod.node_group)
+
+    linked = [t for t in closure if library_path(t)]
+    if not linked:
+        return 0
+
+    copies = {}
+    failed = []
+    for tree in linked:
+        try:
+            copies[tree] = tree.copy()
+        except Exception as e:
+            failed.append(f"{tree.name} ({e})")
+
+    for tree in bpy.data.node_groups:
+        for node in tree.nodes:
+            target = getattr(node, "node_tree", None)
+            if target in copies:
+                node.node_tree = copies[target]
+    for obj in bpy.data.objects:
+        for mod in obj.modifiers:
+            target = getattr(mod, "node_group", None)
+            if target in copies:
+                mod.node_group = copies[target]
+
+    names = {copy: tree.name for tree, copy in copies.items()}
+    for tree, copy in copies.items():
+        bpy.data.node_groups.remove(tree)
+    for copy, original_name in names.items():
+        copy.name = original_name
+
+    if failed:
+        print(f"[WARN] could not make local: {', '.join(failed)}")
+    return len(copies)
+
+
 def safe(name):
     return (re.sub(r'[^A-Za-z0-9 _\-]', "_", name).strip() or "unnamed")
 
@@ -64,10 +135,20 @@ def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     out = argv[argv.index("--out") + 1] if "--out" in argv else DEFAULT_OUT
     minify = "--minify" in argv
+    make_local = "--make-local" in argv
 
     if not _enable_addon():
         print("[ERROR] GNToolkit is not available — install it and retry.")
         sys.exit(2)
+
+    if make_local:
+        n = _make_linked_local()
+        print(f"[INFO] made {n} library-linked tree(s) local")
+        if n and bpy.data.filepath:
+            bpy.ops.wm.save_mainfile()
+        elif n:
+            print("[WARN] the .blend is unsaved — the made-local state is "
+                  "in memory only; save the file to keep it")
 
     os.makedirs(out, exist_ok=True)
     stem = safe(os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "unsaved")

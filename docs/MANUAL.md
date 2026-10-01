@@ -442,6 +442,12 @@ blender --background --factory-startup project.blend --python scripts\export_all
 
 - `--minify` produces compact JSON. Without `--out` the script writes
   next to the .blend (or to `./gnt_export` when unsaved).
+- `--make-local` first turns every library-linked tree that participates
+  in the export (geometry groups, their transitive group-node references
+  and geometry-nodes modifiers) into a **local copy**, then saves the
+  .blend so the change persists. Use it when the groups come from an
+  addon's `assets.blend` (library-linked groups can be exported but
+  never pulled back later — Blender forbids editing library data).
 
 The script is `scripts/export_all_json.py` in the repository — fetch it
 at the same tag as your addon; it is not part of the extension zip. It

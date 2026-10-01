@@ -136,7 +136,14 @@ inside Blender:
 python gnt_check.py D:\NodeGroups\NodeGroups --strict
 ```
 
-`--minify` produces compact JSON. The script is `scripts/export_all_json.py`
+`--minify` produces compact JSON. `--make-local` first turns every
+library-linked tree that participates in the export (geometry groups,
+their transitive group-node references and geometry-nodes modifiers)
+into a local copy — needed when the groups come from an addon's
+`assets.blend`: library-linked groups can be exported but never pulled
+back. The script then saves the .blend so the made-local state persists.
+
+The script is `scripts/export_all_json.py`
 from this repository — fetch it at the same tag as your addon (it is not
 part of the extension zip) and it enables the addon automatically when
 missing (legacy install, extension module or the repo copy next to the

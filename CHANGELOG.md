@@ -46,6 +46,10 @@ All notable changes to this project are documented in this file.
 - **Headless export script** (`scripts/export_all_json.py`): export every
   Geometry Nodes group to a GNToolkit folder export in
   `blender --background`, documented in the README and the manual.
+  `--make-local` turns the library-linked trees that participate in the
+  export (geometry groups, their transitive group-node references and
+  geometry-nodes modifiers) into local copies first — so a setup linked
+  from an addon's `assets.blend` can be versioned and pulled back.
 
 ### Removed
 
