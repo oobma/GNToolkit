@@ -17,11 +17,14 @@ All notable changes to this project are documented in this file.
 - **Optional impact step in the CI template** (`docs/CI_TEMPLATE.md`):
   `gnt_check.py --impact "Group" --baseline …` as an informational check.
 
-- **Conflict resolution is now reachable from the Sync panel.** When
-  conflicts exist, a box lists the conflicted groups with Keep JSON /
-  Keep Blend buttons (first 8 rows, the rest pointed to Sync Issues);
-  before the first status check the panel now hints "No status yet —
-  click Refresh Status" instead of staying silent.
+- **Conflict resolution is now reachable from the Sync panel.** A
+  conflict box is always visible: with conflicts it lists the conflicted
+  groups with Keep JSON / Keep Blend buttons (first 8 rows, the rest
+  pointed to Sync Issues); without conflicts the same buttons stay
+  visible but disabled ("when a group differs on both sides"), so the
+  resolution path is discoverable before the first conflict; before the
+  first status check the panel hints "No status yet — click Refresh
+  Status" instead of staying silent.
 
 - **Save reminder after pull.** SyncManager tracks a pending-save flag set
   by every pull/rebuild (Pull from JSON, Keep JSON, Import Modified,

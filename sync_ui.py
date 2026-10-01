@@ -327,9 +327,9 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             else:
                 layout.label(text="All synced", icon='CHECKMARK')
 
+            layout.separator()
+            conf_box = layout.box()
             if n_conflict:
-                layout.separator()
-                conf_box = layout.box()
                 conf_box.label(text="Conflicts — resolve per group:", icon='ERROR')
                 shown = 0
                 for uid, status in sync_manager._status_cache.items():
@@ -351,6 +351,14 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                             conf_box.label(text=f"…and {rest} more — resolve in Sync Issues",
                                            icon='INFO')
                         break
+            else:
+                hint_row = conf_box.row(align=True)
+                hint_row.enabled = False
+                keep_json = hint_row.operator("gn.sync_resolve_json", text="Keep JSON",
+                                              icon='FILE_REFRESH')
+                keep_blend = hint_row.operator("gn.sync_resolve_blend", text="Keep Blend",
+                                               icon='LIGHT')
+                hint_row.label(text="when a group differs on both sides", icon='INFO')
         else:
             layout.label(text="No status yet — click Refresh Status", icon='INFO')
 
