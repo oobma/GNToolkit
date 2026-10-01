@@ -352,12 +352,13 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                                            icon='INFO')
                         break
             else:
-                hint_row = conf_box.row(align=True)
-                hint_row.enabled = False
-                keep_json = hint_row.operator("gn.sync_resolve_json", text="Keep JSON",
-                                              icon='FILE_REFRESH')
-                keep_blend = hint_row.operator("gn.sync_resolve_blend", text="Keep Blend",
-                                               icon='LIGHT')
+                btn_row = conf_box.row(align=True)
+                btn_row.enabled = False
+                keep_json = btn_row.operator("gn.sync_resolve_json", text="Keep JSON",
+                                             icon='FILE_REFRESH')
+                keep_blend = btn_row.operator("gn.sync_resolve_blend", text="Keep Blend",
+                                              icon='LIGHT')
+                hint_row = conf_box.row()
                 hint_row.label(text="when a group differs on both sides", icon='INFO')
         else:
             layout.label(text="No status yet — click Refresh Status", icon='INFO')
