@@ -34,17 +34,19 @@ All notable changes to this project are documented in this file.
 - **External JSON change detection.** While the .blend stays open, a
   throttled mtime scan (Sync panel draw, ~2 s cadence) detects tracked
   JSON files changed outside Blender — git revert/checkout/pull from
-  another tool — and flags the affected groups as "Changed in JSON" with
-  a status-bar notice, without a manual Refresh.
+  another tool — and flags the affected groups as "Changed in JSON" (or
+  Conflict when they also had local edits), with a status-bar notice,
+  without a manual Refresh. Content is verified by hash, so a file that
+  only changed timestamp is not flagged and not re-read.
 
 - **Library-linked node groups are detected and excluded from
   tracking/rebuild.** Node trees linked from a .blend library
-  (`tree.library`) cannot be edited by Blender: Track All, Track Folder…,
-  Track from Existing JSON and untracked-dependency discovery skip them
-  and report the count ("make them local to track"); Pull refuses them
-  explicitly ("is linked from a library — make it local to pull"); the
-  project audit gains a `library-linked` bucket; batch Pull reports
-  `linked-skipped`.
+  (`tree.library`) cannot be edited by Blender: Track Group, Track All,
+  Track Folder…, Track from Existing JSON, untracked-dependency discovery
+  and the import auto-link skip them and report the count ("make them
+  local to track"); Pull and Keep JSON refuse them explicitly ("is linked
+  from a library — make it local to pull"); the project audit gains a
+  `library-linked` bucket; batch Pull reports `linked-skipped`.
 
 - **Headless export script** (`scripts/export_all_json.py`): export every
   Geometry Nodes group to a GNToolkit folder export in
@@ -60,6 +62,11 @@ All notable changes to this project are documented in this file.
   `gn.sync_resolve_blend` / `gn.sync_resolve_json`).
 
 ### Fixed
+
+- **Conflict resolution reports failures instead of pretending success.**
+  Keep JSON / Keep Blend now surface errors (a library-linked group, an
+  unwritable JSON file) as an error report instead of the previous
+  unconditional success message.
 
 - **`--health` / `missing_json_files` now resolve Blender-relative paths.**
   Tracked `json_path`s are stored as `//582/NodeGroups/…`; joining them

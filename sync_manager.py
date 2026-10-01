@@ -273,6 +273,7 @@ class SyncManager:
         self._json_check_files: dict[str, tuple] = {}
         self._pending_save: bool = False
         self._ext_scan_time: float = 0.0
+        self._ext_verified: dict[str, float] = {}
 
     # --- Load / save -------------------------------------------------------
 
@@ -284,6 +285,7 @@ class SyncManager:
         self.load_report.clear()
         self._dirty = False
         self._pending_save = False
+        self._ext_verified = {}
         self._ensure_hash_version()
 
     def save(self) -> bool:
@@ -628,12 +630,13 @@ class SyncManager:
         """Detect tracked JSON files changed OUTSIDE Blender while the .blend
         stays open (git revert/checkout/pull from another tool).
 
-        Cheap mtime scan against the stored baselines; for files whose mtime
-        moved forward, the JSON-side hash check runs for the groups sharing
-        that file (read once per file) and results land in ``load_report`` —
-        the same channel the load-time check uses — with their cached status
-        popped so the Sync Issues list shows them.  Throttled: no-op if
-        called more often than *min_interval* seconds.
+        Cheap mtime scan against the stored baselines and a per-file
+        "verified mtime" cache; for files whose mtime moved forward, the
+        JSON-side hash check runs for the TRACKED groups sharing that file
+        (the file is read once) and results land in ``load_report`` — the
+        same channel the load-time check uses — with the status cache
+        updated (BLEND_MODIFIED + JSON changed = CONFLICT).  Throttled:
+        no-op if called more often than *min_interval* seconds.
 
         Returns the blend names newly flagged.
         """
@@ -663,33 +666,43 @@ class SyncManager:
                 current_mtime = os.path.getmtime(json_path)
             except OSError:
                 continue
+            if current_mtime <= self._ext_verified.get(json_path, 0.0):
+                continue
             last_mtime = max((info.get("last_json_mtime", 0.0) for _, info in groups),
                              default=0.0)
             if current_mtime <= last_mtime:
                 continue
+            if all(uid in self.load_report for uid, _ in groups):
+                # Already flagged at this mtime — nothing new to learn.
+                self._ext_verified[json_path] = current_mtime
+                continue
 
             data = read_json_tolerant(json_path)
-            hashes = {}
+            package_groups = None
             if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                for gname, gdata in data.get("node_groups", {}).items():
-                    hashes[gname] = canonical_hash_from_json_data(gdata)
+                package_groups = data.get("node_groups", {})
+            standalone = isinstance(data, dict) and "nodes" in data
+            standalone_hash = (canonical_hash_from_json_data(data)
+                               if standalone else None)
 
             for uid, info in groups:
                 if uid in self.load_report:
                     continue
                 blend_name = info.get("blend_name", "")
-                json_hash = hashes.get(blend_name)
+                if package_groups is not None:
+                    gdata = package_groups.get(blend_name)
+                    json_hash = (canonical_hash_from_json_data(gdata)
+                                 if gdata is not None else None)
+                else:
+                    json_hash = standalone_hash
                 if json_hash is None:
-                    if isinstance(data, dict) and "nodes" in data:
-                        json_hash = canonical_hash_from_json_data(data)
-                    else:
-                        self.load_report[uid] = {
-                            "status": SyncStatus.JSON_MISSING,
-                            "blend_name": blend_name,
-                        }
-                        self._status_cache.pop(uid, None)
-                        new_names.append(blend_name)
-                        continue
+                    self.load_report[uid] = {
+                        "status": SyncStatus.JSON_MISSING,
+                        "blend_name": blend_name,
+                    }
+                    self._status_cache[uid] = SyncStatus.JSON_MISSING
+                    new_names.append(blend_name)
+                    continue
                 last_json_hash = info.get("last_json_hash", "")
                 if last_json_hash and json_hash == last_json_hash:
                     continue
@@ -697,8 +710,12 @@ class SyncManager:
                     "status": SyncStatus.JSON_MODIFIED,
                     "blend_name": blend_name,
                 }
-                self._status_cache.pop(uid, None)
+                if self._status_cache.get(uid) == SyncStatus.BLEND_MODIFIED:
+                    self._status_cache[uid] = SyncStatus.CONFLICT
+                else:
+                    self._status_cache[uid] = SyncStatus.JSON_MODIFIED
                 new_names.append(blend_name)
+            self._ext_verified[json_path] = current_mtime
         return new_names
 
     # --- Linking / unlinking -----------------------------------------------
@@ -1398,7 +1415,7 @@ class SyncManager:
         """Auto-link groups that were imported as dependencies but aren't tracked."""
         for group_name in json_cache:
             tree = bpy.data.node_groups.get(group_name)
-            if tree is None:
+            if tree is None or group_library_path(tree):
                 continue
             # Already tracked?
             existing_uid = get_uuid_from_tree(tree)
@@ -1741,11 +1758,18 @@ class SyncManager:
         self._status_cache.pop(sync_uuid, None)
         self._dirty = True
 
-    def resolve_conflict(self, sync_uuid: str, keep: str) -> None:
+    def resolve_conflict(self, sync_uuid: str, keep: str):
+        """Resolve a conflict by keeping one side.
+
+        Returns the ``ImportErrorTracker`` for keep="json", the bool from
+        ``export_to_json`` for keep="blend", or None for an unknown side —
+        callers must surface failures instead of assuming success.
+        """
         if keep == "blend":
-            self.export_to_json(sync_uuid, force=True)
-        elif keep == "json":
-            self.import_from_json(sync_uuid)
+            return self.export_to_json(sync_uuid, force=True)
+        if keep == "json":
+            return self.import_from_json(sync_uuid)
+        return None
 
     # --- Cache invalidation ------------------------------------------------
 

@@ -92,6 +92,11 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
         if tree is None:
             self.report({'ERROR'}, f"Node group '{self.tree_name}' not found")
             return {'CANCELLED'}
+        if group_library_path(tree):
+            self.report({'ERROR'},
+                        f"'{tree.name}' is linked from a library — "
+                        "make it local to track it")
+            return {'CANCELLED'}
 
         # Check if already tracked
         existing_uuid = get_uuid_from_tree(tree)
@@ -214,9 +219,14 @@ class GN_OT_SyncImport(bpy.types.Operator):
         for area in context.screen.areas:
             area.tag_redraw()
 
-        if tracker.has_errors:
+        if tracker.error_count:
+            self.report({'ERROR'},
+                        f"Pull failed ({tracker.error_count} error(s)) — "
+                        "check the console/log")
+            return {'CANCELLED'}
+        if tracker.warn_count:
             self.report({'WARNING'},
-                        f"Pull completed with {tracker.warn_count} warnings — check console")
+                        f"Pull completed with {tracker.warn_count} warning(s) — check console")
         else:
             self.report({'INFO'}, "Pull from JSON completed")
         return {'FINISHED'}
