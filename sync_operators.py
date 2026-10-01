@@ -1639,10 +1639,10 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
             layout.separator()
             for item in review.items:
                 box = layout.box()
-                row = box.row(align=True)
-                row.label(text=item.blend_name,
-                          icon='ERROR' if item.is_conflict else 'LIGHT')
-                row.prop(item, "choice", text="", expand=True)
+                head = box.row(align=True)
+                head.label(text=item.blend_name,
+                           icon='ERROR' if item.is_conflict else 'LIGHT')
+                box.prop(item, "choice", expand=True)
         if review.deps:
             layout.separator()
             deps_box = layout.box()
