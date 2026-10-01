@@ -249,6 +249,16 @@ def _ensure_package_shape(data: dict) -> dict:
     return data
 
 
+def group_library_path(tree) -> str | None:
+    """Return the library filepath for a node tree linked from a .blend
+    library, or None for a local tree.  Library-linked trees cannot be
+    tracked or rebuilt (Blender forbids editing library data)."""
+    lib = getattr(tree, "library", None)
+    if lib is None:
+        return None
+    return lib.filepath or lib.name
+
+
 class SyncManager:
     """Orchestrates DNA/RNA synchronization state and actions."""
 
@@ -261,6 +271,8 @@ class SyncManager:
         self.load_report: dict[str, dict] = {}
         self._json_check_remaining: list[tuple] = []
         self._json_check_files: dict[str, tuple] = {}
+        self._pending_save: bool = False
+        self._ext_scan_time: float = 0.0
 
     # --- Load / save -------------------------------------------------------
 
@@ -271,6 +283,7 @@ class SyncManager:
         self._untracked_deps_cache = None
         self.load_report.clear()
         self._dirty = False
+        self._pending_save = False
         self._ensure_hash_version()
 
     def save(self) -> bool:
@@ -610,6 +623,83 @@ class SyncManager:
     def _clear_load_report(self) -> None:
         """Drop the load-time notice once an authoritative check/sync runs."""
         self.load_report.clear()
+
+    def scan_external_json_changes(self, min_interval: float = 2.0) -> list[str]:
+        """Detect tracked JSON files changed OUTSIDE Blender while the .blend
+        stays open (git revert/checkout/pull from another tool).
+
+        Cheap mtime scan against the stored baselines; for files whose mtime
+        moved forward, the JSON-side hash check runs for the groups sharing
+        that file (read once per file) and results land in ``load_report`` —
+        the same channel the load-time check uses — with their cached status
+        popped so the Sync Issues list shows them.  Throttled: no-op if
+        called more often than *min_interval* seconds.
+
+        Returns the blend names newly flagged.
+        """
+        now = time.monotonic()
+        if now - self._ext_scan_time < min_interval:
+            return []
+        self._ext_scan_time = now
+        tracked = self.metadata.get("tracked_groups", {})
+        if not tracked:
+            return []
+        blend_dir = self._blend_dir()
+        if not blend_dir:
+            return []
+
+        by_path: dict[str, list[tuple[str, dict]]] = {}
+        for uid, info in tracked.items():
+            jp = info.get("json_path", "")
+            if jp:
+                by_path.setdefault(jp, []).append((uid, info))
+
+        new_names: list[str] = []
+        for jp, groups in by_path.items():
+            json_path = resolve_json_path(jp, blend_dir)
+            if not json_path or not os.path.isfile(json_path):
+                continue
+            try:
+                current_mtime = os.path.getmtime(json_path)
+            except OSError:
+                continue
+            last_mtime = max((info.get("last_json_mtime", 0.0) for _, info in groups),
+                             default=0.0)
+            if current_mtime <= last_mtime:
+                continue
+
+            data = read_json_tolerant(json_path)
+            hashes = {}
+            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
+                for gname, gdata in data.get("node_groups", {}).items():
+                    hashes[gname] = canonical_hash_from_json_data(gdata)
+
+            for uid, info in groups:
+                if uid in self.load_report:
+                    continue
+                blend_name = info.get("blend_name", "")
+                json_hash = hashes.get(blend_name)
+                if json_hash is None:
+                    if isinstance(data, dict) and "nodes" in data:
+                        json_hash = canonical_hash_from_json_data(data)
+                    else:
+                        self.load_report[uid] = {
+                            "status": SyncStatus.JSON_MISSING,
+                            "blend_name": blend_name,
+                        }
+                        self._status_cache.pop(uid, None)
+                        new_names.append(blend_name)
+                        continue
+                last_json_hash = info.get("last_json_hash", "")
+                if last_json_hash and json_hash == last_json_hash:
+                    continue
+                self.load_report[uid] = {
+                    "status": SyncStatus.JSON_MODIFIED,
+                    "blend_name": blend_name,
+                }
+                self._status_cache.pop(uid, None)
+                new_names.append(blend_name)
+        return new_names
 
     # --- Linking / unlinking -----------------------------------------------
 
@@ -1133,6 +1223,15 @@ class SyncManager:
 
         blend_name = info.get("blend_name", "")
 
+        target_tree = find_tree_by_uuid(blend_name, sync_uuid)
+        if target_tree is not None and group_library_path(target_tree):
+            tracker = ImportErrorTracker()
+            tracker.record(
+                f"'{blend_name}' is linked from a library "
+                f"({group_library_path(target_tree)}) — make it local to pull"
+            )
+            return tracker
+
         if isinstance(json_data, dict) and json_data.get("type") == "GN_UNIFIED_PACKAGE":
             groups = json_data.get("node_groups", {})
             if not groups:
@@ -1234,6 +1333,7 @@ class SyncManager:
         except Exception:
             pass
 
+        self._pending_save = True
         return merged
 
     def _cascade_update_hashes(self, json_path: str, new_mtime: float,
@@ -1390,7 +1490,7 @@ class SyncManager:
                         or dep_name in found):
                     continue
                 dep_tree = bpy.data.node_groups.get(dep_name)
-                if dep_tree is None:
+                if dep_tree is None or group_library_path(dep_tree):
                     continue
                 if get_uuid_from_tree(dep_tree):
                     continue
@@ -1661,6 +1761,15 @@ class SyncManager:
     def mark_dirty(self) -> None:
         self._dirty = True
 
+    def mark_pending_save(self) -> None:
+        self._pending_save = True
+
+    def clear_pending_save(self) -> None:
+        self._pending_save = False
+
+    def has_pending_save(self) -> bool:
+        return self._pending_save
+
     # --- Dependency helpers -------------------------------------------------
 
     def get_dependents(self, sync_uuid: str) -> list[str]:
@@ -1716,8 +1825,15 @@ class SyncManager:
         # Collect all geometry node groups
         all_groups = {ng.name: ng for ng in bpy.data.node_groups
                       if ng.type == 'GEOMETRY'}
+        linked_skipped = sum(1 for ng in all_groups.values()
+                             if group_library_path(ng))
+        if linked_skipped:
+            _log.info("[Link All] skipping %d library-linked group(s) — "
+                      "make them local to track", linked_skipped)
+        all_groups = {name: ng for name, ng in all_groups.items()
+                      if not group_library_path(ng)}
         if not all_groups:
-            return {"linked": 0, "skipped": 0, "errors": 0}
+            return {"linked": 0, "skipped": 0, "errors": 0, "linked_skipped": linked_skipped}
 
         total = len(all_groups)
         _log.info("[Link All] serializing %d groups...", total)
@@ -1864,10 +1980,15 @@ class SyncManager:
         # without recomputing hashes (we just wrote them).
         for uid, info in self.metadata.get("tracked_groups", {}).items():
             self._status_cache[uid] = SyncStatus.SYNCED
-        _log.info("[Link All] done: %d linked, %d skipped, %d errors", linked, skipped, errors)
+        _log.info("[Link All] done: %d linked, %d skipped, %d errors, %d linked-skipped",
+                  linked, skipped, errors, linked_skipped)
         if context and hasattr(context, 'workspace') and context.workspace:
-            context.workspace.status_text_set(f"Link All: done ({linked} linked, {skipped} skipped)")
-        return {"linked": linked, "skipped": skipped, "errors": errors}
+            extra = f", {linked_skipped} linked-skipped" if linked_skipped else ""
+            context.workspace.status_text_set(
+                f"Link All: done ({linked} linked, {skipped} skipped{extra})"
+            )
+        return {"linked": linked, "skipped": skipped, "errors": errors,
+                "linked_skipped": linked_skipped}
 
     def export_all(self, force: bool = False, context=None) -> dict:
         """Export all tracked groups to their respective JSON files.
@@ -2390,7 +2511,8 @@ class SyncManager:
         """
         tracked = self.metadata.get("tracked_groups", {})
         if not tracked:
-            return {"imported": 0, "skipped": 0, "errors": 0, "auto_linked": 0}
+            return {"imported": 0, "skipped": 0, "errors": 0, "auto_linked": 0,
+                    "linked_skipped": 0}
 
         # Crash guard: a crash mid-interface-rebuild can leave dangling
         # links (sockets pointing at other nodes' sockets).  Reading them
@@ -2438,12 +2560,19 @@ class SyncManager:
         # Include: json_modified, blend_modified, and conflict
         groups_to_import: list[tuple[str, dict, str]] = []
         skipped = 0
+        linked_skipped = 0
 
         for uid, info in tracked.items():
             blend_name = info.get("blend_name", "")
             jp = info.get("json_path", "")
             last_json_hash = info.get("last_json_hash", "")
             last_blend_hash = info.get("last_blend_hash", "")
+
+            tree = find_tree_by_uuid(blend_name, uid)
+            if tree is not None and group_library_path(tree):
+                linked_skipped += 1
+                skipped += 1
+                continue
 
             # Fast: compare stored json hash to current json hash
             group_hashes = json_hash_cache.get(jp, {})
@@ -2468,7 +2597,6 @@ class SyncManager:
             # tree here costs a full pass over the project.
             blend_changed = False
             if (not json_changed) and last_blend_hash:
-                tree = find_tree_by_uuid(blend_name, uid)
                 if tree is not None:
                     current_blend_hash = canonical_hash_from_tree(tree)
                     blend_changed = current_blend_hash != last_blend_hash
@@ -2486,7 +2614,7 @@ class SyncManager:
 
         if not groups_to_import:
             return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0,
-                    "still_differ": 0}
+                    "still_differ": 0, "linked_skipped": linked_skipped}
 
         # --- Import each modified group using cached data ---
         imported = 0
@@ -2610,11 +2738,16 @@ class SyncManager:
             pass
 
         if context and hasattr(context, 'workspace') and context.workspace:
+            extra = f", {linked_skipped} linked-skipped" if linked_skipped else ""
             context.workspace.status_text_set(
-                f"Import Modified: done ({imported} imported, {errors} errors, {still_count} still differ)"
+                f"Import Modified: done ({imported} imported, {errors} errors, "
+                f"{still_count} still differ{extra})"
             )
+        if imported:
+            self._pending_save = True
         return {"imported": imported, "skipped": skipped, "errors": errors,
-                "auto_linked": auto_linked, "still_differ": still_count}
+                "auto_linked": auto_linked, "still_differ": still_count,
+                "linked_skipped": linked_skipped}
 
     def get_status_summary(self) -> dict[str, int]:
         """Return a summary count of each sync status for all tracked groups.

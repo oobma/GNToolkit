@@ -127,6 +127,7 @@ def _on_save_post(scene):
     try:
         sync_manager._relativize_json_paths()
         sync_manager.save()
+        sync_manager.clear_pending_save()
     except Exception:
         pass
 

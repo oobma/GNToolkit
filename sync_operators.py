@@ -16,6 +16,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .constants import ADDON_VERSION
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
+    group_library_path,
 )
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
@@ -314,46 +315,6 @@ class GN_OT_SyncUnignore(bpy.types.Operator):
         for area in context.screen.areas:
             area.tag_redraw()
         self.report({'INFO'}, "Issue un-ignored")
-        return {'FINISHED'}
-
-
-# ---------------------------------------------------------------------------
-# Operator: Resolve conflict
-# ---------------------------------------------------------------------------
-
-class GN_OT_SyncResolve(bpy.types.Operator):
-    bl_idname = "gn.sync_resolve"
-    bl_label = "Resolve Conflict"
-    bl_description = "Resolve a sync conflict by choosing which side to keep"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    sync_uuid: StringProperty(name="UUID", description="UUID of the tracked group")
-    keep: EnumProperty(
-        name="Keep Side",
-        description="Which version to keep",
-        items=[
-            ('blend', 'Keep .blend', 'Keep the .blend version and update the JSON'),
-            ('json', 'Keep JSON', 'Keep the JSON version and update the .blend'),
-        ],
-    )
-
-    def execute(self, context):
-        if not self.sync_uuid:
-            tree = _get_active_tree(context)
-            if tree:
-                self.sync_uuid = find_uuid_for_tree(tree, sync_manager.metadata) or ""
-        if not self.sync_uuid:
-            self.report({'ERROR'}, "No tracked group found")
-            return {'CANCELLED'}
-
-        sync_manager.resolve_conflict(self.sync_uuid, self.keep)
-        sync_manager.save()
-        # Force UI redraw so issue disappears immediately
-        for area in context.screen.areas:
-            area.tag_redraw()
-
-        side = ".blend" if self.keep == "blend" else "JSON"
-        self.report({'INFO'}, f"Conflict resolved — kept {side} version")
         return {'FINISHED'}
 
 
@@ -693,6 +654,9 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
             msg = (f"Tracking {result['linked']} groups, "
                    f"{result['skipped']} already tracked, "
                    f"{result['errors']} errors")
+            if result.get("linked_skipped"):
+                msg += (f", {result['linked_skipped']} library-linked skipped — "
+                        "make them local to track")
             context.window_manager.progress_end()
             self.report({'INFO'}, msg)
         except Exception as e:
@@ -762,6 +726,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
         linked_by_name: dict[str, str] = {}
         skipped = 0
         errors = 0
+        linked_skipped = 0
         for fp in files:
             data = read_json_tolerant(fp)
             if data is None:
@@ -787,6 +752,10 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
             for gname in groups:
                 tree = bpy.data.node_groups.get(gname)
                 if tree is None:
+                    skipped += 1
+                    continue
+                if group_library_path(tree):
+                    linked_skipped += 1
                     skipped += 1
                     continue
                 if get_uuid_from_tree(tree) or find_uuid_for_tree(tree, sync_manager.metadata):
@@ -829,6 +798,8 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
 
         msg = (f"Tracked {len(linked_by_name)} group(s) from folder, "
                f"{skipped} skipped (already tracked or not in .blend)")
+        if linked_skipped:
+            msg += f", {linked_skipped} library-linked (make them local to track)"
         if errors:
             msg += f", {errors} unreadable file(s)"
         self.report({'INFO'}, msg)
@@ -963,7 +934,9 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                         f"errors {result['errors']}, "
                         f"auto-tracked {result['auto_linked']}"
                         + (f", {result.get('still_differ', 0)} still differ from JSON"
-                           if result.get('still_differ') else ""))
+                           if result.get('still_differ') else "")
+                        + (f", {result.get('linked_skipped', 0)} library-linked skipped"
+                           if result.get('linked_skipped') else ""))
         except Exception as e:
             context.window_manager.progress_end()
             self.report({'ERROR'}, f"Pull failed: {e}")
@@ -1059,12 +1032,17 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         linked = 0
         skipped = 0
         divergent = 0
+        linked_skipped = 0
         file_layout = ("package" if data.get("type") == "GN_UNIFIED_PACKAGE"
                        and len(groups) > 1 else "folder")
 
         for gname in groups:
             tree = bpy.data.node_groups.get(gname)
             if tree is None:
+                skipped += 1
+                continue
+            if group_library_path(tree):
+                linked_skipped += 1
                 skipped += 1
                 continue
 
@@ -1107,6 +1085,8 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         sync_manager.check_all_statuses()
 
         msg = f"Tracking started: {linked} groups, {skipped} skipped (already tracked or not in .blend)"
+        if linked_skipped:
+            msg += f", {linked_skipped} library-linked (make them local to track)"
         if divergent:
             msg += f", {divergent} differ from the JSON (use Pull to apply)"
         self.report({'INFO'}, msg)
@@ -1493,6 +1473,9 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
                     imported.append(name)
         _selection_plan_cache.clear()
 
+        if imported:
+            sync_manager.mark_pending_save()
+
         for area in context.screen.areas:
             area.tag_redraw()
 
@@ -1738,7 +1721,6 @@ classes = (
     GN_OT_SyncExport,
     GN_OT_SyncIgnore,
     GN_OT_SyncUnignore,
-    GN_OT_SyncResolve,
     GN_OT_SyncCheck,
     GN_OT_SyncTrackDeps,
     GN_OT_SyncLinkAll,

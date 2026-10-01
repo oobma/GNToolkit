@@ -2,9 +2,11 @@
 """
 gn_toolkit.sync_ui — Sidebar panels for DNA/RNA sync (N-panel).
 
-Two panels in the Node Editor sidebar:
-  GN_PT_SyncPanel (bl_order=2):  Batch operations and summary
-  GN_PT_IssuesPanel (bl_order=3): Scrollable list of all sync issues
+Panels in the Node Editor sidebar:
+  GN_PT_SyncPanel (bl_order=2): Batch operations, summary and conflicts
+  GN_PT_CollaborationPanel (bl_order=3): Git transport
+  GN_PT_IssuesPanel (bl_order=4): Scrollable list of all sync issues
+  GN_PT_GeometryIssuesPanel (bl_order=5): Geometry validation
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from .geometry_validator import (
     ValidationIssue,
     format_issue_report,
 )
-from .sync_manager import sync_manager, SyncStatus
+from .sync_manager import sync_manager, SyncStatus, group_library_path
 from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
 from .sync_operators import _get_active_tree
 
@@ -106,6 +108,25 @@ def _active_tracked_json(context):
     return tree.name, os.path.basename(abs_path), abs_path
 
 
+def _notify_external_changes(count: int) -> None:
+    msg = f"GNToolkit: {count} JSON file(s) changed on disk — Refresh Status to align"
+
+    def _show(text=msg):
+        try:
+            bpy.context.workspace.status_text_set(text)
+        except Exception:
+            pass
+
+    def _hide():
+        try:
+            bpy.context.workspace.status_text_set(None)
+        except Exception:
+            pass
+
+    bpy.app.timers.register(_show, first_interval=0.1)
+    bpy.app.timers.register(_hide, first_interval=6.0)
+
+
 # ---------------------------------------------------------------------------
 # Panel 1: Batch Operations
 # ---------------------------------------------------------------------------
@@ -122,6 +143,11 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         layout = self.layout
         metadata = sync_manager.metadata
         tracked = metadata.get("tracked_groups", {})
+
+        if tracked:
+            changed = sync_manager.scan_external_json_changes()
+            if changed:
+                _notify_external_changes(len(changed))
 
         if tracked:
             active = _active_tracked_json(context)
@@ -300,6 +326,39 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                     info_row.label(text=f"({n_ignored} ignored)", icon='HIDE_ON')
             else:
                 layout.label(text="All synced", icon='CHECKMARK')
+
+            if n_conflict:
+                layout.separator()
+                conf_box = layout.box()
+                conf_box.label(text="Conflicts — resolve per group:", icon='ERROR')
+                shown = 0
+                for uid, status in sync_manager._status_cache.items():
+                    if status != SyncStatus.CONFLICT:
+                        continue
+                    info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+                    crow = conf_box.row(align=True)
+                    crow.label(text=info.get("blend_name", uid), icon='NODETREE')
+                    keep_json = crow.operator("gn.sync_resolve_json", text="Keep JSON",
+                                              icon='FILE_REFRESH')
+                    keep_json.sync_uuid = uid
+                    keep_blend = crow.operator("gn.sync_resolve_blend", text="Keep Blend",
+                                               icon='LIGHT')
+                    keep_blend.sync_uuid = uid
+                    shown += 1
+                    if shown >= 8:
+                        rest = n_conflict - shown
+                        if rest > 0:
+                            conf_box.label(text=f"…and {rest} more — resolve in Sync Issues",
+                                           icon='INFO')
+                        break
+        else:
+            layout.label(text="No status yet — click Refresh Status", icon='INFO')
+
+        if sync_manager.has_pending_save():
+            layout.separator()
+            save_row = layout.row(align=True)
+            save_row.label(text="Pull applied — save the .blend to persist (Ctrl+S)",
+                           icon='ERROR')
 
         layout.separator()
         stop_row = layout.row(align=True)
@@ -505,6 +564,7 @@ AUDIT_KIND_ICONS = {
     "unreadable": 'ERROR',
     "conflict": 'ERROR',
     "external": 'LINK_BLEND',
+    "linked": 'LIBRARY_DATA_OVERRIDE',
     "impact": 'FORWARD',
 }
 
@@ -556,9 +616,16 @@ class GN_OT_AuditProject(bpy.types.Operator):
 
         blend_dir = sync_manager._blend_dir()
         records = []
-        n_missing = n_unreadable = n_conflict = 0
+        n_missing = n_unreadable = n_conflict = n_linked = 0
         for uid, info in tracked.items():
             name = info.get("blend_name") or uid
+            tree = bpy.data.node_groups.get(name)
+            if tree is not None and group_library_path(tree):
+                n_linked += 1
+                _audit_add(state, "linked",
+                           f"{name} — linked from {group_library_path(tree)} "
+                           "(make it local to track)")
+                continue
             json_path = resolve_json_path(info.get("json_path", ""), blend_dir)
             if not json_path or not os.path.isfile(json_path):
                 n_missing += 1
@@ -630,7 +697,7 @@ class GN_OT_AuditProject(bpy.types.Operator):
         state.summary = (
             f'{len(buckets)} duplicate bucket(s) · {len(ext)} external ref(s) '
             f'· {n_missing} missing · {n_unreadable} unreadable '
-            f'· {n_conflict} conflict(s)')
+            f'· {n_conflict} conflict(s) · {n_linked} library-linked')
 
         n_findings = len(state.details)
         if n_findings:

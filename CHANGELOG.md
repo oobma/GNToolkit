@@ -17,6 +17,42 @@ All notable changes to this project are documented in this file.
 - **Optional impact step in the CI template** (`docs/CI_TEMPLATE.md`):
   `gnt_check.py --impact "Group" --baseline …` as an informational check.
 
+- **Conflict resolution is now reachable from the Sync panel.** When
+  conflicts exist, a box lists the conflicted groups with Keep JSON /
+  Keep Blend buttons (first 8 rows, the rest pointed to Sync Issues);
+  before the first status check the panel now hints "No status yet —
+  click Refresh Status" instead of staying silent.
+
+- **Save reminder after pull.** SyncManager tracks a pending-save flag set
+  by every pull/rebuild (Pull from JSON, Keep JSON, Import Modified,
+  picker Import). The Sync panel shows "Pull applied — save the .blend to
+  persist (Ctrl+S)" until the file is saved.
+
+- **External JSON change detection.** While the .blend stays open, a
+  throttled mtime scan (Sync panel draw, ~2 s cadence) detects tracked
+  JSON files changed outside Blender — git revert/checkout/pull from
+  another tool — and flags the affected groups as "Changed in JSON" with
+  a status-bar notice, without a manual Refresh.
+
+- **Library-linked node groups are detected and excluded from
+  tracking/rebuild.** Node trees linked from a .blend library
+  (`tree.library`) cannot be edited by Blender: Track All, Track Folder…,
+  Track from Existing JSON and untracked-dependency discovery skip them
+  and report the count ("make them local to track"); Pull refuses them
+  explicitly ("is linked from a library — make it local to pull"); the
+  project audit gains a `library-linked` bucket; batch Pull reports
+  `linked-skipped`.
+
+- **Headless export script** (`tools/export_all_json.py`): export every
+  Geometry Nodes group to a GNToolkit folder export in
+  `blender --background` — the GNToolkit replacement for the NodeBpy
+  "export everything" script, documented in the README.
+
+### Removed
+
+- **Dead `gn.sync_resolve` operator** (superseded by
+  `gn.sync_resolve_blend` / `gn.sync_resolve_json`).
+
 ### Fixed
 
 - **`--health` / `missing_json_files` now resolve Blender-relative paths.**
