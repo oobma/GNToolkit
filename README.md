@@ -141,13 +141,31 @@ library-linked tree that participates in the export (geometry groups,
 their transitive group-node references and geometry-nodes modifiers)
 into a local copy — needed when the groups come from an addon's
 `assets.blend`: library-linked groups can be exported but never pulled
-back. The script then saves the .blend so the made-local state persists.
+back. The conversion is only written to the .blend when `--save` is also
+given; without it the source file is left untouched.
+`--exclude-library FRAG` (repeatable) keeps linked trees whose library
+path contains FRAG out of the export and out of the conversion — use it
+for Blender's bundled assets (`datafiles\assets`) or third-party toolsets.
 
-The script is `scripts/export_all_json.py`
-from this repository — fetch it at the same tag as your addon (it is not
-part of the extension zip) and it enables the addon automatically when
-missing (legacy install, extension module or the repo copy next to the
-script).
+A library spread over several .blend files (each linking the previous
+ones) ports to a single versioned project through the JSON: export every
+source read-only, then rebuild one master .blend where all groups are
+local:
+
+```bash
+blender --background --factory-startup "base.blend"    --python scripts\export_all_json.py -- --out D:\lib
+blender --background --factory-startup "derived.blend" --python scripts\export_all_json.py -- --out D:\lib
+blender --background --factory-startup --python scripts\import_all_json.py -- --in D:\lib --out master.blend
+```
+
+Open `master.blend` and use `Track from Existing JSON` / `Track All` to
+start versioning it. Neither source file is modified.
+
+The scripts are `scripts/export_all_json.py` and
+`scripts/import_all_json.py` from this repository — fetch them at the
+same tag as your addon (they are not part of the extension zip) and they
+enable the addon automatically when missing (legacy install, extension
+module or the repo copy next to the script).
 
 ### Reviewing node changes in CI
 

@@ -152,18 +152,47 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
 
     use_folder_structure: BoolProperty(name="Use Folder Structure", default=False)
     use_minify: BoolProperty(name="Minify JSON", default=False)
+    exclude_libraries: StringProperty(
+        name="Exclude Libraries",
+        description=("Semicolon-separated path fragments. Groups linked from a "
+                     "library whose path contains any fragment are skipped "
+                     "(e.g. Blender's datafiles or a third-party toolset)"),
+        default="",
+    )
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "use_folder_structure")
         layout.prop(self, "use_minify")
+        layout.prop(self, "exclude_libraries")
 
     def execute(self, context):
         base_dir = os.path.dirname(self.filepath)
         trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
-        context.window_manager.progress_begin(0, len(trees))
+
+        fragments = [frag.strip().lower()
+                     for frag in (self.exclude_libraries or "").split(";")
+                     if frag.strip()]
+
+        def _excluded(tree):
+            if not fragments:
+                return False
+            lib = getattr(tree, "library", None)
+            if lib is None:
+                return False
+            lib_path = (lib.filepath or "").lower()
+            return any(frag in lib_path for frag in fragments)
+
+        excluded_names = {t.name for t in trees if _excluded(t)}
+        if excluded_names:
+            trees = [t for t in trees if t.name not in excluded_names]
+
+        context.window_manager.progress_begin(0, len(trees) or 1)
 
         dump_args = {'separators': (',', ':')} if self.use_minify else {'indent': 4}
+
+        def _modifier_excluded(mod):
+            return bool(mod.node_group and mod.node_group.name in excluded_names)
 
         try:
             if self.use_folder_structure:
@@ -191,7 +220,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 count_mod = 0
                 for obj in bpy.data.objects:
                     for idx, mod in enumerate(obj.modifiers):
-                        if mod.type == 'NODES':
+                        if mod.type == 'NODES' and not _modifier_excluded(mod):
                             data = {
                                 "object": obj.name,
                                 "modifier_name": mod.name,
@@ -209,7 +238,9 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                             count_mod += 1
                 self.report({'INFO'},
                             f"Exported {count_ng} group file(s) and "
-                            f"{count_mod} modifier file(s).")
+                            f"{count_mod} modifier file(s)."
+                            + (f" Skipped {len(excluded_names)} group(s) from "
+                               "excluded libraries." if excluded_names else ""))
                 adjusted = ng_names.adjusted + mod_names.adjusted
                 if adjusted:
                     shown = "; ".join(f"{old} → {new}"
@@ -233,7 +264,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
 
                 for obj in bpy.data.objects:
                     for idx, mod in enumerate(obj.modifiers):
-                        if mod.type == 'NODES':
+                        if mod.type == 'NODES' and not _modifier_excluded(mod):
                             master_data["modifiers"].append({
                                 "object": obj.name,
                                 "modifier_name": mod.name,
@@ -244,7 +275,10 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "inputs": _serialize_modifier_inputs(mod),
                             })
                 write_json_file(self.filepath, master_data, dump_args)
-                self.report({'INFO'}, "Package export completed.")
+                self.report({'INFO'},
+                            "Package export completed."
+                            + (f" Skipped {len(excluded_names)} group(s) from "
+                               "excluded libraries." if excluded_names else ""))
         except PermissionError:
             self.report({'ERROR'},
                         f"Cannot write to {self.filepath} — save the .blend "

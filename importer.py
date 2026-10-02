@@ -2099,16 +2099,14 @@ def _import_node_tree_gen(
             ng.outputs.clear()
     else:
         ng = bpy.data.node_groups.new(name, 'GeometryNodeTree')
-        # Blender does NOT persist zero-user node groups across save/reload;
-        # an imported group must survive the save, so give it a fake user.
-        # (The canonical hash excludes use_fake_user, so sync is unaffected.)
-        try:
-            ng.use_fake_user = True
-        except Exception:
-            pass
 
     # Apply tree-level properties
     for prop_name, prop_val in data.get("tree_properties", {}).items():
+        if prop_name in ("use_fake_user", "use_extra_user"):
+            # File-management flags, not content (excluded from the
+            # canonical hash): the fake user is forced below so that
+            # imported groups survive save/reload.
+            continue
         try:
             ctx = f"Tree '{name}' property '{prop_name}'"
             setattr(ng, prop_name, unclean_value(prop_val, context=ctx))
@@ -2116,6 +2114,14 @@ def _import_node_tree_gen(
             tracker.record(f"Tree '{name}': could not set property '{prop_name}': {exc}", level="DEBUG")
             print(f"[DEFAULT_VALUE] Tree '{name}' property '{prop_name}': "
                   f"kept Blender default (assignment failed: {exc})")
+
+    # Blender does NOT persist zero-user node groups across save/reload;
+    # an imported group must survive the save, so give it a fake user.
+    # (The canonical hash excludes use_fake_user, so sync is unaffected.)
+    try:
+        ng.use_fake_user = True
+    except Exception:
+        pass
 
     # --- Interface ---
     interface_map = {}

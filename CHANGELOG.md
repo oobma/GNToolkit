@@ -86,12 +86,31 @@ All notable changes to this project are documented in this file.
   Failed** button (and a Dismiss button); one raising group no longer
   aborts the whole batch.
 
+- **Port a multi-file library without touching the sources.** The batch
+  export can skip groups linked from given libraries
+  (`gn.export_batch_json`'s *Exclude Libraries* field, or the script's
+  repeatable `--exclude-library`), and the new headless
+  `scripts/import_all_json.py` rebuilds a folder/package export into one
+  master .blend where every group is local. Export each source read-only,
+  import the union into the master, track it: a library spread over
+  several linked .blend files (asset levels) becomes a single versioned
+  project. `--make-local` in the export script now only writes the .blend
+  when `--save` is given — without it the conversion is in-memory and the
+  source file is never rewritten.
+
 ### Removed
 
 - **Dead `gn.sync_resolve` operator** (superseded by
   `gn.sync_resolve_blend` / `gn.sync_resolve_json`).
 
 ### Fixed
+
+- **Imported groups keep their fake user.** The importer forced
+  `use_fake_user` before applying the serialized tree properties, and
+  those then set it back to `false`: importing groups into a fresh .blend
+  and saving dropped every zero-user group. The file-management flags
+  (`use_fake_user`, `use_extra_user`) are no longer applied from the JSON
+  and the fake user is forced after the properties.
 
 - **Conflict resolution reports failures instead of pretending success.**
   Keep JSON / Keep Blend now surface errors (a library-linked group, an

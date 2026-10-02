@@ -61,6 +61,11 @@ TREE_PROPS_TO_SKIP: frozenset[str] = frozenset({
     'annotation',
     # Node tool identifier — Blender 4.3+, not portable between versions
     'node_tool_idname',
+    # File-management flags, not content (also excluded from the canonical
+    # hash): the .blend owns them and the importer forces a fake user so
+    # imported groups survive save/reload.  Serializing them would undo
+    # that on import and break byte-identical roundtrips.
+    'use_fake_user', 'use_extra_user',
 })
 
 # Interface item properties to skip when serializing bl_rna properties.

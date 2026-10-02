@@ -444,10 +444,16 @@ blender --background --factory-startup project.blend --python scripts\export_all
   next to the .blend (or to `./gnt_export` when unsaved).
 - `--make-local` first turns every library-linked tree that participates
   in the export (geometry groups, their transitive group-node references
-  and geometry-nodes modifiers) into a **local copy**, then saves the
-  .blend so the change persists. Use it when the groups come from an
-  addon's `assets.blend` (library-linked groups can be exported but
-  never pulled back later — Blender forbids editing library data).
+  and geometry-nodes modifiers) into a **local copy**. The converted
+  .blend is only written when `--save` is also given — without it the
+  conversion stays in memory and the source file is left untouched. Use
+  it when the groups come from an addon's `assets.blend`
+  (library-linked groups can be exported but never pulled back later —
+  Blender forbids editing library data).
+- `--exclude-library FRAG` (repeatable) skips linked trees whose library
+  path contains FRAG, both in the export and in `--make-local`: use it to
+  keep Blender's bundled assets (`datafiles\assets`) or a third-party
+  toolset out.
 
 The script is `scripts/export_all_json.py` in the repository — fetch it
 at the same tag as your addon; it is not part of the extension zip. It
@@ -486,6 +492,53 @@ replacement for it.
 If a batch pull fails for some groups, the Sync panel lists their names
 and reasons with a **Retry Failed** button that imports only those
 groups again; **Dismiss** clears the list.
+
+---
+
+## Additional workflow 9 — Port a multi-file library into one project
+
+A library can be spread over several .blend files where each file links
+node groups from the previous ones (asset "levels"). GNToolkit versions
+groups inside one .blend, and library-linked groups can never be pulled
+back, so the recommended target is a single master .blend where every
+group is local. **No source file needs to be modified:**
+
+1. Export every source file read-only (repeat for each file; add
+   `--exclude-library` so third-party groups — e.g. Blender's bundled
+   assets — stay out):
+
+   ```bash
+   blender --background --factory-startup "base.blend" --python scripts\export_all_json.py -- --out D:\lib --exclude-library "datafiles\assets"
+   ```
+
+2. Rebuild one master from the exported files (all of them into the same
+   `--in` folder):
+
+   ```bash
+   blender --background --factory-startup --python scripts\import_all_json.py -- --in D:\lib --out master.blend
+   ```
+
+3. Open `master.blend`, use **Track from Existing JSON** (pick the master
+   `--in` folder) or **Track All**, and start versioning it. From then on
+   the master is the project; the original files can stay as the
+   authoring workspace or be archived (git keeps their history).
+
+**What should happen**
+
+- The export reads linked groups without converting them; the source
+  .blend files are byte-for-byte untouched.
+- The import rebuilds dependencies children-first and gives every group a
+  fake user, so nothing is lost when the master is saved.
+- Run `python gnt_check.py D:\lib\NodeGroups --strict` to validate the
+  exported JSON at any point.
+
+**Notes**
+
+- If the source files contain absolute library paths that no longer
+  exist, Blender warns and the export/import simply skips that data.
+- A group may show as modified the first time it is tracked after
+  porting if the source file had stale linked sockets; commit it once to
+  align.
 
 ---
 

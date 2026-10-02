@@ -13,8 +13,16 @@ library-linked tree that participates in the export (geometry groups,
 their transitive group-node references and geometry-nodes modifiers)
 into a local copy BEFORE exporting, so the folder export is fully
 self-contained and trackable (library-linked trees cannot be pulled
-back later).  The addon is enabled automatically when missing (legacy
-install, extension module or the repo copy next to this script).
+back later).  The converted .blend is only SAVED when --save is also
+given — without it the conversion stays in memory and the source file
+is left untouched.
+
+--exclude-library FRAG (repeatable) skips linked trees whose library
+path contains FRAG, both for the export and for --make-local: use it to
+keep Blender's bundled assets (e.g. "datafiles\\assets") or third-party
+toolsets out of the export/conversion.  The addon is enabled
+automatically when missing (legacy install, extension module or the
+repo copy next to this script).
 
 The folder export can then be versioned and used with
 'Track from Existing JSON' / 'Track Folder…' inside Blender, and checked
@@ -58,20 +66,28 @@ def _enable_addon():
     return False
 
 
-def _make_linked_local():
+def _make_linked_local(exclude_fragments=()):
     """Turn the library-linked trees that participate in the export into
     local copies.
 
     Covers: every linked GEOMETRY group, the transitive closure reached
     through group nodes from any geometry group, and any tree used by a
     Geometry Nodes modifier.  Copy-first / remap-after / remove-last, so
-    cross-references between linked trees survive.  Returns the number of
-    trees made local."""
+    cross-references between linked trees survive.  Linked trees whose
+    library path contains one of *exclude_fragments* are left alone
+    (e.g. Blender's bundled assets).  Returns the number of trees made
+    local."""
     import bpy
 
     def library_path(tree):
+        return getattr(tree, "library", None) is not None
+
+    def is_excluded(tree):
+        if not exclude_fragments:
+            return False
         lib = getattr(tree, "library", None)
-        return lib is not None
+        path = (lib.filepath if lib else "").lower()
+        return any(frag in path for frag in exclude_fragments)
 
     roots = {ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY'}
     closure = set(roots)
@@ -91,7 +107,7 @@ def _make_linked_local():
             if mod.type == 'NODES' and getattr(mod, "node_group", None) is not None:
                 closure.add(mod.node_group)
 
-    linked = [t for t in closure if library_path(t)]
+    linked = [t for t in closure if library_path(t) and not is_excluded(t)]
     if not linked:
         return 0
 
@@ -138,26 +154,35 @@ def main():
         out = argv[argv.index("--out") + 1]
     minify = "--minify" in argv
     make_local = "--make-local" in argv
+    save = "--save" in argv
+    exclude_fragments = [argv[i + 1].strip().lower()
+                         for i, arg in enumerate(argv)
+                         if arg == "--exclude-library" and i + 1 < len(argv)]
+    exclude_fragments = [frag for frag in exclude_fragments if frag]
 
     if not _enable_addon():
         print("[ERROR] GNToolkit is not available — install it and retry.")
         sys.exit(2)
 
     if make_local:
-        n = _make_linked_local()
+        n = _make_linked_local(exclude_fragments)
         print(f"[INFO] made {n} library-linked tree(s) local")
-        if n and bpy.data.filepath:
+        if n and save and bpy.data.filepath:
             bpy.ops.wm.save_mainfile()
+            print(f"[INFO] saved {bpy.data.filepath}")
         elif n:
-            print("[WARN] the .blend is unsaved — the made-local state is "
-                  "in memory only; save the file to keep it")
+            print("[INFO] conversion kept in memory only — pass --save to "
+                  "persist it in the .blend")
+            if not bpy.data.filepath:
+                print("[WARN] the .blend is unsaved; there is nothing to save")
 
     os.makedirs(out, exist_ok=True)
     stem = safe(os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "unsaved")
     pkg = os.path.join(out, f"{stem}.json")
 
     result = bpy.ops.gn.export_batch_json(
-        filepath=pkg, use_folder_structure=True, use_minify=minify)
+        filepath=pkg, use_folder_structure=True, use_minify=minify,
+        exclude_libraries=";".join(exclude_fragments))
     if result != {'FINISHED'}:
         print(f"[ERROR] export failed: {result}")
         sys.exit(1)
