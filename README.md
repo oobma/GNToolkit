@@ -159,7 +159,9 @@ blender --background --factory-startup --python scripts\import_all_json.py -- --
 ```
 
 Open `master.blend` and use `Track from Existing JSON` / `Track All` to
-start versioning it. Neither source file is modified.
+start versioning it. The JSON folder stays one file per group — the
+versioned source of truth; the master .blend is only the working file
+GNToolkit syncs against. Neither source file is modified.
 
 The scripts are `scripts/export_all_json.py` and
 `scripts/import_all_json.py` from this repository — fetch them at the

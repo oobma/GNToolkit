@@ -527,6 +527,12 @@ group is local. **No source file needs to be modified:**
 
 - The export reads linked groups without converting them; the source
   .blend files are byte-for-byte untouched.
+- The imported **JSON folder is still one file per group** — that is the
+  versioned source of truth (per-group git diffs, `gnt_check`). The
+  "single file" is only the working master .blend, the equivalent of the
+  addon's shipped assets bundle; if you only want version control, step 1
+  alone is enough and the master is only needed to pull groups back into
+  Blender in place.
 - The import rebuilds dependencies children-first and gives every group a
   fake user, so nothing is lost when the master is saved.
 - Run `python gnt_check.py D:\lib\NodeGroups --strict` to validate the
