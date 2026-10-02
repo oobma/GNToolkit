@@ -2023,6 +2023,10 @@ def import_node_tree_recursive(
         Serialized node tree data (as produced by ``serialize_node_tree``).
     json_cache : dict
         Cache of all serialized trees (name → data) for dependency resolution.
+        Callers that import several groups in a loop MUST skip groups that
+        are already present (``if bpy.data.node_groups.get(name): continue``):
+        rebuilding an existing tree renumbers its interface identifiers and
+        would break the links already wired from the groups imported before.
     group_interface_maps : dict, optional
         Maps group names to their identifier remapping dicts.
     context : Blender context, optional

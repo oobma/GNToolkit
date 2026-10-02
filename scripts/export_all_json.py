@@ -169,4 +169,5 @@ def main():
         print("[WARN] no NodeGroups folder was produced — check the console output")
 
 
-main()
+if __name__ == "__main__":
+    main()
