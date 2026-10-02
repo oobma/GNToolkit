@@ -456,6 +456,39 @@ module or the repo copy next to the script).
 
 ---
 
+## Additional workflow 8 — Very large projects (1000+ groups)
+
+**Refresh Status in the background**
+
+On projects with hundreds or thousands of groups, **Refresh Status**
+processes the project in small batches (the button shows `Checking
+M/N…`) so the UI keeps responding and the result appears in the status
+bar when it finishes. Nothing else changes: the counts and the Sync
+Issues list show the same result as before.
+
+**Confirmation before mass operations**
+
+**Track All** and **Commit All** / **Commit Modified** ask for
+confirmation (group and file counts, plus the library-linked groups that
+Track All will skip) whenever more than one group is affected. With a
+single group, the operation runs directly.
+
+**Backups**
+
+Before overwriting JSON files in a mass operation, the addon copies them
+to `backups/<timestamp>/` next to the .blend (relative layout
+preserved). The last 5 snapshots are kept; older ones are removed
+automatically. This is a safety net on top of your git history, not a
+replacement for it.
+
+**Retry failed groups**
+
+If a batch pull fails for some groups, the Sync panel lists their names
+and reasons with a **Retry Failed** button that imports only those
+groups again; **Dismiss** clears the list.
+
+---
+
 ## References between groups and the package
 
 Two principles drive everything below:

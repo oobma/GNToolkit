@@ -56,6 +56,36 @@ All notable changes to this project are documented in this file.
   geometry-nodes modifiers) into local copies first — so a setup linked
   from an addon's `assets.blend` can be versioned and pulled back.
 
+- **Scale: JSON files are parsed once, not once per group.** Parsed data
+  and per-group canonical hashes are cached by `(path, mtime, size)` with
+  a small LRU (4 files), so committing, pulling or checking one group of
+  a 1000+ group package does not re-parse the whole file each time; a
+  touch-only change is not re-read. `hash_utils.clear_json_cache()` drops
+  the cache.
+
+- **Refresh Status runs in chunks.** `gn.sync_check` processes the
+  project in batches through the timer pump, showing `Checking M/N…` in
+  the panel and keeping Blender responsive on very large projects; the
+  synchronous `check_all_statuses()` API is unchanged for headless use.
+
+- **The Sync Issues list caps the drawn rows** at 200 with an "…and N
+  more" line — counters stay exact and the panel stays responsive with
+  thousands of issues.
+
+- **Mass operations ask before running.** Track All and Commit
+  All/Commit Modified show a confirmation with the group/file counts
+  (plus skipped library-linked groups for Track All) whenever more than
+  one group is affected.
+
+- **Backups before overwriting.** Mass writes (Track All, Commit All,
+  Commit Modified) copy the JSON files they are about to replace into
+  `<blend folder>/backups/<timestamp>/` and keep the last 5 snapshots.
+
+- **Failed pulls are listed and retryable.** A batch Pull keeps each
+  failing group's name and reason in the Sync panel with a **Retry
+  Failed** button (and a Dismiss button); one raising group no longer
+  aborts the whole batch.
+
 ### Removed
 
 - **Dead `gn.sync_resolve` operator** (superseded by

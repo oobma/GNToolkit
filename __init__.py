@@ -183,6 +183,10 @@ def register():
     from .sync_operators import GN_ImportState
     bpy.types.Scene.gnt_import_state = bpy.props.PointerProperty(type=GN_ImportState)
 
+    from .sync_operators import GN_FailedImportsState
+    bpy.types.Scene.gnt_failed_imports = bpy.props.PointerProperty(
+        type=GN_FailedImportsState)
+
     from .sync_ui import GN_AuditState
     bpy.types.Scene.gnt_audit_state = bpy.props.PointerProperty(type=GN_AuditState)
 
@@ -200,12 +204,14 @@ def unregister():
             pass
         _check_timer = None
 
-    from .sync_operators import stop_git_pump
+    from .sync_operators import stop_git_pump, stop_check_pump
+    stop_check_pump()
     stop_git_pump()
 
     del bpy.types.Scene.gnt_sync_prefs
     del bpy.types.Scene.gnt_commit_review
     del bpy.types.Scene.gnt_import_state
+    del bpy.types.Scene.gnt_failed_imports
     del bpy.types.Scene.gnt_audit_state
 
     for cls in reversed(_all_classes):

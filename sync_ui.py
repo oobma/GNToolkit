@@ -188,7 +188,14 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         review_row.operator("gn.sync_commit_review", text="Commit with Review…", icon='ACTION')
 
         check_row = layout.row(align=True)
-        check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
+        if sync_manager.check_busy():
+            done, total = sync_manager.check_progress()
+            wait_row = check_row.row(align=True)
+            wait_row.enabled = False
+            wait_row.operator("gn.sync_check", text=f"Checking {done}/{total}…",
+                              icon='FILE_REFRESH')
+        else:
+            check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
         prefs = context.scene.gnt_sync_prefs
         check_row.prop(prefs, "check_on_load", text="", icon='PLUGIN',
                        toggle=True, expand=True)
@@ -369,6 +376,21 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             save_row.label(text="Pull applied — save the .blend to persist (Ctrl+S)",
                            icon='ERROR')
 
+        failed = getattr(context.scene, "gnt_failed_imports", None)
+        if failed is not None and len(failed.items):
+            layout.separator()
+            fail_box = layout.box()
+            fail_box.label(text=failed.summary or f"{len(failed.items)} failed",
+                           icon='ERROR')
+            for item in list(failed.items)[:8]:
+                fail_box.label(text=f"{item.group_name} — {item.reason}", icon='NODETREE')
+            if len(failed.items) > 8:
+                fail_box.label(text=f"…and {len(failed.items) - 8} more", icon='INFO')
+            btn_row = fail_box.row(align=True)
+            btn_row.operator("gn.sync_retry_failed", text="Retry Failed",
+                             icon='FILE_REFRESH')
+            btn_row.operator("gn.sync_failures_clear", text="Dismiss", icon='X')
+
         layout.separator()
         stop_row = layout.row(align=True)
         stop_row.operator("gn.sync_unlink_all", text="Stop Tracking All", icon='X')
@@ -489,7 +511,8 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
             return
 
-        for uid, blend_name, status, ignored in filtered_items:
+        max_rows = 200
+        for uid, blend_name, status, ignored in filtered_items[:max_rows]:
             box = iss_box.box()
             icon = STATUS_ICONS.get(status, 'QUESTION')
             label = STATUS_LABELS.get(status, status.value)
@@ -526,6 +549,11 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             elif status == SyncStatus.JSON_MISSING:
                 actions.operator("gn.sync_export", text="Re-create JSON", icon='EXPORT').sync_uuid = uid
                 actions.operator("gn.sync_unlink", text="Stop Tracking", icon='X').sync_uuid = uid
+
+        hidden = len(filtered_items) - max_rows
+        if hidden > 0:
+            iss_box.label(text=f"…and {hidden} more — narrow down with the filters",
+                          icon='INFO')
 
         layout.separator()
         layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')

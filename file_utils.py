@@ -26,7 +26,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
+import time
+
+_BACKUP_KEEP = 5
 
 _RESERVED_STEMS = (
     {"CON", "PRN", "AUX", "NUL"}
@@ -87,6 +91,53 @@ def _remove_quietly(path):
         os.remove(path)
     except OSError:
         pass
+
+
+def _prune_backups(backups_root, keep):
+    try:
+        entries = sorted(
+            (name for name in os.listdir(backups_root)
+             if os.path.isdir(os.path.join(backups_root, name))),
+            reverse=True,
+        )
+    except OSError:
+        return
+    for name in entries[keep:]:
+        shutil.rmtree(os.path.join(backups_root, name), ignore_errors=True)
+
+
+def snapshot_files(paths, base_dir, keep=_BACKUP_KEEP):
+    """Copy every existing file of *paths* into ``<base_dir>/backups/<stamp>/``.
+
+    Relative layout under *base_dir* is preserved.  Keeps the last *keep*
+    backup folders.  Returns ``(backup_dir, errors)``; a copy failure is
+    reported to the caller instead of aborting the operation (the
+    snapshot is a safety net, not a precondition).
+    """
+    existing = [p for p in paths if p and os.path.isfile(p)]
+    if not existing or not base_dir:
+        return "", []
+    backups_root = os.path.join(base_dir, "backups")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_dir = os.path.join(backups_root, stamp)
+    suffix = 2
+    while os.path.isdir(backup_dir):
+        backup_dir = os.path.join(backups_root, f"{stamp}-{suffix}")
+        suffix += 1
+
+    errors = []
+    for src in existing:
+        try:
+            rel = os.path.relpath(os.path.abspath(src), os.path.abspath(base_dir))
+            if rel.startswith(".."):
+                rel = os.path.basename(src)
+            dest = os.path.join(backup_dir, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(src, dest)
+        except OSError as exc:
+            errors.append(f"{src}: {exc}")
+    _prune_backups(backups_root, keep)
+    return backup_dir, errors
 
 
 def write_json_file(json_path, data, dump_args=None):

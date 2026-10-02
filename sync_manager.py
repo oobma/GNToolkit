@@ -25,7 +25,7 @@ _log = logging.getLogger("GNToolkit.sync")
 
 from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
-from .file_utils import sanitize_filename, write_json_file
+from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
     canonical_hash_from_tree,
     canonical_hash_from_json_path,
@@ -274,6 +274,8 @@ class SyncManager:
         self._pending_save: bool = False
         self._ext_scan_time: float = 0.0
         self._ext_verified: dict[str, float] = {}
+        self._check_remaining: list = []
+        self._check_total: int = 0
 
     # --- Load / save -------------------------------------------------------
 
@@ -286,6 +288,8 @@ class SyncManager:
         self._dirty = False
         self._pending_save = False
         self._ext_verified = {}
+        self._check_remaining = []
+        self._check_total = 0
         self._ensure_hash_version()
 
     def save(self) -> bool:
@@ -548,6 +552,55 @@ class SyncManager:
 
         self._status_cache = result
         return result
+
+    # --- Chunked full status check (Refresh Status) ------------------------
+
+    def start_check_all(self) -> int:
+        """Begin a chunked full status check; returns the group count.
+
+        Used by the UI so a project with thousands of groups does not
+        freeze Blender; ``check_all_statuses`` stays synchronous for
+        tests and headless callers.
+        """
+        self._ensure_hash_version()
+        tracked = self.metadata.get("tracked_groups", {})
+        self._status_cache.clear()
+        if not tracked:
+            self._check_remaining = []
+            self._check_total = 0
+            return 0
+        self._clear_load_report()
+        self._check_remaining = list(tracked.keys())
+        self._check_total = len(self._check_remaining)
+        return self._check_total
+
+    def step_check_all(self, limit: int = 20) -> tuple[int, int]:
+        """Process up to *limit* groups of the chunked check.
+
+        Returns ``(done, total)``; ``done == total`` when finished (or
+        when no job is running).
+        """
+        while self._check_remaining and limit > 0:
+            uid = self._check_remaining.pop()
+            try:
+                self._status_cache[uid] = self.check_status(uid)
+            except Exception:
+                pass
+            limit -= 1
+        total = self._check_total
+        return total - len(self._check_remaining), total
+
+    def check_busy(self) -> bool:
+        return bool(self._check_remaining)
+
+    def check_progress(self) -> tuple[int, int]:
+        """``(done, total)`` of the running chunked check."""
+        total = self._check_total
+        return total - len(self._check_remaining), total
+
+    def cancel_check_all(self) -> None:
+        self._check_remaining = []
+        self._check_total = 0
 
     # --- Load-time JSON-side check -----------------------------------------
 
@@ -1277,10 +1330,11 @@ class SyncManager:
         all_names, all_graph, rev_graph, json_group_hashes, tracked_by_name = \
             self._build_pull_graphs(json_data_cache, modified_json_paths)
 
-        rebuilt_names, affected_parents, _p_imported, _p_errors = self._run_pull_pass(
-            [(sync_uuid, info, json_path_stored)], context, json_data_cache,
-            all_graph, rev_graph, all_names, tracked_by_name, group_interface_maps,
-        )
+        rebuilt_names, affected_parents, _p_imported, _p_errors, _p_failures = \
+            self._run_pull_pass(
+                [(sync_uuid, info, json_path_stored)], context, json_data_cache,
+                all_graph, rev_graph, all_names, tracked_by_name, group_interface_maps,
+            )
         pulled_names = set(rebuilt_names)
 
         # The external-connection restore rewired links of NON-rebuilt
@@ -1903,6 +1957,15 @@ class SyncManager:
         if context and hasattr(context, 'workspace') and context.workspace:
             context.workspace.status_text_set("Link All: writing JSON...")
 
+        # Safety net: snapshot the JSON that is about to be overwritten
+        blend_dir = self._blend_dir()
+        if blend_dir:
+            backup_dir, snap_errors = snapshot_files([abs_path], blend_dir)
+            if backup_dir:
+                _log.info("[Link All] snapshot: %s", backup_dir)
+            for err in snap_errors:
+                _log.warning("[Link All] snapshot: %s", err)
+
         # Write the master JSON
         write_json_file(abs_path, master_data)
 
@@ -2047,6 +2110,15 @@ class SyncManager:
         skipped = 0
         errors = 0
         done = 0
+
+        blend_dir = self._blend_dir()
+        if blend_dir:
+            planned = [resolve_json_path(jp, blend_dir) for jp in json_groups]
+            backup_dir, snap_errors = snapshot_files(planned, blend_dir)
+            if backup_dir:
+                _log.info("[Export All] snapshot: %s", backup_dir)
+            for err in snap_errors:
+                _log.warning("[Export All] snapshot: %s", err)
 
         for jp, uids in json_groups.items():
             json_path = resolve_json_path(jp, self._blend_dir())
@@ -2193,6 +2265,15 @@ class SyncManager:
 
         exported = 0
         errors = 0
+
+        blend_dir = self._blend_dir()
+        if blend_dir:
+            planned = [resolve_json_path(jp, blend_dir) for jp in json_groups]
+            backup_dir, snap_errors = snapshot_files(planned, blend_dir)
+            if backup_dir:
+                _log.info("[Export Modified] snapshot: %s", backup_dir)
+            for err in snap_errors:
+                _log.warning("[Export Modified] snapshot: %s", err)
 
         for jp, uids in json_groups.items():
             json_path = resolve_json_path(jp, self._blend_dir())
@@ -2401,6 +2482,7 @@ class SyncManager:
         affected_parents: set[str] = set()
         local_imported = 0
         local_errors = 0
+        failure_list: list[tuple[str, str]] = []
         to_import_count = len(ordered)
 
         for done, name in enumerate(ordered, 1):
@@ -2416,6 +2498,7 @@ class SyncManager:
             data = json_data_cache.get(jp)
             if data is None:
                 local_errors += 1
+                failure_list.append((blend_name, "JSON file could not be read"))
                 continue
 
             if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
@@ -2428,19 +2511,30 @@ class SyncManager:
                 tree_data = data
             else:
                 local_errors += 1
+                failure_list.append((blend_name, "unsupported JSON layout"))
                 continue
 
             if tree_data is None:
                 local_errors += 1
+                failure_list.append((blend_name, "group not found in the JSON"))
                 continue
 
             # Use the fast internal import method (no disk reads, no cascade)
-            tracker = self._import_from_json_data(uid, tree_data, json_cache, blend_name, context,
-                                                  group_interface_maps, preserve_external=False,
-                                                  unlink_parents=rev_graph.get(blend_name, ()))
+            try:
+                tracker = self._import_from_json_data(
+                    uid, tree_data, json_cache, blend_name, context,
+                    group_interface_maps, preserve_external=False,
+                    unlink_parents=rev_graph.get(blend_name, ()))
+            except Exception as exc:
+                local_errors += 1
+                failure_list.append(
+                    (blend_name, f"{type(exc).__name__}: {exc}"))
+                continue
             rebuilt_names.add(blend_name)
             if tracker.has_errors:
                 local_errors += 1
+                reason = tracker.first_error_message or "import failed — check the console"
+                failure_list.append((blend_name, reason))
             else:
                 local_imported += 1
 
@@ -2457,7 +2551,8 @@ class SyncManager:
                 self._restore_external_connections(name, filtered)
                 affected_parents.update(e.get("parent_name", "") for e in filtered)
 
-        return rebuilt_names, affected_parents, local_imported, local_errors
+        return (rebuilt_names, affected_parents, local_imported, local_errors,
+                failure_list)
 
     def _restamp_rebuilt(self, rebuilt_all: set, modified_json_paths: set,
                          json_data_cache: dict) -> None:
@@ -2519,7 +2614,7 @@ class SyncManager:
                         last_json_mtime=new_mtime,
                     )
 
-    def import_all_modified(self, context=None) -> dict:
+    def import_all_modified(self, context=None, only_names=None) -> dict:
         """Import all groups that are JSON_MODIFIED, BLEND_MODIFIED, or CONFLICT.
 
         For JSON_MODIFIED: JSON has external changes, import to Blender.
@@ -2529,14 +2624,21 @@ class SyncManager:
         Uses fast JSON-hash comparison (no .blend serialization) to determine
         which groups need importing.  Groups that are SYNCED are left untouched.
 
+        *only_names* restricts the pull to those blend names (used by the
+        "Retry failed" flow).
+
         Returns a dict with counts:
             {"imported": int, "skipped": int, "errors": int,
-             "auto_linked": int}
+             "auto_linked": int, "failures": [(name, reason), ...]}
         """
         tracked = self.metadata.get("tracked_groups", {})
+        if only_names is not None:
+            wanted = set(only_names)
+            tracked = {uid: info for uid, info in tracked.items()
+                       if info.get("blend_name", "") in wanted}
         if not tracked:
             return {"imported": 0, "skipped": 0, "errors": 0, "auto_linked": 0,
-                    "linked_skipped": 0}
+                    "linked_skipped": 0, "failures": []}
 
         # Crash guard: a crash mid-interface-rebuild can leave dangling
         # links (sockets pointing at other nodes' sockets).  Reading them
@@ -2638,12 +2740,14 @@ class SyncManager:
 
         if not groups_to_import:
             return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0,
-                    "still_differ": 0, "linked_skipped": linked_skipped}
+                    "still_differ": 0, "linked_skipped": linked_skipped,
+                    "failures": []}
 
         # --- Import each modified group using cached data ---
         imported = 0
         errors = 0
         auto_linked = 0
+        failures: list[tuple[str, str]] = []
 
         # Track which JSON paths were modified for batch post-processing
         modified_json_paths: set[str] = set()
@@ -2668,13 +2772,15 @@ class SyncManager:
         if candidates:
             pass_no = 1
             _log.info("[Import Modified] pass %d: %d group(s) to import", pass_no, len(candidates))
-            rebuilt_names, affected_parents, local_imported, local_errors = self._run_pull_pass(
-                candidates, context, json_data_cache, all_graph, rev_graph,
-                all_names, tracked_by_name, group_interface_maps,
-            )
+            rebuilt_names, affected_parents, local_imported, local_errors, \
+                local_failures = self._run_pull_pass(
+                    candidates, context, json_data_cache, all_graph, rev_graph,
+                    all_names, tracked_by_name, group_interface_maps,
+                )
             rebuilt_all.update(rebuilt_names)
             imported += local_imported
             errors += local_errors
+            failures.extend(local_failures)
 
             # The restore changed the blend content of the non-rebuilt parents
             # (their links into rebuilt groups were reconnected), so their
@@ -2771,7 +2877,7 @@ class SyncManager:
             self._pending_save = True
         return {"imported": imported, "skipped": skipped, "errors": errors,
                 "auto_linked": auto_linked, "still_differ": still_count,
-                "linked_skipped": linked_skipped}
+                "linked_skipped": linked_skipped, "failures": failures}
 
     def get_status_summary(self) -> dict[str, int]:
         """Return a summary count of each sync status for all tracked groups.

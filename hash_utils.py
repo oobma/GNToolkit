@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from copy import deepcopy
 
 from .constants import (
@@ -357,6 +358,89 @@ def _load_json_file(filepath: str) -> dict | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Parse cache: reading/hashing a single group of a large unified package
+# must not re-parse the whole file on every operation.  Keyed by
+# (absolute path, mtime_ns, size) so any write invalidates it.
+# ---------------------------------------------------------------------------
+
+_JSON_DATA_CACHE: OrderedDict = OrderedDict()
+_JSON_HASH_CACHE: OrderedDict = OrderedDict()
+_JSON_DATA_CACHE_MAX = 4
+_JSON_HASH_CACHE_MAX = 512
+
+
+def _json_file_key(filepath: str):
+    import os
+    try:
+        st = os.stat(filepath)
+    except OSError:
+        return None
+    return (os.path.abspath(filepath), st.st_mtime_ns, st.st_size)
+
+
+def clear_json_cache() -> None:
+    """Drop every cached parse/hash (tests, diag, explicit refresh)."""
+    _JSON_DATA_CACHE.clear()
+    _JSON_HASH_CACHE.clear()
+
+
+def load_json_cached(filepath: str) -> dict | None:
+    """Parse a JSON file through the small LRU cache (4 files)."""
+    key = _json_file_key(filepath)
+    if key is None:
+        return None
+    if key in _JSON_DATA_CACHE:
+        _JSON_DATA_CACHE.move_to_end(key)
+        return _JSON_DATA_CACHE[key]
+    data = _load_json_file(filepath)
+    _JSON_DATA_CACHE[key] = data
+    _JSON_DATA_CACHE.move_to_end(key)
+    while len(_JSON_DATA_CACHE) > _JSON_DATA_CACHE_MAX:
+        _JSON_DATA_CACHE.popitem(last=False)
+    return data
+
+
+def _cached_json_hash(filepath: str, group_name: str = "") -> str | None:
+    """Canonical hash of a file (group_name empty) or one group inside it.
+
+    The hash-level cache avoids re-canonicalizing the same group over and
+    over within one operation (export loops, status checks, auto-link).
+    """
+    key = _json_file_key(filepath)
+    if key is None:
+        return None
+    cache_key = key + (group_name,)
+    if cache_key in _JSON_HASH_CACHE:
+        _JSON_HASH_CACHE.move_to_end(cache_key)
+        return _JSON_HASH_CACHE[cache_key]
+
+    data = load_json_cached(filepath)
+    value = None
+    if data is not None:
+        if group_name:
+            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
+                group_data = data.get("node_groups", {}).get(group_name)
+                if group_data is not None:
+                    value = canonical_hash_from_json_data(group_data)
+            elif isinstance(data, dict) and "nodes" in data:
+                value = canonical_hash_from_json_data(data)
+        else:
+            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
+                groups = data.get("node_groups", {})
+                canonical_json = json.dumps(groups, sort_keys=True,
+                                            separators=(',', ':'))
+                value = hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
+            else:
+                value = canonical_hash_from_json_data(data)
+
+    _JSON_HASH_CACHE[cache_key] = value
+    _JSON_HASH_CACHE.move_to_end(cache_key)
+    while len(_JSON_HASH_CACHE) > _JSON_HASH_CACHE_MAX:
+        _JSON_HASH_CACHE.popitem(last=False)
+    return value
+
+
 def canonical_hash_from_json_path(filepath: str) -> str | None:
     """Compute SHA-256 from a JSON file on disk.
 
@@ -366,16 +450,7 @@ def canonical_hash_from_json_path(filepath: str) -> str | None:
 
     Returns None if the file does not exist or cannot be parsed.
     """
-    data = _load_json_file(filepath)
-    if data is None:
-        return None
-
-    if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-        groups = data.get("node_groups", {})
-        canonical_json = json.dumps(groups, sort_keys=True, separators=(',', ':'))
-        return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
-
-    return canonical_hash_from_json_data(data)
+    return _cached_json_hash(filepath, "")
 
 
 def canonical_hash_from_json_group(filepath: str, group_name: str) -> str | None:
@@ -389,23 +464,7 @@ def canonical_hash_from_json_group(filepath: str, group_name: str) -> str | None
 
     Returns None if the file or group is not found.
     """
-    data = _load_json_file(filepath)
-    if data is None:
-        return None
-
-    if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-        groups = data.get("node_groups", {})
-        group_data = groups.get(group_name)
-        if group_data is None:
-            return None
-        return canonical_hash_from_json_data(group_data)
-
-    if isinstance(data, dict) and "nodes" in data:
-        # Standalone group file — hash the whole thing
-        # (group_name is ignored; the file IS the group)
-        return canonical_hash_from_json_data(data)
-
-    return None
+    return _cached_json_hash(filepath, group_name)
 
 
 def list_groups_in_json(filepath: str) -> list[str]:
@@ -417,7 +476,7 @@ def list_groups_in_json(filepath: str) -> list[str]:
 
     Returns an empty list if the file cannot be read or has no groups.
     """
-    data = _load_json_file(filepath)
+    data = load_json_cached(filepath)
     if data is None:
         return []
 

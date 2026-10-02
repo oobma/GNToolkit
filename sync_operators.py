@@ -339,25 +339,77 @@ class GN_OT_SyncCheck(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        sync_manager.invalidate_cache()
-        statuses = sync_manager.check_all_statuses()
-        # Force UI redraw to show updated statuses
-        for area in context.screen.areas:
-            area.tag_redraw()
-        n_synced = sum(1 for s in statuses.values() if s == SyncStatus.SYNCED)
-        n_issues = len(statuses) - n_synced
-        if n_issues == 0:
-            self.report({'INFO'}, f"All {len(statuses)} groups synced")
-        else:
-            self.report({'WARNING'},
-                        f"{n_issues} of {len(statuses)} groups need attention")
+        if sync_manager.check_busy():
+            self.report({'WARNING'}, "Status check already running")
+            return {'CANCELLED'}
+        total = sync_manager.start_check_all()
+        if not total:
+            self.report({'INFO'}, "No tracked groups")
+            return {'FINISHED'}
+        ensure_check_pump()
+        self.report({'INFO'}, f"Checking {total} groups…")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Chunked status check pump — keeps the UI responsive on huge projects
+# ---------------------------------------------------------------------------
+
+_check_pump_handle = None
+
+
+def ensure_check_pump():
+    global _check_pump_handle
+    if _check_pump_handle is not None:
+        return
+    handle = bpy.app.timers.register(_check_pump_tick, first_interval=0.05)
+    if handle is None:
+        # No timers in this context (background/script): run synchronously
+        # so the caller still gets a complete result.
+        sync_manager.step_check_all(10 ** 9)
+        return
+    _check_pump_handle = handle
+
+
+def stop_check_pump():
+    global _check_pump_handle
+    if _check_pump_handle is not None:
         try:
-            from .git_integration import queue_status_refresh
-            queue_status_refresh()
-            ensure_git_pump()
+            bpy.app.timers.unregister(_check_pump_tick)
         except Exception:
             pass
-        return {'FINISHED'}
+        _check_pump_handle = None
+    sync_manager.cancel_check_all()
+
+
+def _check_pump_tick():
+    global _check_pump_handle
+    try:
+        done, total = sync_manager.step_check_all(20)
+    except Exception:
+        sync_manager.cancel_check_all()
+        _check_pump_handle = None
+        return None
+    if total and done < total:
+        _tag_git_redraw()
+        return 0.05
+    _check_pump_handle = None
+    statuses = sync_manager._status_cache
+    n_synced = sum(1 for s in statuses.values() if s == SyncStatus.SYNCED)
+    n_issues = len(statuses) - n_synced
+    if n_issues == 0:
+        _show_status_message(f"GNToolkit: all {len(statuses)} groups synced")
+    else:
+        _show_status_message(
+            f"GNToolkit: {n_issues} of {len(statuses)} groups need attention")
+    _tag_git_redraw()
+    try:
+        from .git_integration import queue_status_refresh
+        queue_status_refresh()
+        ensure_git_pump()
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +683,13 @@ class GN_OT_SyncTrackDeps(bpy.types.Operator):
 # Operator: Track all groups (batch)
 # ---------------------------------------------------------------------------
 
+def _mass_counts_link_all() -> dict:
+    gn_groups = [ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY']
+    linked = sum(1 for ng in gn_groups if group_library_path(ng))
+    tracked = len(sync_manager.metadata.get("tracked_groups", {}))
+    return {"total": len(gn_groups), "linked": linked, "tracked": tracked}
+
+
 class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link_all"
     bl_label = "Track All"
@@ -643,12 +702,44 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
+    def invoke(self, context, event):
+        counts = _mass_counts_link_all()
+        if counts["total"] - counts["linked"] <= 1:
+            return super().invoke(context, event)
+        if not self.filepath:
+            stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "nodegroups"
+            base = sync_manager._blend_dir() or os.getcwd()
+            self.filepath = os.path.join(base, f"{stem}.json")
+        return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def draw(self, context):
+        layout = self.layout
+        counts = _mass_counts_link_all()
+        layout.label(text=f"Track {counts['total'] - counts['linked']} group(s)?",
+                     icon='FILE_TICK')
+        col = layout.column(align=True)
+        col.label(text=f"Geometry groups in the .blend: {counts['total']}")
+        if counts["linked"]:
+            col.label(text=f"Library-linked, skipped: {counts['linked']}",
+                      icon='LINK_BLEND')
+        col.label(text=f"Already tracked (re-written): {counts['tracked']}")
+        if self.filepath and os.path.isfile(self.filepath):
+            col.label(text="The existing JSON will be overwritten — a copy is kept "
+                           "in backups/", icon='ERROR')
+        layout.separator()
+        layout.prop(self, "filepath")
+        layout.label(text="A backup of the destination file is written to backups/",
+                     icon='INFO')
+
     def execute(self, context):
         if not bpy.data.filepath:
             self.report({'INFO'},
                         "The .blend is not saved yet — tracking is kept in memory "
                         "until you save. Save the file to persist the sidecar and "
                         "relative JSON paths.")
+
+        if self.filepath and not self.filepath.lower().endswith(".json"):
+            self.filepath += ".json"
 
         gn_groups = [ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY']
         if not gn_groups:
@@ -832,6 +923,22 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
         default=True,
     )
 
+    def invoke(self, context, event):
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+        if len(tracked) <= 1:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def draw(self, context):
+        layout = self.layout
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+        files = len({info.get("json_path", "") for info in tracked.values()
+                     if info.get("json_path")})
+        layout.label(text=f"Commit all {len(tracked)} tracked groups?", icon='EXPORT')
+        layout.label(text=f"{files} JSON file(s) will be overwritten — a backup "
+                          "copy is kept in backups/")
+        layout.label(text="Groups missing from the .blend are skipped", icon='INFO')
+
     def execute(self, context):
         tracked = sync_manager.metadata.get("tracked_groups", {})
         if not tracked:
@@ -868,6 +975,21 @@ class GN_OT_SyncExportModified(bpy.types.Operator):
     bl_label = "Commit Modified to JSON"
     bl_description = "Write only edited or conflicting groups into their JSON files"
     bl_options = {'REGISTER'}
+
+    def invoke(self, context, event):
+        summary = sync_manager.get_status_summary()
+        affected = summary.get("blend_modified", 0) + summary.get("conflict", 0)
+        if affected <= 1:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def draw(self, context):
+        layout = self.layout
+        summary = sync_manager.get_status_summary()
+        affected = summary.get("blend_modified", 0) + summary.get("conflict", 0)
+        layout.label(text=f"Commit {affected} modified group(s)?", icon='EXPORT')
+        layout.label(text="Their JSON files will be overwritten — a backup copy "
+                          "is kept in backups/")
 
     def execute(self, context):
         tracked = sync_manager.metadata.get("tracked_groups", {})
@@ -935,6 +1057,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
             result = sync_manager.import_all_modified(context)
             sync_manager.save()
             context.window_manager.progress_end()
+            _set_failed_imports(context.scene, result.get("failures", []))
             # Force UI redraw so issues disappear immediately
             for area in context.screen.areas:
                 area.tag_redraw()
@@ -946,12 +1069,61 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                         + (f", {result.get('still_differ', 0)} still differ from JSON"
                            if result.get('still_differ') else "")
                         + (f", {result.get('linked_skipped', 0)} library-linked skipped"
-                           if result.get('linked_skipped') else ""))
+                           if result.get('linked_skipped') else "")
+                        + (f" — {len(result.get('failures', []))} failed, "
+                           "see the panel to retry"
+                           if result.get('failures') else ""))
         except Exception as e:
             context.window_manager.progress_end()
             self.report({'ERROR'}, f"Pull failed: {e}")
             return {'CANCELLED'}
 
+        return {'FINISHED'}
+
+
+class GN_OT_SyncRetryFailed(bpy.types.Operator):
+    bl_idname = "gn.sync_retry_failed"
+    bl_label = "Retry Failed"
+    bl_description = "Import again only the groups that failed in the last batch pull"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        state = getattr(context.scene, "gnt_failed_imports", None)
+        names = [item.group_name for item in state.items] if state else []
+        if not names:
+            self.report({'INFO'}, "Nothing to retry")
+            return {'CANCELLED'}
+        context.window_manager.progress_begin(0, len(names))
+        try:
+            result = sync_manager.import_all_modified(context, only_names=names)
+            sync_manager.save()
+            context.window_manager.progress_end()
+        except Exception as e:
+            context.window_manager.progress_end()
+            self.report({'ERROR'}, f"Retry failed: {e}")
+            return {'CANCELLED'}
+        _set_failed_imports(context.scene, result.get("failures", []))
+        for area in context.screen.areas:
+            area.tag_redraw()
+        if result.get("failures"):
+            self.report({'WARNING'},
+                        f"{len(result['failures'])} group(s) still failing — see the panel")
+        else:
+            self.report({'INFO'},
+                        f"Retry complete — {result['imported']} group(s) imported")
+        return {'FINISHED'}
+
+
+class GN_OT_SyncFailuresClear(bpy.types.Operator):
+    bl_idname = "gn.sync_failures_clear"
+    bl_label = "Dismiss"
+    bl_description = "Clear the failed-import list"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        _set_failed_imports(context.scene, [])
+        for area in context.screen.areas:
+            area.tag_redraw()
         return {'FINISHED'}
 
 
@@ -1252,6 +1424,31 @@ class GN_ImportState(bpy.types.PropertyGroup):
     filepath: StringProperty()
     group_name: StringProperty()
     items: CollectionProperty(type=GN_ImportItem)
+
+
+class GN_FailedImport(bpy.types.PropertyGroup):
+    """One group that failed in a batch pull (Scene.gnt_failed_imports)."""
+    group_name: StringProperty()
+    reason: StringProperty()
+
+
+class GN_FailedImportsState(bpy.types.PropertyGroup):
+    """Failed groups of the last batch pull, offered for retry."""
+    items: CollectionProperty(type=GN_FailedImport)
+    summary: StringProperty()
+
+
+def _set_failed_imports(scene, failures) -> None:
+    state = getattr(scene, "gnt_failed_imports", None)
+    if state is None:
+        return
+    state.items.clear()
+    for name, reason in failures:
+        item = state.items.add()
+        item.group_name = name
+        item.reason = reason
+    state.summary = (f"{len(failures)} group(s) failed to import"
+                     if failures else "")
 
 
 def _fill_import_items(state) -> None:
@@ -1723,6 +1920,8 @@ classes = (
     GN_CommitReview,
     GN_ImportItem,
     GN_ImportState,
+    GN_FailedImport,
+    GN_FailedImportsState,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
     GN_OT_SyncUnlink,
@@ -1738,6 +1937,8 @@ classes = (
     GN_OT_SyncExportAll,
     GN_OT_SyncExportModified,
     GN_OT_SyncImportModified,
+    GN_OT_SyncRetryFailed,
+    GN_OT_SyncFailuresClear,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,
     GN_OT_SyncImportGroupTrack,

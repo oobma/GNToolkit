@@ -22,6 +22,7 @@ class ImportErrorTracker:
         self._count: int = 0
         self._issue_count: int = 0
         self._error_count: int = 0
+        self.records: list[tuple[str, str]] = []
 
     def record(self, msg: str, *, level: str = "ERROR") -> None:
         """Record one error and print it to the console."""
@@ -30,7 +31,15 @@ class ImportErrorTracker:
             self._issue_count += 1
         if level in self._ERROR_LEVELS:
             self._error_count += 1
+        self.records.append((level, msg))
         print(f"[{level}] {msg}")
+
+    @property
+    def first_error_message(self) -> str:
+        for level, msg in self.records:
+            if level in self._ERROR_LEVELS:
+                return msg
+        return ""
 
     @property
     def count(self) -> int:
