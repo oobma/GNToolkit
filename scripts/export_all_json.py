@@ -180,9 +180,14 @@ def main():
     stem = safe(os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "unsaved")
     pkg = os.path.join(out, f"{stem}.json")
 
-    result = bpy.ops.gn.export_batch_json(
-        filepath=pkg, use_folder_structure=True, use_minify=minify,
-        exclude_libraries=";".join(exclude_fragments))
+    # exclude_libraries is only passed when used: older addon versions
+    # (e.g. the one on the extension platform before 0.2.8) do not have
+    # that operator property and would reject an unknown keyword.
+    export_kwargs = {"filepath": pkg, "use_folder_structure": True,
+                     "use_minify": minify}
+    if exclude_fragments:
+        export_kwargs["exclude_libraries"] = ";".join(exclude_fragments)
+    result = bpy.ops.gn.export_batch_json(**export_kwargs)
     if result != {'FINISHED'}:
         print(f"[ERROR] export failed: {result}")
         sys.exit(1)
