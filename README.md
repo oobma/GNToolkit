@@ -171,7 +171,7 @@ module or the repo copy next to the script).
 
 ### Reviewing node changes in CI
 
-`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.2.7` tag;
+`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.2.8` tag;
 until that tag exists, pin `v0.2.5` — the template's commands are unchanged
 between tags) that runs the status check and the audits on every proposed
 change touching `NodeGroups/` or the `.gntsync` sidecar — in the CI service
@@ -426,7 +426,7 @@ port required:
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.2.7.zip`).
+   `GNToolkit-v0.2.8.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    downloaded zip (the zip contains the `GNToolkit/` addon folder).
 3. Enable **"GNToolkit"** in the list.
@@ -449,7 +449,7 @@ Exports are **unified packages**:
 
 ```json
 {
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "GN_UNIFIED_PACKAGE",
   "export_method": "GN_TOOLKIT",
   "node_groups": {
