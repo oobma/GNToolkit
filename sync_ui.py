@@ -710,7 +710,8 @@ class GN_OT_AuditProject(bpy.types.Operator):
                 _audit_add(state, "impact", f"{target} — not tracked")
             else:
                 consumers = []
-                for obj in bpy.data.objects:
+                all_objects = bpy.data.objects
+                for obj in all_objects:
                     for mod in obj.modifiers:
                         if (mod.type == 'NODES'
                                 and mod.node_group is not None
@@ -892,8 +893,9 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             return
 
         if not state.get("available"):
-            layout.label(text="Git not found — install Git and restart",
-                         icon='ERROR')
+            layout.label(text="Git not found — collaboration is optional",
+                         icon='INFO')
+            layout.label(text="Everything else works without Git")
             return
 
         busy = git_busy()

@@ -181,7 +181,8 @@ def git_log(repo_root, rel_path=None, count=10):
 def git_commit(repo_root, message, paths):
     """Stage ONLY *paths* (tracked JSONs) and commit. Returns (ok, detail)."""
     if not git_available():
-        return False, "Git not found — install Git and restart Blender"
+        return False, ("Git not found — install Git only for Collaboration, "
+                       "then restart Blender")
     rel = [os.path.relpath(p, repo_root).replace(os.sep, "/") for p in paths]
     rc, out, err = _git(["add", "--"] + rel, repo_root)
     if rc != 0:
@@ -220,7 +221,9 @@ def git_sync(repo_root, report_files=False):
     paths (forward slashes) that the pull changed (empty when already
     up to date)."""
     if not git_available():
-        result = ("error", "Git not found — install Git and restart Blender")
+        result = ("error",
+                  "Git not found — install Git only for Collaboration, "
+                  "then restart Blender")
         return result + ([],) if report_files else result
     head_before = ""
     if report_files:
