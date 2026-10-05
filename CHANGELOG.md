@@ -15,11 +15,21 @@ All notable changes to this project are documented in this file.
 - **Git is presented as what it is: optional.** The Collaboration panel now
   reads "Git not found — collaboration is optional / Everything else works
   without Git" instead of asking to install it as if it were required, and
-  the commit/sync failure messages say the same. No functional change: the
-  add-on never needed Git for the JSON sync, the audits or `gnt_check` —
-  every Git entry point degrades gracefully, now covered by
-  `tests/diag_no_git.py`, which runs the core flow (link, statuses, export,
-  save/reload) with Git stripped from `PATH`.
+  the messages shown when Git Commit or Git Sync cannot run say "install
+  Git only for Collaboration". Only that panel uses Git;
+  everything else works without it — JSON commit and import (Commit,
+  Commit Modified, Commit All, Commit with Review, Pull from JSON) and
+  package export/import (active group, batch, folder, multi-group),
+  tracking (Track Group / Track All /
+  Track Folder / Track from Existing JSON, dependency auto-link), per-group
+  statuses (Synced, Edited Locally, Changed in JSON, Conflict, Missing…),
+  external JSON change detection (mtime + hash), JSON↔.blend conflict
+  resolution (Keep JSON / Keep Blend), selective import + picker (F3),
+  audits (impact, duplicates, health, cross-project) + geometry validation,
+  and sidecar save/reload, backups and atomic writes. Every Git entry point
+  degrades gracefully, now covered by `tests/diag_no_git.py`, which runs
+  the core flow (link, statuses, export, save/reload) with Git stripped
+  from `PATH`.
 
 ### Fixed
 
