@@ -869,7 +869,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                 if json_hash is None:
                     json_hash = canonical_hash_from_json_path(fp)
                 mtime = os.path.getmtime(fp)
-                stored_path = make_json_path_relative(fp, sync_manager._blend_dir())
+                stored_path = make_json_path_relative(fp, sync_manager._saved_blend_dir())
                 add_tracked_group(
                     sync_manager.metadata, uid, gname, stored_path,
                     blend_hash, json_hash, mtime, layout="folder",

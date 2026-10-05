@@ -39,6 +39,20 @@ _RESERVED_STEMS = (
 )
 
 
+def _strip_end_punctuation(value):
+    """``value.strip(" .")`` without a multi-character ``str.strip`` call.
+
+    Equivalent to stripping ``'.'`` and ``' '`` from both ends of *value*.
+    """
+    start = 0
+    end = len(value)
+    while start < end and value[start] in " .":
+        start += 1
+    while end > start and value[end - 1] in " .":
+        end -= 1
+    return value[start:end]
+
+
 def sanitize_filename(name, fallback="unnamed"):
     """Filesystem-safe stem for *name* (extension added by the caller).
 
@@ -46,9 +60,9 @@ def sanitize_filename(name, fallback="unnamed"):
     Use :class:`FilenameAllocator` when several files are written at once.
     """
     stem = "".join(c if c.isalnum() or c in (" ", "_") else "_" for c in name)
-    if not stem.strip(" ."):
+    if not _strip_end_punctuation(stem):
         stem = fallback
-    if stem.rstrip(" .").upper() in _RESERVED_STEMS:
+    if _strip_end_punctuation(stem).upper() in _RESERVED_STEMS:
         stem = "_" + stem
     return stem
 
@@ -129,8 +143,11 @@ def snapshot_files(paths, base_dir, keep=_BACKUP_KEEP):
     for src in existing:
         try:
             rel = os.path.relpath(os.path.abspath(src), os.path.abspath(base_dir))
-            if rel.startswith(".."):
-                rel = os.path.basename(src)
+        except ValueError:
+            rel = os.path.basename(src)
+        if rel.startswith(".."):
+            rel = os.path.basename(src)
+        try:
             dest = os.path.join(backup_dir, rel)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copy2(src, dest)

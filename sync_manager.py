@@ -311,7 +311,7 @@ class SyncManager:
         or on another drive are left absolute (make_json_path_relative
         guarantees this).  Returns True when any path changed.
         """
-        blend_dir = self._blend_dir()
+        blend_dir = self._saved_blend_dir()
         if not blend_dir:
             return False
         changed = False
@@ -839,7 +839,7 @@ class SyncManager:
                     if dep_uid and dep_uid != sync_uuid:
                         dep_uuids.append(dep_uid)
 
-        stored_path = make_json_path_relative(abs_path, self._blend_dir())
+        stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
 
         add_tracked_group(
             self.metadata, sync_uuid, tree.name, stored_path,
@@ -1650,7 +1650,7 @@ class SyncManager:
             if json_hash is None:
                 json_hash = canonical_hash_from_json_path(target_path)
             mtime = os.path.getmtime(target_path)
-            stored_path = make_json_path_relative(target_path, self._blend_dir())
+            stored_path = make_json_path_relative(target_path, self._saved_blend_dir())
             add_tracked_group(
                 self.metadata, uid, child_name, stored_path,
                 blend_hash, json_hash, mtime, layout=dep["layout"],
@@ -1958,7 +1958,7 @@ class SyncManager:
             context.workspace.status_text_set("Link All: writing JSON...")
 
         # Safety net: snapshot the JSON that is about to be overwritten
-        blend_dir = self._blend_dir()
+        blend_dir = self._saved_blend_dir()
         if blend_dir:
             backup_dir, snap_errors = snapshot_files([abs_path], blend_dir)
             if backup_dir:
@@ -1972,7 +1972,7 @@ class SyncManager:
         _log.info("[Link All] JSON written, reading back from disk to compute hashes...")
 
         json_mtime = os.path.getmtime(abs_path)
-        stored_path = make_json_path_relative(abs_path, self._blend_dir())
+        stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
 
         # Read JSON back from disk to ensure hashes match exactly what
         # check_status and export_to_json will compute later.
@@ -2111,7 +2111,7 @@ class SyncManager:
         errors = 0
         done = 0
 
-        blend_dir = self._blend_dir()
+        blend_dir = self._saved_blend_dir()
         if blend_dir:
             planned = [resolve_json_path(jp, blend_dir) for jp in json_groups]
             backup_dir, snap_errors = snapshot_files(planned, blend_dir)
@@ -2266,7 +2266,7 @@ class SyncManager:
         exported = 0
         errors = 0
 
-        blend_dir = self._blend_dir()
+        blend_dir = self._saved_blend_dir()
         if blend_dir:
             planned = [resolve_json_path(jp, blend_dir) for jp in json_groups]
             backup_dir, snap_errors = snapshot_files(planned, blend_dir)
@@ -2901,6 +2901,21 @@ class SyncManager:
         if filepath:
             return os.path.dirname(os.path.abspath(filepath))
         return os.path.abspath(".")
+
+    def _saved_blend_dir(self) -> str:
+        """Directory of the saved .blend, or '' when it has never been saved.
+
+        ``_blend_dir()`` falls back to the current working directory for
+        unsaved sessions (handy for file dialogs), but tracked JSON paths
+        must only be stored blend-relative (``//``) when there is a real
+        .blend to be relative to: relative to the CWD they would break as
+        soon as the file is saved elsewhere.  ``_relativize_json_paths``
+        converts absolute stored paths on the first save.
+        """
+        filepath = bpy.data.filepath
+        if not filepath:
+            return ""
+        return os.path.dirname(os.path.abspath(filepath))
 
     def count_local_changes(self) -> int:
         """Count tracked groups with local (.blend) changes.

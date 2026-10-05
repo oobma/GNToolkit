@@ -55,6 +55,8 @@ def make_json_path_relative(json_path: str, blend_dir: str) -> str:
     Otherwise returns the absolute path unchanged.
     """
     json_path = os.path.normpath(json_path)
+    if not blend_dir:
+        return json_path
     blend_dir = os.path.normpath(blend_dir)
     try:
         rel = os.path.relpath(json_path, blend_dir)
