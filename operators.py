@@ -218,7 +218,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     os.makedirs(mod_dir)
                 mod_names = FilenameAllocator()
                 count_mod = 0
-                for obj in bpy.data.objects:
+                all_objects = bpy.data.objects
+                for obj in all_objects:
                     for idx, mod in enumerate(obj.modifiers):
                         if mod.type == 'NODES' and not _modifier_excluded(mod):
                             data = {
@@ -262,7 +263,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     context.window_manager.progress_update(i)
                     master_data["node_groups"][tree.name] = serialize_node_tree(tree)
 
-                for obj in bpy.data.objects:
+                all_objects = bpy.data.objects
+                for obj in all_objects:
                     for idx, mod in enumerate(obj.modifiers):
                         if mod.type == 'NODES' and not _modifier_excluded(mod):
                             master_data["modifiers"].append({

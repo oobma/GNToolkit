@@ -370,7 +370,8 @@ def get_mesh_from_node_tree(node_tree) -> Optional[bpy.types.Mesh]:
 
     Returns the first mesh found, or None if no object uses this tree.
     """
-    for obj in bpy.data.objects:
+    all_objects = bpy.data.objects
+    for obj in all_objects:
         for mod in obj.modifiers:
             if mod.type == 'NODES' and mod.node_group == node_tree:
                 if obj.type == 'MESH' and obj.data:

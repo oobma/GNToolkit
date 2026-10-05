@@ -121,7 +121,8 @@ def snapshot_modifier_inputs(tree):
     """
     old_items = list(_tree_interface_sockets(tree))
     snapshots = []
-    for obj in bpy.data.objects:
+    all_objects = bpy.data.objects
+    for obj in all_objects:
         for mod in obj.modifiers:
             if mod.type != 'NODES' or mod.node_group != tree:
                 continue
