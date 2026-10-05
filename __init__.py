@@ -27,10 +27,10 @@ from .sync_manager import sync_manager, SyncStatus
 bl_info = {
     "name": "GNToolkit",
     "author": "oobma",
-    "version": (0, 2, 8),
+    "version": (0, 2, 9),
     "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GN Tools",
-    "description": "Version control with semantics for Blender node trees (Geometry Nodes first): canonical JSON (DNA) vs .blend (RNA), per-group statuses, conflicts, Git collaboration, and pure-Python headless checks (gnt_check).",
+    "description": "Version control with semantics for Blender node trees.",
     "category": "Node",
 }
 

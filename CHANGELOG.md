@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-05
+
+### Changed
+
+- **The legacy add-on list description fits on one line again.** It now
+  reads just the tagline ("Version control with semantics for Blender node
+  trees.") instead of a paragraph that was cut off in the Preferences list.
+
+- **Git is presented as what it is: optional.** The Collaboration panel now
+  reads "Git not found — collaboration is optional / Everything else works
+  without Git" instead of asking to install it as if it were required, and
+  the commit/sync failure messages say the same. No functional change: the
+  add-on never needed Git for the JSON sync, the audits or `gnt_check` —
+  every Git entry point degrades gracefully, now covered by
+  `tests/diag_no_git.py`, which runs the core flow (link, statuses, export,
+  save/reload) with Git stripped from `PATH`.
+
+### Fixed
+
+- **Tracking a group before the .blend is saved stored a bogus `//` path**
+  (relative to the process working directory instead of the future file).
+  Once the .blend was saved elsewhere, the tracked JSON resolved to a
+  non-existent location and the group showed as *JSON File Missing*.
+  Tracked paths now stay absolute until the first save; the save handler
+  converts them to blend-relative, as intended.
+
+- **Backing up a JSON on another drive no longer aborts the operation.**
+  The backup mirror path used `os.path.relpath`, which raises on Windows
+  when the JSON and the .blend live on different drives; the copy now
+  falls back to the file name instead of failing the whole batch. Mass
+  writes also skip the snapshot while the .blend has never been saved
+  (there is no project folder to back up to yet) instead of writing a
+  stray `backups/` next to the process working directory.
+
 ## [0.2.8] - 2026-10-02
 
 ### Added
@@ -179,19 +213,15 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - **UTF-8 BOM removed from `sync_operators.py`.** Python tolerates a BOM
-  when importing, so the release gate never blinked — but the Blender
-  Extensions Platform review utility (`extensions_review`) parses every
-  shipped file with `ast.parse` on decoded text and reported
-  `SyntaxError: invalid non-printable character U+FEFF` on line 1. A
-  "syntax error" in the submitted package is exactly the kind of thing a
-  review flags, so the three bytes are gone. Verified by re-running the
-  review utility against the rebuilt package: no parse errors remain.
+  when importing, so the release gate never blinked, but a BOM breaks
+  plain-text tooling that parses the shipped files with `ast.parse`
+  (`SyntaxError: invalid non-printable character U+FEFF` on line 1). The
+  three bytes are gone.
 
 - **Repo row display name no longer builds on a literal backslash**
   (`git_integration.py`): `root.rstrip("\\/")` became
   `os.path.basename(os.path.normpath(root))` — same result for drive
-  roots and UNC paths, and it silences the review utility's
-  `non_portable_backslash` and `error_prone_string_strip` warnings.
+  roots and UNC paths, with no backslash-based stripping left.
 
 ## [0.2.5] - 2026-09-28
 
