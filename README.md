@@ -495,6 +495,25 @@ through the package.
    `fix:`, `feat:`, `refactor:`, `perf:`, `docs:`).
 4. Open a pull request — the base branch is `main`.
 
+## Bundled third-party components
+
+The add-on bundles these pure-Python wheels (`wheels/`), installed by
+Blender when the add-on is enabled as an extension. Each wheel ships with
+its own license file.
+
+| Wheel | License |
+|---|---|
+| [dulwich](https://www.dulwich.io/) | Apache-2.0 or GPL-2.0-or-later |
+| [urllib3](https://urllib3.readthedocs.io/) | MIT |
+| [keyring](https://github.com/jaraco/keyring) | MIT |
+| [pywin32-ctypes](https://github.com/enthought/pywin32-ctypes) | BSD-3-Clause |
+| [jaraco.classes](https://github.com/jaraco/jaraco.classes), [jaraco.context](https://github.com/jaraco/jaraco.context), [jaraco.functools](https://github.com/jaraco/jaraco.functools) | MIT |
+| [more-itertools](https://github.com/more-itertools/more-itertools) | MIT |
+| [typing_extensions](https://github.com/python/typing_extensions) | PSF-2.0 |
+| [backports.tarfile](https://github.com/jaraco/backports.tarfile) | MIT |
+| [importlib_metadata](https://github.com/python/importlib_metadata) | Apache-2.0 |
+| [zipp](https://github.com/jaraco/zipp) | MIT |
+
 ## License
 
 [GPL-3.0-or-later](LICENSE)
