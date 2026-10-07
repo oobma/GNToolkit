@@ -20,23 +20,29 @@ skips the full scan. Commits invalidate the repo's entry.
 Commits from the embedded engine do not run repository hooks (no shell is
 assumed to exist) — hook-driven workflows stay on the Git CLI engine.
 
-Network operations (fetch/pull/push) arrive with the worker phase; until
-then the task factories return an honest error through the same task
-protocol as the Git CLI backend.
+Network operations (fetch/pull/push) run in ``git_network_worker.py``,
+launched with Blender's bundled Python interpreter and polled across pump
+ticks, so the UI never blocks and the operation can be cancelled; the
+credentials travel over the worker's standard input, never in argv or
+logs. The direct ``git_sync``/``fetch`` API runs the same worker
+synchronously. Until the vault phase lands, credentials come from the
+session API or ``GNT_GIT_USERNAME``/``GNT_GIT_TOKEN``.
 """
 
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 import time
 
 _log = logging.getLogger("GNToolkit.git")
 
-_NETWORK_PENDING = ("The embedded engine brings remote changes in the "
-                    "next phase — use the installed Git engine meanwhile")
+_NETWORK_TIMEOUT = 60.0
 
 _dulwich = None
 _dulwich_error = None
@@ -364,12 +370,191 @@ class _CallTask(_Task):
         return self._value
 
 
-class _ReadyTask(_Task):
-    def __init__(self, value):
-        self._value = value
+_bundled_python_cache = None
+_session_credentials = None
+
+
+def set_network_credentials(username, token):
+    """Session credentials for the embedded engine (the vault lands next)."""
+    global _session_credentials
+    _session_credentials = (username, token) if token else None
+
+
+def _credentials_for(repo_root):
+    if _session_credentials and _session_credentials[1]:
+        return _session_credentials
+    token = os.environ.get("GNT_GIT_TOKEN", "").strip()
+    if token:
+        username = os.environ.get("GNT_GIT_USERNAME", "").strip()
+        return (username or "git", token)
+    return (None, None)
+
+
+def _bundled_python():
+    global _bundled_python_cache
+    if _bundled_python_cache is not None:
+        return _bundled_python_cache or None
+    import bpy
+    base = os.path.dirname(os.path.abspath(bpy.app.binary_path))
+    version = f"{bpy.app.version[0]}.{bpy.app.version[1]}"
+    names = ("python.exe", "python3.exe", "python3.13", "python3.12",
+             "python3.11", "python3.10", "python", "python3")
+    for directory in (os.path.join(base, version, "python", "bin"),
+                      os.path.join(os.path.dirname(base), "Resources",
+                                   version, "python", "bin")):
+        for name in names:
+            path = os.path.join(directory, name)
+            if os.path.isfile(path):
+                _bundled_python_cache = path
+                return path
+    _bundled_python_cache = ""
+    return None
+
+
+def _worker_command():
+    worker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "git_network_worker.py")
+    python = _bundled_python()
+    if python:
+        return [python, "-I", "-u", worker]
+    import bpy
+    return [bpy.app.binary_path, "--background", "--factory-startup",
+            "--python", worker, "--"]
+
+
+class _WorkerTask(_Task):
+    """Run git_network_worker.py and poll it across pump ticks."""
+
+    def __init__(self, op, repo_root, username, token):
+        self._op = op
+        self._repo = repo_root
+        self._username = username
+        self._token = token
+        self._proc = None
+        self._out = None
+        self._err = None
+        self._deadline = None
+        self._done = False
+        self._value = None
 
     def poll(self):
+        if self._done:
+            return self._value
+        if self._proc is None:
+            self._start()
+            if self._done:
+                return self._value
+        returncode = self._proc.poll()
+        if returncode is None:
+            if time.monotonic() < self._deadline:
+                return None
+            self._kill_process()
+            self._value = {"status": "error",
+                           "detail": "network operation timed out",
+                           "head_after": ""}
+            self._close_files()
+            self._done = True
+            return self._value
+        self._value = self._collect(returncode)
+        self._close_files()
+        self._done = True
         return self._value
+
+    def kill(self):
+        self._kill_process()
+        self._close_files()
+        self._token = ""
+        self._done = True
+
+    def _start(self):
+        command = _worker_command() + ["--op", self._op, "--repo", self._repo]
+        self._out = tempfile.TemporaryFile()
+        self._err = tempfile.TemporaryFile()
+        try:
+            self._proc = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=self._out,
+                stderr=self._err,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as exc:
+            self._value = {
+                "status": "error",
+                "detail": f"could not start the network worker: {exc}",
+                "head_after": ""}
+            self._close_files()
+            self._done = True
+            return
+        payload = json.dumps({"username": self._username or "",
+                              "token": self._token or ""}) + "\n"
+        try:
+            self._proc.stdin.write(payload.encode("utf-8"))
+            self._proc.stdin.close()
+        except OSError:
+            pass
+        self._token = ""
+        self._deadline = time.monotonic() + _NETWORK_TIMEOUT
+
+    def _collect(self, returncode):
+        text = _read_temp(self._out)
+        line = ""
+        for candidate in text.splitlines():
+            if candidate.strip():
+                line = candidate.strip()
+        result = None
+        if line:
+            try:
+                result = json.loads(line)
+            except ValueError:
+                result = None
+        if not isinstance(result, dict) or "status" not in result:
+            tail = _read_temp(self._err).strip().splitlines()
+            detail = tail[-1] if tail else ""
+            result = {"status": "error",
+                      "detail": detail or
+                      f"network worker failed (exit {returncode})",
+                      "head_after": ""}
+        result.setdefault("detail", "")
+        result.setdefault("head_after", "")
+        return result
+
+    def _kill_process(self):
+        if self._proc is not None:
+            try:
+                self._proc.kill()
+            except OSError:
+                pass
+
+    def _close_files(self):
+        for handle in (self._out, self._err):
+            if handle is not None:
+                try:
+                    handle.close()
+                except (OSError, ValueError):
+                    pass
+        self._out = None
+        self._err = None
+
+
+def _read_temp(handle):
+    if handle is None:
+        return ""
+    try:
+        handle.seek(0)
+        return handle.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return ""
+
+
+def _run_task_sync(task):
+    deadline = time.monotonic() + _NETWORK_TIMEOUT + 10.0
+    while True:
+        value = task.poll()
+        if value is not None:
+            return value
+        if time.monotonic() > deadline:
+            task.kill()
+            return {"status": "error",
+                    "detail": "network operation timed out", "head_after": ""}
+        time.sleep(0.02)
 
 
 def status_task(repo_root, tracked_paths=None):
@@ -380,9 +565,46 @@ def head_task(repo_root):
     return _CallTask(lambda: head_sha(repo_root))
 
 
+def diff_names_task(repo_root, sha_a, sha_b):
+    return _CallTask(lambda: diff_names(repo_root, sha_a, sha_b))
+
+
+def fetch_task(repo_root):
+    username, token = _credentials_for(repo_root)
+    return _WorkerTask("fetch", repo_root, username, token)
+
+
 def pull_ff_task(repo_root):
-    return _ReadyTask({"status": "error", "detail": _NETWORK_PENDING})
+    username, token = _credentials_for(repo_root)
+    return _WorkerTask("pull_ff", repo_root, username, token)
 
 
 def push_task(repo_root):
-    return _ReadyTask({"status": "error", "detail": _NETWORK_PENDING})
+    username, token = _credentials_for(repo_root)
+    return _WorkerTask("push", repo_root, username, token)
+
+
+def fetch(repo_root):
+    """Silent fetch polled to completion (fetch-on-load path)."""
+    return _run_task_sync(fetch_task(repo_root))
+
+
+def git_sync(repo_root, report_files=False):
+    """``pull --ff-only`` then ``push`` through the worker, synchronously."""
+    head_before = head_sha(repo_root) if report_files else ""
+    pull = _run_task_sync(pull_ff_task(repo_root))
+    if pull.get("status") != "ok":
+        result = (pull.get("status", "error"), pull.get("detail", ""))
+        return result + ([],) if report_files else result
+    push = _run_task_sync(push_task(repo_root))
+    if push.get("status") != "ok":
+        result = ("error", push.get("detail", ""))
+        return result + ([],) if report_files else result
+    files = []
+    if report_files and head_before:
+        head_after = head_sha(repo_root)
+        if head_after and head_after != head_before:
+            files = diff_names(repo_root, head_before, head_after)
+    detail = push.get("detail") or pull.get("detail") or ""
+    result = ("ok", detail)
+    return result + (files,) if report_files else result
