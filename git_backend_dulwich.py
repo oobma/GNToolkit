@@ -126,12 +126,19 @@ def _stat_sig(path):
         return (path, None, None)
 
 
-def _dir_sig(path):
-    try:
-        st = os.stat(path)
-        return (path, st.st_mtime_ns)
-    except OSError:
-        return (path, None)
+def _refs_sig(gitdir):
+    parts = []
+    for sub in ("refs/heads", "refs/remotes"):
+        base = os.path.join(gitdir, *sub.split("/"))
+        if not os.path.isdir(base):
+            continue
+        for dirpath, _dirnames, filenames in os.walk(base):
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                rel = os.path.relpath(path, gitdir).replace(os.sep, "/")
+                parts.append((rel,) + _stat_sig(path)[1:])
+    parts.sort()
+    return tuple(parts)
 
 
 def _signature(repo_root, tracked_paths):
@@ -139,8 +146,7 @@ def _signature(repo_root, tracked_paths):
     parts = [_stat_sig(os.path.join(gitdir, name))
              for name in ("index", "HEAD", "packed-refs", "FETCH_HEAD",
                           "config")]
-    parts.append(_dir_sig(os.path.join(gitdir, "refs", "heads")))
-    parts.append(_dir_sig(os.path.join(gitdir, "refs", "remotes")))
+    parts.append(_refs_sig(gitdir))
     for path in sorted(tracked_paths or ()):
         parts.append(_stat_sig(path))
     return tuple(parts)
@@ -625,7 +631,9 @@ def push_task(repo_root):
 
 def fetch(repo_root):
     """Silent fetch polled to completion (fetch-on-load path)."""
-    return _run_task_sync(fetch_task(repo_root))
+    result = _run_task_sync(fetch_task(repo_root))
+    invalidate(repo_root)
+    return result
 
 
 def git_sync(repo_root, report_files=False):
@@ -633,9 +641,11 @@ def git_sync(repo_root, report_files=False):
     head_before = head_sha(repo_root) if report_files else ""
     pull = _run_task_sync(pull_ff_task(repo_root))
     if pull.get("status") != "ok":
+        invalidate(repo_root)
         result = (pull.get("status", "error"), pull.get("detail", ""))
         return result + ([],) if report_files else result
     push = _run_task_sync(push_task(repo_root))
+    invalidate(repo_root)
     if push.get("status") != "ok":
         result = ("error", push.get("detail", ""))
         return result + ([],) if report_files else result

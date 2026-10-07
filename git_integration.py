@@ -373,6 +373,12 @@ def _job_status(payload):
         if fetch_task is not None:
             for root in repos:
                 yield ("task", fetch_task(root))
+            invalidate = getattr(backend, "invalidate", None)
+            if invalidate is not None:
+                try:
+                    invalidate()
+                except Exception:
+                    pass
     tracked = set()
     for root, paths in repos.items():
         st = yield ("task", backend.status_task(root, paths))
@@ -420,13 +426,24 @@ def _job_sync(payload):
     if backend is None:
         return {"status": "error", "detail": "No Git engine available",
                 "files": []}
+
+    def _drop_cache():
+        invalidate = getattr(backend, "invalidate", None)
+        if invalidate is not None:
+            try:
+                invalidate(repo)
+            except Exception:
+                pass
+
     head_before = yield ("task", backend.head_task(repo))
     pull = yield ("task", backend.pull_ff_task(repo))
     if pull.get("status") != "ok":
+        _drop_cache()
         return {"status": pull.get("status", "error"),
                 "detail": pull.get("detail", ""), "files": []}
     push = yield ("task", backend.push_task(repo))
     if push.get("status") != "ok":
+        _drop_cache()
         return {"status": "error", "detail": push.get("detail", ""),
                 "files": []}
     files = []
@@ -436,6 +453,7 @@ def _job_sync(payload):
             files = yield ("task", backend.diff_names_task(repo,
                                                            head_before,
                                                            head_after))
+    _drop_cache()
     return {"status": "ok",
             "detail": push.get("detail") or pull.get("detail") or "",
             "files": files}

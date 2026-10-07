@@ -220,6 +220,7 @@ def _op_push(repo_path, info, creds):
     from dulwich import porcelain
     from dulwich.client import HTTPUnauthorized, HTTPProxyUnauthorized
     from dulwich.errors import SendPackError
+    from dulwich.repo import Repo
 
     refspec = f"refs/heads/{info['branch']}:{info['merge']}"
     try:
@@ -237,8 +238,15 @@ def _op_push(repo_path, info, creds):
                      "changes first"
         return {"status": "error", "detail": detail,
                 "head_after": _head(repo_path)}
-    return {"status": "ok", "detail": "pushed",
-            "head_after": _head(repo_path)}
+    head = _head(repo_path)
+    if head:
+        short = info["merge"][len("refs/heads/"):] if info["merge"].startswith(
+            "refs/heads/") else info["merge"]
+        tracking = b"refs/remotes/" + info["remote"].encode("utf-8") + b"/" \
+            + short.encode("utf-8")
+        with Repo(repo_path) as repo:
+            repo.refs[tracking] = head.encode("utf-8")
+    return {"status": "ok", "detail": "pushed", "head_after": head}
 
 
 _OPS = {"fetch": _op_fetch, "pull_ff": _op_pull_ff, "push": _op_push}
