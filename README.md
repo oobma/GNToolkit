@@ -424,26 +424,30 @@ port required:
 
 ## Installation
 
-**Option 1 — Release zip (recommended):**
+**From the Blender Extensions platform (Blender 4.2+, recommended):**
+
+1. In Blender: **Edit → Preferences → Get Extensions**, search for
+   **GNToolkit** and press **Install** (it is enabled automatically).
+2. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
+
+**From the release zip (offline machines / manual installs):**
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
    and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.2.9.zip`).
+   `GNToolkit-v0.3.0.zip`).
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
    downloaded zip (the zip contains the `GNToolkit/` addon folder).
 3. Enable **"GNToolkit"** in the list.
 4. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
 
-**Option 2 — from the repository:**
+**From the repository (development):**
 
-1. Download or clone this repository and zip the `GNToolkit` folder
-   (the repository root is the addon folder itself; a source zip
-   extracts to a version-suffixed folder such as `GNToolkit-main`,
-   which is not a valid add-on module name — use the release asset).
+1. Clone this repository and zip the `GNToolkit` folder — the repository
+   root is the addon folder itself; a source zip extracts to a
+   version-suffixed folder such as `GNToolkit-main`, which is not a valid
+   add-on module name, so use the release asset for regular installs.
 2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
-   `.zip` file.
-3. Enable **"GNToolkit"** in the list.
-4. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
+   `.zip` file and enable **"GNToolkit"**.
 
 ## JSON format
 
