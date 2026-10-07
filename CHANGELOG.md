@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
+### Added
+
+- **Embedded Git engine.** Collaboration no longer needs any external
+  program: a pure-Python engine (dulwich, bundled as wheels) handles the
+  repository state, commits, history and the network operations. The
+  platform build ships only this engine; the GitHub builds also keep the
+  optional system-Git engine (`Automatic` uses it when installed).
+- **Network worker.** Fetch/pull/push run in a small out-of-process worker
+  (Blender's bundled Python) polled between UI ticks and cancellable at
+  any time; credentials travel over its standard input, never in command
+  lines or logs.
+- **Per-host credentials** with a layered store: session → environment
+  (`GNT_GIT_TOKEN`) → OS keyring → add-on preferences, plus Save/Forget in
+  the Collaboration panel (masked token field; when the vault stores the
+  record the plain-text field is cleared).
+- **Fast panel refresh.** Repository state is served from a stat signature
+  when nothing changed (~28 ms on the 582-group reference project) and
+  re-scanned only when index, refs or tracked files actually changed.
+
+### Changed
+
+- **Collaboration messaging**: the panel no longer presents Git as a
+  requirement — the engine is bundled and everything else keeps working.
+- **Commit identity** falls back to `GNToolkit <noreply@localhost>` when
+  the repository has no configured user.
+
 ## [0.2.9] - 2026-10-05
 
 ### Changed

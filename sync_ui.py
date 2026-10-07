@@ -912,7 +912,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
         if not repos:
             layout.label(text="Tracked JSONs are not inside a git repository",
                          icon='INFO')
-            layout.label(text="Init one with your git client, then refresh",
+            layout.label(text="Init one with your Git tooling, then refresh",
                          icon='INFO')
             return
 
@@ -961,7 +961,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             reveal_op = row.operator("gn.sync_reveal_json_path", text="Reveal")
             reveal_op.json_path = path
         if state.get("conflicts"):
-            layout.label(text="Resolve the conflicts with your git client",
+            layout.label(text="Resolve the conflicts with your Git tooling",
                          icon='INFO')
 
         addon_prefs = _addon_prefs(context)
@@ -1059,6 +1059,29 @@ def _on_git_backend_changed(self, context):
         pass
 
 
+def _git_backend_items():
+    """Engine options for this build: the system-Git engine only exists in
+    the GitHub/release builds (the platform build ships the embedded
+    engine alone)."""
+    items = [
+        ("auto", "Automatic",
+         "Use the embedded engine bundled with the add-on"),
+        ("dulwich", "Embedded (dulwich)",
+         "Pure-Python engine bundled with the add-on — no external "
+         "program needed"),
+    ]
+    try:
+        from . import git_backend_git  # noqa: F401
+    except Exception:
+        return items
+    items[0] = ("auto", "Automatic",
+                "Use the system Git when installed, otherwise the embedded "
+                "engine")
+    items.append(("git", "Git (system)",
+                  "Use the Git program installed on this computer"))
+    return items
+
+
 class GN_AddonPrefs(bpy.types.AddonPreferences):
     """Global add-on preferences (per user, not per .blend file)."""
 
@@ -1067,16 +1090,7 @@ class GN_AddonPrefs(bpy.types.AddonPreferences):
     git_backend: bpy.props.EnumProperty(
         name="Git engine",
         description="Engine that runs the collaboration operations",
-        items=[
-            ("auto", "Automatic",
-             "Use the system Git when installed, otherwise the embedded "
-             "engine bundled with the add-on"),
-            ("dulwich", "Embedded (dulwich)",
-             "Pure-Python engine bundled with the add-on — no external "
-             "program needed"),
-            ("git", "Git (system)",
-             "Use the Git program installed on this computer"),
-        ],
+        items=_git_backend_items(),
         default="auto",
         update=_on_git_backend_changed,
     )

@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "gn_toolkit"
 name = "GNToolkit"
-version = "0.2.9"
+version = "0.3.0"
 tagline = "Version control with semantics for Blender node trees"
 maintainer = "oobma <ambooart@gmail.com>"
 
@@ -32,4 +32,4 @@ wheels = [
 
 [permissions]
 files = "Read and write project JSON files and the .gntsync sidecar"
-network = "Fetch, pull and push to the Git remotes you configure"
+network = "Fetch, pull and push to the remotes you configure"

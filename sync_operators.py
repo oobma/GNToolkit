@@ -558,7 +558,7 @@ def handle_git_job_done(kind, payload, result):
                 _show_status_message("Git sync complete")
         elif status == "diverged":
             _show_status_message(
-                "Git: versions diverged — resolve with your git client "
+                "Git: versions diverged — resolve with your Git tooling "
                 "(pull could not fast-forward)", duration=10.0)
         else:
             _show_status_message(
@@ -1238,7 +1238,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
             elif reason == "conflict":
                 self.report({'ERROR'},
                             f"'{os.path.basename(json_path)}' has merge conflicts — "
-                            "resolve them with your git client")
+                            "resolve them with your Git tooling")
             else:
                 self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
             return {'CANCELLED'}
@@ -1671,7 +1671,7 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
                 elif reason == "conflict":
                     self.report({'ERROR'},
                                 f"'{os.path.basename(self.filepath)}' has merge conflicts — "
-                                "resolve them with your git client")
+                                "resolve them with your Git tooling")
                 else:
                     self.report({'ERROR'},
                                 f"'{os.path.basename(self.filepath)}' is not valid JSON")

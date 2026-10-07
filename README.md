@@ -44,7 +44,7 @@ hook, a CI pipeline or a release gate.
    and the tracked layer covers node groups, modifiers and their use on
    objects — not just isolated trees.
 3. **A collaboration loop inside Blender.** Track, commit, pull and
-   resolve conflicts per group, with a thin Git transport that stages
+   resolve conflicts per group, with a bundled Git transport that stages
    only the tracked JSONs and never auto-merges.
 
 ## Not just another exporter
@@ -57,7 +57,7 @@ hook, a CI pipeline or a release gate.
 | Project layer | Node trees | Node trees + modifiers + object usage |
 | State | None | Synced / Edited Locally / Changed in JSON / Conflict / Missing / ... |
 | Environment | Blender | Blender **and** plain Python — headless checks in CI/hooks |
-| Collaboration | Share files | Commit, pull, resolve conflicts, Git transport, per-group review |
+| Collaboration | Share files | Commit, pull, resolve conflicts, bundled Git transport, per-group review |
 
 Snapshot tools are great at moving and sharing groups; GNToolkit answers
 the question that comes after: *is the project versioned, and in sync?*
@@ -211,15 +211,17 @@ repository — never part of the extension zip.
 
 ### Collaboration with Git
 
-- **Thin git transport** (no server, no reimplementation — Git stays
-  the authority): the Collaboration panel detects the repository behind
-  the tracked JSONs and shows its state.
+- **Self-contained transport** (no server, no reimplementation — the
+  repository stays the authority): the Collaboration panel detects the
+  repository behind the tracked JSONs and shows its state. The engine is
+  bundled with the add-on; nothing extra needs to be installed.
 - **Git Commit…** stages only the tracked JSONs; **Git Sync** is a
   fast-forward pull + push — diverged versions are refused, never
   auto-merged.
 - Merge-conflict markers in a JSON are detected and reported; per-group
-  and repository history is available. The manual flow with any git
-  client works too — see `docs/GIT_COLLAB.md`.
+  and repository history is available. The JSONs are plain files, so the
+  repository also works with any external Git tooling — see
+  `docs/GIT_COLLAB.md`.
 
 ### Import & share
 
@@ -339,19 +341,18 @@ one-file-per-group JSONs that the sync layer treats like a repository:
 
 ### Collaboration with Git
 
-The deterministic JSONs are plain files — any git client can share
-them. The addon adds a thin transport on top:
+The deterministic JSONs are plain files; the add-on bundles its own
+transport for them:
 
-1. Put the exported folder in a git repository (init with your client,
-   push to any git remote you control — your own Git host, a network
+1. Put the exported folder in a Git repository (any Git host, a network
    share, a local bare repo, …).
 2. The **Collaboration** panel (GN Tools tab) shows the repository
    state, commits with **Git Commit…** (only the tracked JSONs are
    staged) and synchronizes with **Git Sync** (fast-forward only —
    diverged versions are refused, never auto-merged).
 3. Conflict markers in a JSON are detected and reported; resolve them
-   with your git client.
-4. Full guide (including the manual flow with any client):
+   with your Git tooling.
+4. Full guide:
    [docs/GIT_COLLAB.md](https://github.com/oobma/GNToolkit/blob/main/docs/GIT_COLLAB.md).
 
 ### JSON package snapshots (no tracking)
@@ -398,8 +399,9 @@ and the .blend hash against the stored hash:
 ## Requirements
 
 - Blender 4.2 – 5.2 LTS (tested on 4.2.1, 5.1.1 and 5.2.0)
-- Git CLI installed and available on `PATH` — only for the Collaboration
-  features. The JSON sync and the package export/import work without it.
+- No external programs required: the collaboration engine is bundled with
+  the add-on, and the JSON side (sync checks, package export/import) is
+  pure Python.
 
 ## Compatibility
 

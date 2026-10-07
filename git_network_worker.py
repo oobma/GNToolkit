@@ -73,14 +73,14 @@ def _remote_info(repo_path):
             remote = config.get(key, b"remote").decode("utf-8", "replace")
             merge = config.get(key, b"merge").decode("utf-8", "replace")
         except KeyError:
-            return None, ("No upstream branch — set it with your git client "
+            return None, ("No upstream branch — set it with your Git tooling "
                           "(push with -u, or set the branch upstream)")
         try:
             url = config.get((b"remote", remote.encode("utf-8")),
                              b"url").decode("utf-8", "replace")
         except KeyError:
             return None, (f"Remote '{remote}' has no URL configured — add it "
-                          "with your git client")
+                          "with your Git tooling")
     if _SSH_REMOTE.match(url):
         return None, ("SSH remotes are not supported by the embedded engine "
                       "yet — use the Git engine for SSH")
@@ -189,7 +189,7 @@ def _op_pull_ff(repo_path, info, creds):
                     and not can_fast_forward(repo, local_sha, remote_sha):
                 return {"status": "diverged",
                         "detail": "not possible to fast-forward — resolve "
-                                  "with your git client",
+                                  "with your Git tooling",
                         "head_after": local_sha.decode()}
             old_tree = repo[local_sha].tree if local_sha else None
             new_tree = repo[remote_sha].tree
