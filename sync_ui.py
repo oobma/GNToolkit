@@ -879,6 +879,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
     def draw(self, context):
         from .git_integration import (
             get_git_state, ensure_status_job, git_busy, git_log, find_git_repo,
+            active_backend_name,
         )
 
         layout = self.layout
@@ -893,9 +894,9 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             return
 
         if not state.get("available"):
-            layout.label(text="Git not found — collaboration is optional",
+            layout.label(text="No Git engine available — collaboration is optional",
                          icon='INFO')
-            layout.label(text="Everything else works without Git")
+            layout.label(text="Everything else works without it")
             return
 
         busy = git_busy()
@@ -997,12 +998,52 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                                       icon='INFO')
 
         layout.separator()
+        engine = active_backend_name()
+        if engine:
+            label = "Engine: Git (system)" if engine == "git" \
+                else "Engine: embedded (dulwich)"
+            layout.label(text=label, icon='INFO')
         layout.prop(prefs, "fetch_on_load", toggle=True, icon='URL')
 
 
 # ---------------------------------------------------------------------------
 # Preferences PropertyGroup
 # ---------------------------------------------------------------------------
+
+def _on_git_backend_changed(self, context):
+    try:
+        from .git_integration import invalidate_backend
+        invalidate_backend()
+    except Exception:
+        pass
+
+
+class GN_AddonPrefs(bpy.types.AddonPreferences):
+    """Global add-on preferences (per user, not per .blend file)."""
+
+    bl_idname = __package__
+
+    git_backend: bpy.props.EnumProperty(
+        name="Git engine",
+        description="Engine that runs the collaboration operations",
+        items=[
+            ("auto", "Automatic",
+             "Use the system Git when installed, otherwise the embedded "
+             "engine bundled with the add-on"),
+            ("dulwich", "Embedded (dulwich)",
+             "Pure-Python engine bundled with the add-on — no external "
+             "program needed"),
+            ("git", "Git (system)",
+             "Use the Git program installed on this computer"),
+        ],
+        default="auto",
+        update=_on_git_backend_changed,
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "git_backend")
+
 
 class GN_SyncPrefs(bpy.types.PropertyGroup):
     """Persistent preferences for the issues panel.
@@ -1189,6 +1230,7 @@ classes = (
     GN_OT_RevealJSONPath,
     GN_OT_ValidateGeometry,
     GN_SyncPrefs,
+    GN_AddonPrefs,
     GN_AuditItem,
     GN_AuditState,
     GN_OT_AuditProject,
