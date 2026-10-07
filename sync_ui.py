@@ -860,6 +860,13 @@ def _draw_git_log_box(box, entries):
         row.label(text=e['subject'])
 
 
+def _addon_prefs(context):
+    try:
+        return context.preferences.addons[__package__].preferences
+    except Exception:
+        return None
+
+
 class GN_PT_CollaborationPanel(bpy.types.Panel):
     """Git transport for the tracked JSON files."""
 
@@ -881,6 +888,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             get_git_state, ensure_status_job, git_busy, git_log, find_git_repo,
             active_backend_name,
         )
+        from . import credentials
 
         layout = self.layout
         prefs = context.scene.gnt_sync_prefs
@@ -955,6 +963,39 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
         if state.get("conflicts"):
             layout.label(text="Resolve the conflicts with your git client",
                          icon='INFO')
+
+        addon_prefs = _addon_prefs(context)
+        if addon_prefs is not None:
+            hosts = []
+            for st in repos.values():
+                host = credentials.host_for(st.get("remote_url") or "")
+                if host and host not in hosts:
+                    hosts.append(host)
+            box = layout.box()
+            head = box.row(align=True)
+            head.label(text="Credentials", icon='LOCKED')
+            if hosts:
+                head.label(text="detected: " + ", ".join(hosts))
+            if not (addon_prefs.git_host or "").strip() and hosts:
+                addon_prefs.git_host = hosts[0]
+            box.prop(addon_prefs, "git_host", text="Host")
+            box.prop(addon_prefs, "git_username", text="User")
+            box.prop(addon_prefs, "git_token", text="Token")
+            actions = box.row(align=True)
+            actions.operator("gn.git_save_credentials", text="Save",
+                             icon='CHECKMARK')
+            actions.operator("gn.git_forget_credentials", text="Forget",
+                             icon='TRASH')
+            source = credentials.status_for_host(
+                (addon_prefs.git_host or "").strip())
+            labels = {
+                "vault": "Stored in the OS vault",
+                "preferences": "Stored in Blender preferences (no OS vault)",
+                "session": "In memory for this session",
+                "environment": "Provided by environment variables",
+                "missing": "No token stored for this host",
+            }
+            box.label(text=labels.get(source, source), icon='INFO')
 
         if len(repos) == 1:
             repo_box = layout.box()
@@ -1040,9 +1081,37 @@ class GN_AddonPrefs(bpy.types.AddonPreferences):
         update=_on_git_backend_changed,
     )
 
+    git_host: bpy.props.StringProperty(
+        name="Host",
+        description="Host the credentials apply to (e.g. github.com) — "
+                    "filled from the tracked remotes",
+        default="",
+    )
+    git_username: bpy.props.StringProperty(
+        name="Git user",
+        description="Username for token authentication (any non-empty name "
+                    "works with token logins)",
+        default="",
+    )
+    git_token: bpy.props.StringProperty(
+        name="Token",
+        description="Personal access token — stored in the OS vault when "
+                    "available",
+        subtype='PASSWORD',
+        default="",
+    )
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "git_backend")
+        layout.separator()
+        layout.label(text="Credentials")
+        layout.prop(self, "git_host")
+        layout.prop(self, "git_username")
+        layout.prop(self, "git_token")
+        row = layout.row(align=True)
+        row.operator("gn.git_save_credentials", text="Save", icon='CHECKMARK')
+        row.operator("gn.git_forget_credentials", text="Forget", icon='TRASH')
 
 
 class GN_SyncPrefs(bpy.types.PropertyGroup):

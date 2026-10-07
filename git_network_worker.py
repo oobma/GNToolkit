@@ -100,6 +100,15 @@ def _detail_from(exc):
     return text or type(exc).__name__
 
 
+_AUTH_DETAIL = ("authentication failed — check the token for this host in "
+                "the Collaboration panel")
+
+
+def _auth_error(repo_path):
+    return {"status": "error", "detail": _AUTH_DETAIL,
+            "head_after": _head(repo_path)}
+
+
 def _update_tracking(repo_path, remote, refs):
     from dulwich.repo import Repo
     updated = 0
@@ -122,11 +131,15 @@ def _update_tracking(repo_path, remote, refs):
 
 def _op_fetch(repo_path, info, creds):
     from dulwich import porcelain
+    from dulwich.client import HTTPUnauthorized, HTTPProxyUnauthorized
 
-    result = porcelain.fetch(repo_path, info["url"],
-                             outstream=io.StringIO(),
-                             errstream=io.BytesIO(),
-                             quiet=True, **creds)
+    try:
+        result = porcelain.fetch(repo_path, info["url"],
+                                 outstream=io.StringIO(),
+                                 errstream=io.BytesIO(),
+                                 quiet=True, **creds)
+    except (HTTPUnauthorized, HTTPProxyUnauthorized):
+        return _auth_error(repo_path)
     updated = _update_tracking(repo_path, info["remote"], result.refs)
     return {"status": "ok",
             "detail": f"fetched {len(result.refs)} remote ref(s), "
@@ -136,15 +149,19 @@ def _op_fetch(repo_path, info, creds):
 
 def _op_pull_ff(repo_path, info, creds):
     from dulwich import porcelain
+    from dulwich.client import HTTPUnauthorized, HTTPProxyUnauthorized
     from dulwich.diff_tree import tree_changes
     from dulwich.errors import WorkingTreeModifiedError
     from dulwich.graph import can_fast_forward
     from dulwich.repo import Repo
 
-    result = porcelain.fetch(repo_path, info["url"],
-                             outstream=io.StringIO(),
-                             errstream=io.BytesIO(),
-                             quiet=True, **creds)
+    try:
+        result = porcelain.fetch(repo_path, info["url"],
+                                 outstream=io.StringIO(),
+                                 errstream=io.BytesIO(),
+                                 quiet=True, **creds)
+    except (HTTPUnauthorized, HTTPProxyUnauthorized):
+        return _auth_error(repo_path)
     _update_tracking(repo_path, info["remote"], result.refs)
     merge_ref = info["merge"].encode("utf-8")
     remote_sha = result.refs.get(merge_ref)
@@ -210,10 +227,7 @@ def _op_push(repo_path, info, creds):
                        outstream=io.BytesIO(), errstream=io.BytesIO(),
                        **creds)
     except (HTTPUnauthorized, HTTPProxyUnauthorized):
-        return {"status": "error",
-                "detail": "authentication failed — check the token for this "
-                          "remote",
-                "head_after": _head(repo_path)}
+        return _auth_error(repo_path)
     except SendPackError as exc:
         detail = _detail_from(exc)
         low = detail.lower()

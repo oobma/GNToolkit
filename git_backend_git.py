@@ -163,6 +163,32 @@ def head_sha(repo_root):
     return out.strip() if rc == 0 else ""
 
 
+def remote_url(repo_root):
+    """Configured URL of the active branch's remote ("" when none)."""
+    if not available():
+        return ""
+    rc, out, _ = _git(["config", "--get-regexp",
+                       r"^(remote\..*\.url|branch\..*\.(remote|merge))$"],
+                      repo_root)
+    if rc != 0:
+        return ""
+    remote_urls = {}
+    branch_remotes = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or " " not in line:
+            continue
+        key, value = line.split(" ", 1)
+        if key.startswith("remote.") and key.endswith(".url"):
+            remote_urls[key[len("remote."):-len(".url")]] = value
+        elif key.startswith("branch.") and key.endswith(".remote"):
+            branch_remotes[key[len("branch."):-len(".remote")]] = value
+    rc, out, _ = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root)
+    branch = out.strip() if rc == 0 else ""
+    remote = branch_remotes.get(branch, "origin")
+    return remote_urls.get(remote, "")
+
+
 def diff_names(repo_root, sha_a, sha_b):
     rc, out, _ = _git(["diff", "--name-only", sha_a, sha_b], repo_root)
     if rc != 0:

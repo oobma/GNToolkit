@@ -643,6 +643,68 @@ class GN_OT_RevealRepo(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _addon_preferences(context):
+    try:
+        return context.preferences.addons[__package__].preferences
+    except Exception:
+        return None
+
+
+class GN_OT_GitSaveCredentials(bpy.types.Operator):
+    bl_idname = "gn.git_save_credentials"
+    bl_label = "Save Credentials"
+    bl_description = ("Store the token for the host: the OS vault when "
+                      "available, otherwise the add-on preferences")
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from . import credentials
+        prefs = _addon_preferences(context)
+        if prefs is None:
+            self.report({'ERROR'}, "Add-on preferences are not available")
+            return {'CANCELLED'}
+        host = (prefs.git_host or "").strip()
+        token = (prefs.git_token or "").strip()
+        if not host:
+            self.report({'ERROR'}, "Set the host first (e.g. github.com)")
+            return {'CANCELLED'}
+        if not token:
+            self.report({'ERROR'}, "Enter a token to save")
+            return {'CANCELLED'}
+        source = credentials.save(f"https://{host}/", prefs.git_username,
+                                  token)
+        if source == "vault":
+            self.report({'INFO'}, f"Token stored in the OS vault for {host}")
+        elif source == "preferences":
+            self.report({'INFO'},
+                        f"Token stored in Blender preferences for {host} "
+                        "(no OS vault available)")
+        else:
+            self.report({'INFO'}, f"Token kept for this session ({host})")
+        return {'FINISHED'}
+
+
+class GN_OT_GitForgetCredentials(bpy.types.Operator):
+    bl_idname = "gn.git_forget_credentials"
+    bl_label = "Forget Credentials"
+    bl_description = "Delete the stored token for the host"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from . import credentials
+        prefs = _addon_preferences(context)
+        if prefs is None:
+            self.report({'ERROR'}, "Add-on preferences are not available")
+            return {'CANCELLED'}
+        host = (prefs.git_host or "").strip()
+        if not host:
+            self.report({'ERROR'}, "Set the host first (e.g. github.com)")
+            return {'CANCELLED'}
+        credentials.forget(f"https://{host}/")
+        self.report({'INFO'}, f"Stored credentials for {host} removed")
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------------------
 # Operator: Track untracked dependencies (contextual)
 # ---------------------------------------------------------------------------
@@ -1947,4 +2009,6 @@ classes = (
     GN_OT_GitCommit,
     GN_OT_GitSync,
     GN_OT_RevealRepo,
+    GN_OT_GitSaveCredentials,
+    GN_OT_GitForgetCredentials,
 )

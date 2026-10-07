@@ -329,6 +329,38 @@ def head_sha(repo_root):
         return ""
 
 
+def remote_url(repo_root):
+    """Configured URL of the active branch's remote ("" when none)."""
+    if not available():
+        return ""
+    try:
+        with _repo(repo_root) as repo:
+            branch = ""
+            try:
+                branch = _porcelain().active_branch(repo).decode("utf-8",
+                                                                 "replace")
+            except (KeyError, IndexError, ValueError):
+                branch = ""
+            config = repo.get_config_stack()
+            remote = ""
+            if branch:
+                try:
+                    remote = config.get(
+                        (b"branch", branch.encode("utf-8")),
+                        b"remote").decode("utf-8", "replace")
+                except KeyError:
+                    remote = ""
+            if not remote:
+                remote = "origin"
+            try:
+                return config.get((b"remote", remote.encode("utf-8")),
+                                  b"url").decode("utf-8", "replace")
+            except KeyError:
+                return ""
+    except Exception:
+        return ""
+
+
 def diff_names(repo_root, sha_a, sha_b):
     if not available():
         return []
@@ -371,23 +403,30 @@ class _CallTask(_Task):
 
 
 _bundled_python_cache = None
-_session_credentials = None
 
 
 def set_network_credentials(username, token):
-    """Session credentials for the embedded engine (the vault lands next)."""
-    global _session_credentials
-    _session_credentials = (username, token) if token else None
+    """Session credentials for any host (scripts, tests, headless runs)."""
+    try:
+        from . import credentials
+        credentials.set_session("", username, token)
+    except Exception:
+        pass
 
 
 def _credentials_for(repo_root):
-    if _session_credentials and _session_credentials[1]:
-        return _session_credentials
-    token = os.environ.get("GNT_GIT_TOKEN", "").strip()
-    if token:
-        username = os.environ.get("GNT_GIT_USERNAME", "").strip()
-        return (username or "git", token)
-    return (None, None)
+    try:
+        from . import credentials
+        username, token, _source = credentials.lookup(remote_url(repo_root))
+        if token:
+            return (username or "git", token)
+        return (None, None)
+    except Exception:
+        token = os.environ.get("GNT_GIT_TOKEN", "").strip()
+        if token:
+            username = os.environ.get("GNT_GIT_USERNAME", "").strip()
+            return (username or "git", token)
+        return (None, None)
 
 
 def _bundled_python():

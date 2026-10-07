@@ -214,6 +214,20 @@ def repo_status(repo_root, paths=None):
     return backend.status(repo_root, paths)
 
 
+def remote_url(repo_root):
+    """Configured URL of the repo's active remote ("" when none)."""
+    backend = _backend()
+    if backend is None:
+        return ""
+    fn = getattr(backend, "remote_url", None)
+    if fn is None:
+        return ""
+    try:
+        return fn(repo_root)
+    except Exception:
+        return ""
+
+
 def git_log(repo_root, rel_path=None, count=10):
     backend = _backend()
     if backend is None:
@@ -326,6 +340,10 @@ def _build_repo_entry(root, paths, st):
     """Decorate a status dict with root/name/tracked_changed and defaults."""
     st["root"] = root
     st["name"] = os.path.basename(os.path.normpath(root)) or root
+    try:
+        st["remote_url"] = remote_url(root)
+    except Exception:
+        st["remote_url"] = ""
     st["tracked_changed"] = []
     if st.get("ok"):
         for p in paths:
