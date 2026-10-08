@@ -109,7 +109,16 @@ def _parse_status(out):
                         behind = int(up_part.split("[behind ")[1].split("]")[0].split(",")[0])
                     except (ValueError, IndexError):
                         behind = 0
-    changed = [line[3:] for line in lines[1:] if len(line) >= 4]
+    changed = []
+    index = 1 if (lines and lines[0].startswith("## ")) else 0
+    while index < len(lines):
+        entry = lines[index]
+        if len(entry) >= 4:
+            changed.append(entry[3:])
+            if entry[0] in ("R", "C"):
+                # Rename/copy: the next NUL field holds the source path.
+                index += 1
+        index += 1
     return {
         "ok": True,
         "branch": branch,

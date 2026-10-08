@@ -9,6 +9,17 @@ to every function that needs it.
 
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger("GNToolkit")
+
+_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "WARN": logging.WARNING,
+    "CRITICAL": logging.CRITICAL,
+    "CRITICAL ERROR": logging.CRITICAL,
+}
+
 
 class ImportErrorTracker:
     """Tracks errors that occur during a single import operation."""
@@ -21,18 +32,21 @@ class ImportErrorTracker:
     def __init__(self) -> None:
         self._count: int = 0
         self._issue_count: int = 0
+        self._warn_count: int = 0
         self._error_count: int = 0
         self.records: list[tuple[str, str]] = []
 
     def record(self, msg: str, *, level: str = "ERROR") -> None:
-        """Record one error and print it to the console."""
+        """Record one issue and route it to the add-on log."""
         self._count += 1
         if level in self._REPORTED_LEVELS:
             self._issue_count += 1
+        if level == "WARN":
+            self._warn_count += 1
         if level in self._ERROR_LEVELS:
             self._error_count += 1
         self.records.append((level, msg))
-        print(f"[{level}] {msg}")
+        _log.log(_LEVELS.get(level, logging.ERROR), f"[{level}] {msg}")
 
     @property
     def first_error_message(self) -> str:
@@ -47,6 +61,10 @@ class ImportErrorTracker:
 
     @property
     def warn_count(self) -> int:
+        return self._warn_count
+
+    @property
+    def issue_count(self) -> int:
         return self._issue_count
 
     @property
@@ -54,5 +72,10 @@ class ImportErrorTracker:
         return self._error_count
 
     @property
+    def has_issues(self) -> bool:
+        return self._issue_count > 0
+
+    @property
     def has_errors(self) -> bool:
+        """Legacy alias of :attr:`has_issues` (it also counts warnings)."""
         return self._issue_count > 0

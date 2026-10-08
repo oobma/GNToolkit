@@ -11,6 +11,8 @@ mutating a global counter.
 
 from __future__ import annotations
 
+import logging
+
 import bpy
 
 from .codec import unclean_value, _is_vector_type, _is_2d_vector_type, _is_color_type, _is_int_type, _is_bool_type, _is_float_type, _is_string_type, _is_non_scalar_type
@@ -37,6 +39,8 @@ from .socket_utils import (
     find_robust_socket,
 )
 from .hash_utils import node_socket_is_active
+
+_log = logging.getLogger("GNToolkit.importer")
 
 # Sentinel for "no tracker available" — used by low-level helpers that
 # may be called outside the main import flow.
@@ -458,7 +462,7 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
             if menu_expanded is not None and hasattr(new_item, 'menu_expanded'):
                 try:
                     setattr(new_item, 'menu_expanded', menu_expanded)
-                except:
+                except Exception:
                     pass
 
             # Also set the 'optional' toggle on Menu sockets after enum_items
@@ -466,7 +470,7 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
             if optional is not None and hasattr(new_item, 'optional'):
                 try:
                     setattr(new_item, 'optional', optional)
-                except:
+                except Exception:
                     pass
 
         elif menu_default is not None and hasattr(new_item, 'default_value'):
@@ -485,7 +489,7 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
             # Blender 5.1 RNA warnings (value 13 / PERCENTAGE mismatch).
             if sub_val and sub_val != 'NONE':
                 setattr(new_item, 'subtype', sub_val)
-        except:
+        except Exception:
             tracker.record(f"Could not set subtype on '{i_data.get('name')}'", level="DEBUG")
 
     for p_name in OPTIONAL_SOCKET_PROPS:
@@ -505,7 +509,7 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
         if p_name in props and hasattr(new_item, p_name):
             try:
                 setattr(new_item, p_name, props[p_name])
-            except:
+            except Exception:
                 tracker.record(
                     f"Could not set {p_name} on '{i_data.get('name')}'", level="DEBUG",
                 )
@@ -516,7 +520,7 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
         try:
             ctx = f"Interface item '{i_data.get('name')}' property '{p_name}'"
             setattr(new_item, p_name, unclean_value(p_val, i_data.get("socket_type", "VALUE"), context=ctx))
-        except:
+        except Exception:
             tracker.record(
                 f"Could not set property '{p_name}' on interface item '{i_data.get('name')}'",
                 level="DEBUG",
@@ -582,7 +586,7 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
                         f"(primary: {exc}; secondary: {exc2})",
                         level="DEBUG",
                     )
-                    print(f"[DEFAULT_VALUE] Interface item '{i_data.get('name')}' "
+                    _log.debug(f"[DEFAULT_VALUE] Interface item '{i_data.get('name')}' "
                           f"kept Blender default (assignment failed: {exc2})")
             else:
                 tracker.record(
@@ -1241,7 +1245,7 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                                     f"secondary: {exc2})",
                                     level="WARN",
                                 )
-                                print(f"[DEFAULT_VALUE] Node '{node.name}' socket '{sname}': "
+                                _log.debug(f"[DEFAULT_VALUE] Node '{node.name}' socket '{sname}': "
                                       f"kept Blender default (assignment failed: {exc2})")
                         else:
                             # Expected skip — socket type has no meaningful
@@ -1261,7 +1265,7 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                         f"default_value not restored",
                         level="WARN",
                     )
-                    print(f"[DEFAULT_VALUE] Node '{node.name}': input socket '{sname}' "
+                    _log.debug(f"[DEFAULT_VALUE] Node '{node.name}': input socket '{sname}' "
                           f"(id={sid}) not found — default_value kept at Blender default")
 
         out_name_counts = {}
@@ -1306,7 +1310,7 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                                     f"secondary: {exc2})",
                                     level="WARN",
                                 )
-                                print(f"[DEFAULT_VALUE] Node '{node.name}' output '{sname}': "
+                                _log.debug(f"[DEFAULT_VALUE] Node '{node.name}' output '{sname}': "
                                       f"kept Blender default (assignment failed: {exc2})")
                         else:
                             tracker.record(
@@ -1320,7 +1324,7 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                         f"Node '{node.name}': output socket '{sname}' (id={sid}) not found",
                         level="WARN",
                     )
-                    print(f"[DEFAULT_VALUE] Node '{node.name}': output socket '{sname}' "
+                    _log.debug(f"[DEFAULT_VALUE] Node '{node.name}': output socket '{sname}' "
                           f"(id={sid}) not found")
 
     holder["deferred_string_defaults"] = deferred_string_defaults
@@ -1690,7 +1694,7 @@ def _post_sync_interface(ng, data: dict, interface_map: dict,
                 if menu_expanded is not None and hasattr(item, 'menu_expanded'):
                     try:
                         item.menu_expanded = menu_expanded
-                    except:
+                    except Exception:
                         pass
 
                 # Re-apply optional toggle
@@ -1698,7 +1702,7 @@ def _post_sync_interface(ng, data: dict, interface_map: dict,
                 if optional is not None and hasattr(item, 'optional'):
                     try:
                         item.optional = optional
-                    except:
+                    except Exception:
                         pass
 
             # --- Non-menu socket: apply default_value with coercion ---
@@ -1731,7 +1735,7 @@ def _post_sync_interface(ng, data: dict, interface_map: dict,
                     if coerced is not _SKIP:
                         try:
                             item.default_value = coerced
-                        except:
+                        except Exception:
                             tracker.record(
                                 f"Post-sync: could not set default_value on interface item "
                                 f"'{i_data.get('name')}'",
@@ -1750,10 +1754,10 @@ def _post_sync_interface(ng, data: dict, interface_map: dict,
                 if optional is not None and hasattr(item, 'optional'):
                     try:
                         item.optional = optional
-                    except:
+                    except Exception:
                         pass
 
-        except:
+        except Exception:
             tracker.record(
                 f"Post-sync: error processing interface item '{i_data.get('name')}'",
                 level="DEBUG",
@@ -2009,6 +2013,7 @@ def import_node_tree_recursive(
     group_interface_maps: dict | None = None,
     context=None,
     tracker: ImportErrorTracker | None = None,
+    _visiting: set | None = None,
 ):
     """Reconstruct a node tree from its JSON representation.
 
@@ -2037,7 +2042,8 @@ def import_node_tree_recursive(
     """
     holder: dict = {}
     for _frac, _msg in _import_node_tree_gen(
-        data, json_cache, group_interface_maps, context, tracker, holder
+        data, json_cache, group_interface_maps, context, tracker, holder,
+        _visiting,
     ):
         pass
     return holder.get("tree")
@@ -2050,6 +2056,7 @@ def _import_node_tree_gen(
     context=None,
     tracker: ImportErrorTracker | None = None,
     holder: dict | None = None,
+    _visiting: set | None = None,
 ):
     """Reconstruct a node tree from its JSON representation (generator).
 
@@ -2064,8 +2071,16 @@ def _import_node_tree_gen(
         group_interface_maps = {}
     if holder is None:
         holder = {}
+    if _visiting is None:
+        _visiting = set()
 
     name = data["name"]
+
+    if name in _visiting:
+        tracker.record(
+            f"Cyclic group reference detected at '{name}' — import stopped")
+        return
+    _visiting.add(name)
 
     if context:
         context.workspace.status_text_set(f"Rebuilding: {name}...")
@@ -2076,7 +2091,8 @@ def _import_node_tree_gen(
             ref_name = node_data.get("node_tree_reference")
             if ref_name and ref_name in json_cache and not bpy.data.node_groups.get(ref_name):
                 import_node_tree_recursive(
-                    json_cache[ref_name], json_cache, group_interface_maps, context, tracker
+                    json_cache[ref_name], json_cache, group_interface_maps, context, tracker,
+                    _visiting,
                 )
 
     # Get or create the node tree
@@ -2112,7 +2128,7 @@ def _import_node_tree_gen(
             setattr(ng, prop_name, unclean_value(prop_val, context=ctx))
         except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
             tracker.record(f"Tree '{name}': could not set property '{prop_name}': {exc}", level="DEBUG")
-            print(f"[DEFAULT_VALUE] Tree '{name}' property '{prop_name}': "
+            _log.debug(f"[DEFAULT_VALUE] Tree '{name}' property '{prop_name}': "
                   f"kept Blender default (assignment failed: {exc})")
 
     # Blender does NOT persist zero-user node groups across save/reload;
@@ -2387,6 +2403,6 @@ def _import_node_tree_gen(
                 f"'{name}'", level="DEBUG",
             )
 
-    print(f"[OK] Reconstruction of node '{name}' completed.")
+    _log.debug(f"[OK] Reconstruction of node '{name}' completed.")
     yield (1.0, "done")
     holder["tree"] = ng

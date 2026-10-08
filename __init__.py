@@ -153,7 +153,8 @@ def _setup_logging():
     logger = logging.getLogger("GNToolkit")
     if logger.handlers:
         return
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG if os.environ.get("GNT_DEBUG")
+                    else logging.INFO)
     try:
         fh = logging.FileHandler(
             os.path.join(bpy.app.tempdir, "gntoolkit.log"), mode="w",

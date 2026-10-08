@@ -9,7 +9,11 @@ Contains ``clean_value`` (Python → JSON-safe) and ``unclean_value``
 
 from __future__ import annotations
 
+import logging
+
 import bpy
+
+_log = logging.getLogger("GNToolkit.codec")
 
 # Attempt to import mathutils types at module level (with fallback guard).
 try:
@@ -180,9 +184,9 @@ def unclean_value(val, expected_type=None, context=None):
         """Print a [DEFAULT_VALUE] warning with optional context."""
         prefix = "[DEFAULT_VALUE]"
         if context:
-            print(f"{prefix} {context}: {msg}")
+            _log.debug(f"{prefix} {context}: {msg}")
         else:
-            print(f"{prefix} {msg}")
+            _log.debug(f"{prefix} {msg}")
 
     def _coerce(msg):
         """Print a [COERCE] info message with optional context.
@@ -198,9 +202,9 @@ def unclean_value(val, expected_type=None, context=None):
         """
         prefix = "[COERCE]"
         if context:
-            print(f"{prefix} {context}: {msg}")
+            _log.debug(f"{prefix} {context}: {msg}")
         else:
-            print(f"{prefix} {msg}")
+            _log.debug(f"{prefix} {msg}")
 
     def _is_trivial_coerce(val, result):
         """Return True if the coercion is trivial (zero→zero-equivalent).

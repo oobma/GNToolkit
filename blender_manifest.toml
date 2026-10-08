@@ -42,3 +42,18 @@ wheels = [
 [permissions]
 files = "Read and write project JSON files and the .gntsync sidecar"
 network = "Fetch, pull and push to the remotes you configure"
+
+[build]
+paths_exclude_pattern = [
+    ".git/**",
+    "__pycache__/**",
+    "dist/**",
+    "docs/**",
+    "scripts/**",
+    "tests/**",
+    "tools/**",
+    "internal-docs/**",
+    "AGENTS.md",
+    "gnt_check.py",
+    "git_backend_git.py",
+]

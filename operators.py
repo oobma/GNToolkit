@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import bpy
 import json
+import logging
 import os
 import time
 import traceback
@@ -30,6 +31,8 @@ from .modifier_utils import (
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
 from .sync_manager import SyncManager
+
+_log = logging.getLogger("GNToolkit.operators")
 
 
 def _serialize_modifier_inputs(mod) -> dict:
@@ -599,9 +602,9 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 elapsed = time.perf_counter() - self._start_time
                 counts = (f"{self._groups_imported} imported, "
                           f"{self._groups_skipped} skipped (already exist)")
-                if self._tracker and self._tracker.has_errors:
+                if self._tracker and self._tracker.has_issues:
                     msg = (f"Package import finished in {elapsed:.1f}s — "
-                           f"{counts} — {self._tracker.warn_count} warnings "
+                           f"{counts} — {self._tracker.issue_count} issue(s) "
                            "(Check Console).")
                     self.report({'WARNING'}, msg)
                 else:
@@ -660,7 +663,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 # half-updated).  Record the failure, restore any pending
                 # external links and continue with the next group.
                 traceback.print_exc()
-                print(f"[IMPORT ERROR] Group '{self._current_name}': {exc}")
+                _log.debug(f"[IMPORT ERROR] Group '{self._current_name}': {exc}")
                 self._tracker.record(
                     f"Group '{self._current_name}': import failed: {exc}",
                     level="ERROR",

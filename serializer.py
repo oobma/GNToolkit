@@ -386,7 +386,7 @@ def serialize_node_tree(tree):
                 try:
                     val = getattr(item, prop.identifier)
                     i_data["properties"][prop.identifier] = clean_value(val)
-                except:
+                except Exception:
                     pass
 
             data["interface_items"].append(i_data)
@@ -410,13 +410,13 @@ def serialize_node_tree(tree):
                             current = item.get('subtype')
                             if current and current != 'NONE':
                                 s_data['subtype'] = current
-                        except:
+                        except Exception:
                             pass
                         continue
                     try:
                         val = getattr(item, opt_prop)
                         s_data[opt_prop] = clean_value(val)
-                    except:
+                    except Exception:
                         pass
                 if "enum_items" in i_data:
                     s_data["enum_items"] = i_data["enum_items"]

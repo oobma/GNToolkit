@@ -23,7 +23,7 @@ import bpy
 _log = logging.getLogger("GNToolkit.sync")
 
 
-from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD
+from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD, READ_TIMEOUT_SECONDS
 from .error_tracker import ImportErrorTracker
 from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
@@ -89,13 +89,18 @@ class JsonLock:
     def acquire(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> bool:
         start = time.time()
         while time.time() - start < timeout:
-            if not os.path.exists(self.lock_path):
+            # Atomic create: only one process can win O_CREAT|O_EXCL.
+            try:
+                fd = os.open(self.lock_path,
+                             os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except OSError:
+                fd = None
+            if fd is not None:
                 try:
-                    with open(self.lock_path, 'w', encoding='utf-8') as f:
-                        f.write(f"{os.getpid()}\n{time.time()}")
-                    return True
-                except OSError:
-                    pass
+                    os.write(fd, f"{os.getpid()}\n{time.time()}".encode("utf-8"))
+                finally:
+                    os.close(fd)
+                return True
 
             # Lock exists — check if it's stale or already ours
             try:
@@ -170,7 +175,7 @@ class JsonLock:
         self.release()
 
 
-def read_json_tolerant(json_path: str, timeout: float = LOCK_TIMEOUT_SECONDS):
+def read_json_tolerant(json_path: str, timeout: float = READ_TIMEOUT_SECONDS):
     """Read a JSON file, tolerating concurrent writes from other sessions.
 
     Waits while the lock file is present (another session is mid-write)
@@ -1335,6 +1340,8 @@ class SyncManager:
                 [(sync_uuid, info, json_path_stored)], context, json_data_cache,
                 all_graph, rev_graph, all_names, tracked_by_name, group_interface_maps,
             )
+        for _f_name, _f_reason in _p_failures:
+            merged.record(f"'{_f_name}': {_f_reason}")
         pulled_names = set(rebuilt_names)
 
         # The external-connection restore rewired links of NON-rebuilt
@@ -1950,8 +1957,7 @@ class SyncManager:
                 _log.info("[Link All] serialized %d/%d groups", done, total)
                 if context and hasattr(context, 'workspace') and context.workspace:
                     context.workspace.status_text_set(f"Link All: serializing {done}/{total}...")
-                import bpy as _bpy
-                _bpy.app.timers.register(lambda: None, first_interval=0.0)
+                bpy.app.timers.register(lambda: None, first_interval=0.0)
 
         _log.info("[Link All] writing JSON to %s...", abs_path)
         if context and hasattr(context, 'workspace') and context.workspace:
@@ -2504,8 +2510,15 @@ class SyncManager:
             if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
                 json_cache = data.get("node_groups", {})
                 tree_data = json_cache.get(blend_name)
-                if tree_data is None:
-                    tree_data = next(iter(json_cache.values()))
+                if (tree_data is None and len(json_cache) == 1
+                        and next(iter(json_cache)) not in tracked_by_name):
+                    # Single-group package: the group was renamed in the
+                    # .blend after the JSON was exported — same content.
+                    fallback_name = next(iter(json_cache))
+                    _log.warning(
+                        "[Import Modified] '%s' not found in the package — "
+                        "using its only group '%s'", blend_name, fallback_name)
+                    tree_data = json_cache[fallback_name]
             elif isinstance(data, dict) and "nodes" in data:
                 json_cache = {blend_name: data}
                 tree_data = data
@@ -2516,7 +2529,9 @@ class SyncManager:
 
             if tree_data is None:
                 local_errors += 1
-                failure_list.append((blend_name, "group not found in the JSON"))
+                failure_list.append(
+                    (blend_name, "group not found in the package — export "
+                                 "it again or fix the tracking name"))
                 continue
 
             # Use the fast internal import method (no disk reads, no cascade)
@@ -2531,9 +2546,9 @@ class SyncManager:
                     (blend_name, f"{type(exc).__name__}: {exc}"))
                 continue
             rebuilt_names.add(blend_name)
-            if tracker.has_errors:
+            if tracker.has_issues:
                 local_errors += 1
-                reason = tracker.first_error_message or "import failed — check the console"
+                reason = tracker.first_error_message or "import issue — check the console"
                 failure_list.append((blend_name, reason))
             else:
                 local_imported += 1

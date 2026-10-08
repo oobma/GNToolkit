@@ -389,3 +389,5 @@ SIDECAR_TEXT_BLOCK_NAME = "__gnt_sync_metadata__.json"
 
 # Lock file settings for preventing concurrent JSON writes
 LOCK_TIMEOUT_SECONDS = 5.0
+# Interactive reads retry for less time than writers wait (UI responsiveness)
+READ_TIMEOUT_SECONDS = 2.0

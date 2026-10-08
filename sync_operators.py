@@ -73,6 +73,8 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
 
     tree_name: StringProperty(name="Node Group", description="Name of the node group to link")
 
+    _progress_started = False
+
     def invoke(self, context, event):
         tree = _get_active_tree(context)
         if tree is None:
@@ -81,9 +83,27 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
         self.tree_name = tree.name
         self.filepath = tree.name + ".json"
         context.window_manager.progress_begin(0, 100)
-        return super().invoke(context, event)
+        self._progress_started = True
+        result = super().invoke(context, event)
+        if 'RUNNING_MODAL' not in result:
+            context.window_manager.progress_end()
+            self._progress_started = False
+        return result
+
+    def cancel(self, context):
+        if self._progress_started:
+            context.window_manager.progress_end()
+            self._progress_started = False
 
     def execute(self, context):
+        try:
+            return self._run_link(context)
+        finally:
+            if self._progress_started:
+                context.window_manager.progress_end()
+                self._progress_started = False
+
+    def _run_link(self, context):
         if not self.tree_name:
             self.report({'ERROR'}, "No node group specified")
             return {'CANCELLED'}
@@ -117,7 +137,6 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, f"Failed to link: {e}")
             return {'CANCELLED'}
 
-        context.window_manager.progress_end()
         return {'FINISHED'}
 
 
@@ -676,9 +695,9 @@ class GN_OT_GitSaveCredentials(bpy.types.Operator):
         if source == "vault":
             self.report({'INFO'}, f"Token stored in the OS vault for {host}")
         elif source == "preferences":
-            self.report({'INFO'},
-                        f"Token stored in Blender preferences for {host} "
-                        "(no OS vault available)")
+            self.report({'WARNING'},
+                        f"Token stored UNENCRYPTED in Blender preferences for "
+                        f"{host} (no OS vault available)")
         else:
             self.report({'INFO'}, f"Token kept for this session ({host})")
         return {'FINISHED'}
@@ -1761,13 +1780,13 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
                                            os.path.basename(self.filepath)))
         if plan["external"]:
             parts.append(f"Unconnected refs: {', '.join(plan['external'])}")
-        if tracker.has_errors:
-            parts.append(f"{tracker.warn_count} import warning(s) — check console")
+        if tracker.has_issues:
+            parts.append(f"{tracker.issue_count} import issue(s) — check console")
         msg = " — ".join(parts) or "Nothing to import"
         if imported:
             msg += " — not tracked yet; use Track Group / Track All to sync"
         self.report({'WARNING'} if (plan["divergent"] or plan["external"]
-                                    or tracker.has_errors) else {'INFO'}, msg)
+                                    or tracker.has_issues) else {'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -1954,7 +1973,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
                 ok = sync_manager.export_to_json(uid, force=item.is_conflict)
             else:
                 tracker = sync_manager.import_from_json(uid, context)
-                ok = not tracker.has_errors
+                ok = not tracker.has_issues
             if ok:
                 if item.choice == 'KEEP_BLEND':
                     committed += 1

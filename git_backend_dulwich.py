@@ -2,12 +2,13 @@
 """
 gn_toolkit.git_backend_dulwich — embedded Git engine (dulwich).
 
-Pure-Python implementation of the local collaboration operations: repo
-state, staging + commit of the tracked JSONs, history, identity and
-remote-tracking ahead/behind. No external program and no subprocess is
-ever launched by this module — that is what lets the add-on collaborate
-without Git installed (the extension-platform build ships only this
-backend).
+Pure-Python implementation of the collaboration operations: repo state,
+staging + commit of the tracked JSONs, history, identity and
+remote-tracking ahead/behind. Local operations run in-process; network
+operations run in the ``git_network_worker.py`` subprocess described
+below. The system Git program is never invoked — that is what lets the
+add-on collaborate without Git installed (the extension-platform build
+ships only this backend).
 
 The extension-platform package relies on Blender installing the bundled
 wheels when the add-on is enabled. The legacy (GitHub) build appends its
@@ -58,7 +59,10 @@ _append_legacy_wheels()
 
 import dulwich
 
-_NETWORK_TIMEOUT = 60.0
+_NETWORK_TIMEOUT = 300.0
+_TIMEOUT_DETAIL = (
+    f"network operation cancelled after {int(_NETWORK_TIMEOUT)}s (timeout) — "
+    "the remote did not answer in time; retry or check the connection")
 
 _porcelain_module = None
 _repo_class = None
@@ -287,7 +291,7 @@ def log(repo_root, rel_path=None, count=10):
                 author = commit_obj.author.decode("utf-8", "replace")
                 author = author.split("<")[0].strip()
                 stamp = commit_obj.author_time + getattr(
-                    commit_obj, "author_timezone", 0) * 60
+                    commit_obj, "author_timezone", 0)
                 try:
                     date = time.strftime("%Y-%m-%d", time.gmtime(stamp))
                 except (OverflowError, OSError, ValueError):
@@ -494,7 +498,7 @@ class _WorkerTask(_Task):
                 return None
             self._kill_process()
             self._value = {"status": "error",
-                           "detail": "network operation timed out",
+                           "detail": _TIMEOUT_DETAIL,
                            "head_after": ""}
             self._close_files()
             self._done = True
@@ -597,7 +601,7 @@ def _run_task_sync(task):
         if time.monotonic() > deadline:
             task.kill()
             return {"status": "error",
-                    "detail": "network operation timed out", "head_after": ""}
+                    "detail": _TIMEOUT_DETAIL, "head_after": ""}
         time.sleep(0.02)
 
 

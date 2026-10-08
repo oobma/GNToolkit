@@ -21,13 +21,45 @@ All notable changes to this project are documented in this file.
   existing groups* (or *Pull from JSON* for tracked groups) when a group was
   skipped — an import that changes nothing no longer looks like a silent
   success.
+- **Pull identity.** A pull can no longer import an arbitrary group from a
+  package under a missing group's identity: when the tracked name is not in
+  the package, the pull fails with a clear reason (the single-group rename
+  tolerance is preserved, and individual pulls surface their failures
+  instead of reporting success).
+- **History dates.** The embedded engine added the commit timezone — which
+  dulwich reports in seconds — as if it were minutes, shifting the dates
+  shown in the history panel by days.
+- **Cyclic JSON is stopped.** A hand-edited package where two groups
+  reference each other no longer recurses until `RecursionError`; the import
+  reports the cycle and continues with the rest.
+- **Stuck progress bar.** *Track Group* now ends its progress indicator on
+  every cancelled path.
+- **Renamed files in the system-Git engine.** `git status` renames/copies
+  (`-z` pairs) are parsed correctly instead of listing a mangled path.
 
 ### Changed
 
 - **Manifest copyright** now credits the authors of the bundled wheels
   (dulwich, keyring and dependencies) alongside the add-on author.
+- **Manifest build rules** (`[build] paths_exclude_pattern`): a standard
+  `blender --command extension build` from the repository now produces the
+  same clean package (no system-Git engine, docs, scripts or dev files).
 - README scopes `gnt_check.py` and `scripts/` as GitHub repository tools
   (they are not part of the extension package).
+- **Network timeout**: raised from 60 s to 300 s with a message that
+  distinguishes a timeout from a failed operation.
+- **Unencrypted-token warning**: saving credentials without an OS vault now
+  warns in the panel and in the save report instead of reporting success.
+- **Atomic lock files** (`O_CREAT|O_EXCL`) and a shorter wait (2 s) for
+  interactive reads, so concurrent sessions cannot both "acquire" a lock and
+  a locked file stalls the UI for less time.
+- **Console noise**: importer/codec diagnostics (`[DEFAULT_VALUE]`,
+  `[COERCE]`, `[OK]`) go to the add-on log at debug level; set `GNT_DEBUG=1`
+  to see them on the console. Issue messages from the tracker are also
+  written to the log file now.
+- **Issue tracker naming**: `has_issues`/`issue_count` are the documented
+  names (`has_errors` remains as a legacy alias) and `warn_count` counts
+  warnings only.
 
 ## [0.3.0] - 2026-10-07
 

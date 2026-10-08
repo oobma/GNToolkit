@@ -999,6 +999,9 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 "missing": "No token stored for this host",
             }
             box.label(text=labels.get(source, source), icon='INFO')
+            if source == "preferences":
+                box.label(text="Warning: the token is stored unencrypted in "
+                               "Blender preferences", icon='ERROR')
 
         if len(repos) == 1:
             repo_box = layout.box()
