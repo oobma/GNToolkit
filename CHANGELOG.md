@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-08
+
+### Fixed
+
+- **No manual Python path/module handling.** The embedded engine relies on
+  Blender installing the packaged wheels when the extension is enabled: the
+  `sys.path` fallback was removed from the engine and from the network
+  worker (the legacy add-on build keeps it in a block that is stripped from
+  the platform package), and the worker receives the wheel location through
+  the standard `PYTHONPATH` environment variable. The engine cache reset no
+  longer reads Python's module registry — it only clears its own cached
+  repository state.
+- **Import feedback.** Import Package/Folder reports imported vs skipped
+  ("already exist") counts, and both import dialogs point to *Update
+  existing groups* (or *Pull from JSON* for tracked groups) when a group was
+  skipped — an import that changes nothing no longer looks like a silent
+  success.
+
+### Changed
+
+- **Manifest copyright** now credits the authors of the bundled wheels
+  (dulwich, keyring and dependencies) alongside the add-on author.
+- README scopes `gnt_check.py` and `scripts/` as GitHub repository tools
+  (they are not part of the extension package).
+
 ## [0.3.0] - 2026-10-07
 
 ### Added

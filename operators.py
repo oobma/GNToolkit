@@ -489,6 +489,8 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     _current_name = ""
     _groups_done = 0
     _total_groups = 0
+    _groups_imported = 0
+    _groups_skipped = 0
     _start_time: float = 0.0
 
     def draw(self, context):
@@ -534,6 +536,8 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         self._pending_restore = None
         self._groups_done = 0
         self._total_groups = len(self._group_names)
+        self._groups_imported = 0
+        self._groups_skipped = 0
 
         if not self._group_names and not mod_data_list:
             self.report({'ERROR'}, "No data found.")
@@ -555,6 +559,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             existing = bpy.data.node_groups.get(name)
             if existing and not self.overwrite_existing:
                 self._groups_done += 1
+                self._groups_skipped += 1
                 continue
             # Rebuilding an existing group replaces its interface sockets,
             # which breaks links from parent groups: snapshot them first so
@@ -592,12 +597,19 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             if self._current_gen is None and not self._group_names:
                 self._process_modifiers(context)
                 elapsed = time.perf_counter() - self._start_time
-                msg = f"Package import finished successfully in {elapsed:.1f}s."
+                counts = (f"{self._groups_imported} imported, "
+                          f"{self._groups_skipped} skipped (already exist)")
                 if self._tracker and self._tracker.has_errors:
-                    msg = (f"Package import finished in {elapsed:.1f}s with "
-                           f"{self._tracker.warn_count} warnings (Check Console).")
+                    msg = (f"Package import finished in {elapsed:.1f}s — "
+                           f"{counts} — {self._tracker.warn_count} warnings "
+                           "(Check Console).")
                     self.report({'WARNING'}, msg)
                 else:
+                    msg = f"Package import finished in {elapsed:.1f}s — {counts}."
+                    if self._groups_skipped:
+                        msg += (" Enable 'Update existing groups' to rebuild "
+                                "existing ones in place (or Pull from JSON for "
+                                "tracked groups).")
                     self.report({'INFO'}, msg)
                 self.cancel_modal(context)
                 return {'FINISHED'}
@@ -632,6 +644,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             except StopIteration:
                 self._current_gen = None
                 self._groups_done += 1
+                self._groups_imported += 1
                 if self._pending_restore:
                     restore_name, restore_saved = self._pending_restore
                     self._pending_restore = None

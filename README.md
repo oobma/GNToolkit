@@ -9,11 +9,13 @@ statuses, dependency-aware import and a commit/pull/conflict loop that
 plugs into Git, all from inside Blender. Geometry Nodes is the first
 supported tree type.
 
-The status layer also runs **headless**: the JSON side is pure Python, so
-the same canonical hashes the addon uses in Blender can be checked without
-opening it — `python gnt_check.py <folder> --baseline <project>.gntsync`
-reports every synced/changed/missing group in seconds. Use it in a git
-hook, a CI pipeline or a release gate.
+The status layer also runs **headless** through `gnt_check.py`
+(`gnt_check.py` and `scripts/` are GitHub repository tools — they are not
+part of the extension package): the JSON side is pure Python, so the same
+canonical hashes the addon uses in Blender can be checked without opening
+it — `python gnt_check.py <folder> --baseline <project>.gntsync` reports
+every synced/changed/missing group in seconds. Use it in a git hook, a CI
+pipeline or a release gate.
 
 ![Blender](https://img.shields.io/badge/Blender-4.2%E2%80%935.2-orange)
 ![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
@@ -111,8 +113,9 @@ health and the dependency impact of the group selected in the Node
 Editor.
 
 The checker is the standalone `gnt_check.py` script from this repository
-— fetch it at the same tag as your addon (the canonical hasher must
-match) and run it with any Python 3.10+ interpreter; no Blender needed.
+— a GitHub repository tool, not part of the extension package; fetch it
+at the same tag as your addon (the canonical hasher must match) and run
+it with any Python 3.10+ interpreter; no Blender needed.
 
 Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
 errors. The canonical hashes are the same ones the addon computes inside

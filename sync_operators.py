@@ -1753,6 +1753,9 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
             parts.append(f"Imported {len(imported)}: {', '.join(imported)}")
         if plan["existing"]:
             parts.append(f"{len(plan['existing'])} already existed (untouched)")
+            parts.append("to update an existing group use Import Package/Folder "
+                         "with 'Update existing groups' (or Pull from JSON when "
+                         "tracked)")
         if plan["divergent"]:
             parts.extend(_divergence_parts(plan["divergent"], sync_manager.metadata,
                                            os.path.basename(self.filepath)))

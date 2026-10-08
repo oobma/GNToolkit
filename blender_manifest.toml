@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "gn_toolkit"
 name = "GNToolkit"
-version = "0.3.0"
+version = "0.3.1"
 tagline = "Version control with semantics for Blender node trees"
 maintainer = "oobma <ambooart@gmail.com>"
 
@@ -10,7 +10,16 @@ type = "add-on"
 blender_version_min = "4.2.0"
 
 license = ["SPDX:GPL-3.0-or-later"]
-copyright = ["2026 oobma"]
+copyright = [
+    "2026 oobma",
+    "2026 Jelmer Vernooij and contributors (dulwich)",
+    "2008-2020 Andrey Petrov and contributors (urllib3)",
+    "2025 Kang Zhang, Jason R. Coombs and contributors (keyring)",
+    "2026 Jason R. Coombs and contributors (jaraco.classes, jaraco.context, jaraco.functools, backports.tarfile, importlib_metadata, zipp)",
+    "2012 Erik Rose (more-itertools)",
+    "2014 Enthought, Inc. (pywin32-ctypes)",
+    "2026 Python Software Foundation (typing_extensions)",
+]
 
 website = "https://github.com/oobma/GNToolkit"
 tags = ["Geometry Nodes", "Pipeline", "Node"]

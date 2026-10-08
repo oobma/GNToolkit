@@ -9,9 +9,10 @@ ever launched by this module — that is what lets the add-on collaborate
 without Git installed (the extension-platform build ships only this
 backend).
 
-If dulwich is not importable (legacy installs and the source checkout),
-the wheels bundled in ``<addon>/wheels/*.whl`` are appended to
-``sys.path`` and imported from there.
+The extension-platform package relies on Blender installing the bundled
+wheels when the add-on is enabled. The legacy (GitHub) build appends its
+own ``wheels/*.whl`` to the module search path before importing dulwich
+(the marked block below; stripped from the platform package).
 
 A repo status is cached behind a cheap stat signature (index, refs,
 config and the tracked JSONs), so refreshing the panel on a clean repo
@@ -31,57 +32,43 @@ session API or ``GNT_GIT_USERNAME``/``GNT_GIT_TOKEN``.
 
 from __future__ import annotations
 
-import glob
 import json
-import logging
 import os
 import subprocess
-import sys
 import tempfile
 import time
 
-_log = logging.getLogger("GNToolkit.git")
-
-_NETWORK_TIMEOUT = 60.0
-
-_dulwich = None
-_dulwich_error = None
-_porcelain_module = None
-_repo_class = None
-
-_status_cache = {}
+# platform-strip:begin
+import glob
+import sys
 
 
-def _ensure_dulwich():
-    global _dulwich, _dulwich_error
-    if _dulwich is not None:
-        return _dulwich
-    if _dulwich_error is not None:
-        return None
-    try:
-        import dulwich
-        _dulwich = dulwich
-        return _dulwich
-    except ImportError as exc:
-        first_error = exc
+def _append_legacy_wheels():
+    """Legacy add-on installs don't install bundled wheels automatically."""
     wheels_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "wheels")
     for whl in sorted(glob.glob(os.path.join(wheels_dir, "*.whl"))):
         path = os.path.abspath(whl)
         if path not in sys.path:
             sys.path.append(path)
-    try:
-        import dulwich
-        _dulwich = dulwich
-        _log.info("embedded Git engine loaded from bundled wheels")
-        return _dulwich
-    except ImportError:
-        _dulwich_error = str(first_error)
-        return None
+
+
+_append_legacy_wheels()
+# platform-strip:end
+
+import dulwich
+
+_NETWORK_TIMEOUT = 60.0
+
+_porcelain_module = None
+_repo_class = None
+
+_status_cache = {}
 
 
 def available() -> bool:
-    return _ensure_dulwich() is not None
+    """The module only imports when dulwich is importable."""
+    return True
 
 
 def invalidate(repo_root=None):
@@ -95,7 +82,6 @@ def invalidate(repo_root=None):
 def _porcelain():
     global _porcelain_module
     if _porcelain_module is None:
-        _ensure_dulwich()
         from dulwich import porcelain
         _porcelain_module = porcelain
     return _porcelain_module
@@ -104,7 +90,6 @@ def _porcelain():
 def _repo(path):
     global _repo_class
     if _repo_class is None:
-        _ensure_dulwich()
         from dulwich.repo import Repo
         _repo_class = Repo
     return _repo_class(path)
@@ -200,11 +185,6 @@ def _branch_info(repo):
 
 
 def status(repo_root, tracked_paths=None):
-    if not available():
-        error = "Embedded Git engine unavailable"
-        if _dulwich_error:
-            error += f" ({_dulwich_error})"
-        return {"ok": False, "error": error}
     signature = _signature(repo_root, tracked_paths)
     cached = _status_cache.get(repo_root)
     if cached is not None and cached[0] == signature:
@@ -456,15 +436,34 @@ def _bundled_python():
     return None
 
 
+def _worker_env():
+    """Environment for the worker: expose where dulwich was imported from.
+
+    Blender installs the bundled wheels outside the interpreter's default
+    search path, so the subprocess receives the location through the
+    standard ``PYTHONPATH`` variable (no ``sys.path`` changes in code).
+    """
+    env = os.environ.copy()
+    try:
+        location = os.path.dirname(os.path.dirname(
+            os.path.abspath(dulwich.__file__)))
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = location + (os.pathsep + existing
+                                        if existing else "")
+    except Exception:
+        pass
+    return env
+
+
 def _worker_command():
     worker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "git_network_worker.py")
     python = _bundled_python()
     if python:
-        return [python, "-I", "-u", worker]
+        return [python, "-s", "-u", worker]
     import bpy
     return [bpy.app.binary_path, "--background", "--factory-startup",
-            "--python", worker, "--"]
+            "--python-use-system-env", "--python", worker, "--"]
 
 
 class _WorkerTask(_Task):
@@ -518,7 +517,7 @@ class _WorkerTask(_Task):
         try:
             self._proc = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=self._out,
-                stderr=self._err,
+                stderr=self._err, env=_worker_env(),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as exc:
             self._value = {

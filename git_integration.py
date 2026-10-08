@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 
 _log = logging.getLogger("GNToolkit.git")
 
@@ -49,22 +48,26 @@ def set_backend_override(name):
     """Force a backend ('auto'|'dulwich'|'git') or None; resets caches."""
     global _backend_override
     _backend_override = name if name in _VALID_BACKENDS else None
-    invalidate_backend()
+    clear_backend_caches()
 
 
-def invalidate_backend():
-    """Forget the resolved backend, availability and per-repo state."""
+def clear_backend_caches():
+    """Forget the resolved engine, availability and per-repo state.
+
+    This only asks the loaded engine backends to drop their cached
+    repository state; it never touches Python modules.
+    """
     global _backend_cache, _available_cache, _state_cache
     _backend_cache = None
     _available_cache = None
     _state_cache = {}
-    for module_name in ("git_backend_git", "git_backend_dulwich"):
-        module = sys.modules.get(__package__ + "." + module_name)
-        if module is not None:
-            try:
-                module.invalidate()
-            except Exception:
-                pass
+    for module in (_load_git_backend(), _load_dulwich_backend()):
+        if module is None:
+            continue
+        try:
+            module.invalidate()
+        except Exception:
+            pass
 
 
 def _addon_preference():

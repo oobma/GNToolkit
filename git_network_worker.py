@@ -15,16 +15,16 @@ Protocol:
           {"status": "ok"|"diverged"|"error", "detail": ..., "head_after": ...}
   stderr: diagnostics only — credentials are never written anywhere
 
-The script is self-contained (no relative imports): dulwich is imported
-from the interpreter or from the ``wheels/`` folder next to this file
-(zipimport), so it runs in the source checkout, legacy installs and
-extension installs alike. Remotes over SSH are rejected — the embedded
-engine speaks HTTPS/files only (SSH stays on the Git CLI engine).
+The script is self-contained (no relative imports): the parent process
+passes the location of the installed dulwich through the standard
+``PYTHONPATH`` variable, so it runs in the source checkout, legacy
+installs and extension installs alike. Remotes over SSH are rejected —
+the embedded engine speaks HTTPS/files only (SSH stays on the Git CLI
+engine).
 """
 
 from __future__ import annotations
 
-import glob
 import io
 import json
 import os
@@ -32,22 +32,6 @@ import re
 import sys
 
 _SSH_REMOTE = re.compile(r"^(ssh|git\+ssh)://|^[^/\s@]+@[^/\s:]+:")
-
-
-def _ensure_dulwich():
-    try:
-        import dulwich
-        return dulwich
-    except ImportError:
-        pass
-    wheels_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "wheels")
-    for whl in sorted(glob.glob(os.path.join(wheels_dir, "*.whl"))):
-        path = os.path.abspath(whl)
-        if path not in sys.path:
-            sys.path.append(path)
-    import dulwich
-    return dulwich
 
 
 def _head(repo_path):
@@ -288,7 +272,6 @@ def main(argv):
     repo_path = options.get("repo", "")
     result = {"status": "error", "detail": "", "head_after": ""}
     try:
-        _ensure_dulwich()
         if op not in _OPS:
             result["detail"] = f"unknown operation: {op!r}"
         elif not repo_path or not os.path.isdir(repo_path):

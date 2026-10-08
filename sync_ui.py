@@ -260,6 +260,9 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                                      icon='ERROR')
             picker_box.label(text="Existing groups are never touched — only missing "
                                   "dependencies are imported.", icon='INFO')
+            picker_box.label(text="To update an existing group: Import Package/Folder "
+                                  "with 'Update existing groups' (or Pull from JSON "
+                                  "when tracked).", icon='INFO')
             picker_box.row(align=True).operator("gn.sync_import_group_close",
                                                 text="Close Picker", icon='X')
 
@@ -1053,8 +1056,8 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
 
 def _on_git_backend_changed(self, context):
     try:
-        from .git_integration import invalidate_backend
-        invalidate_backend()
+        from .git_integration import clear_backend_caches
+        clear_backend_caches()
     except Exception:
         pass
 
