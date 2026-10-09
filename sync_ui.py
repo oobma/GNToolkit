@@ -109,7 +109,7 @@ def _active_tracked_json(context):
 
 
 def _notify_external_changes(count: int) -> None:
-    msg = f"GNToolkit: {count} JSON file(s) changed on disk — Refresh Status to align"
+    msg = f"GNToolkit: {count} JSON file(s) changed on disk - Refresh Status to align"
 
     def _show(text=msg):
         try:

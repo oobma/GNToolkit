@@ -17,7 +17,7 @@ import traceback
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, BoolProperty
 
-from .codec import clean_value, unclean_value
+from .codec import clean_value, unclean_value, reset_coercion_count, coercion_count
 from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
@@ -444,7 +444,7 @@ def dependency_ordered_names(json_cache: dict) -> list:
         if name in seen or name in visiting:
             return
         visiting.add(name)
-        for child in refs.get(name, ()):
+        for child in sorted(refs.get(name, ())):
             visit(child)
         visiting.discard(name)
         seen.add(name)
@@ -509,6 +509,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         self._tracker = ImportErrorTracker()
+        reset_coercion_count()
 
         filepath = self.filepath
         if not os.path.isdir(filepath):
@@ -602,6 +603,10 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 elapsed = time.perf_counter() - self._start_time
                 counts = (f"{self._groups_imported} imported, "
                           f"{self._groups_skipped} skipped (already exist)")
+                coercions = coercion_count()
+                if coercions:
+                    counts += (f", {coercions} value coercion(s) "
+                               "(GNT_DEBUG=1 for details)")
                 if self._tracker and self._tracker.has_issues:
                     msg = (f"Package import finished in {elapsed:.1f}s - "
                            f"{counts} - {self._tracker.issue_count} issue(s) "

@@ -15,6 +15,19 @@ import bpy
 
 _log = logging.getLogger("GNToolkit.codec")
 
+_coercion_count = 0
+
+
+def reset_coercion_count():
+    """Reset the non-trivial value coercion/fallback counter."""
+    global _coercion_count
+    _coercion_count = 0
+
+
+def coercion_count():
+    """Non-trivial value coercions/fallbacks since the last reset."""
+    return _coercion_count
+
 # Attempt to import mathutils types at module level (with fallback guard).
 try:
     from mathutils import Vector, Color, Euler, Quaternion, Matrix
@@ -43,6 +56,11 @@ def clean_value(val):
         return [clean_value(v) for v in val]
 
     if isinstance(val, float):
+        if abs(val) < 1e-4:
+            # Absolute 6-decimal rounding is meaningless at tiny magnitudes
+            # (1e-7 -> 0.0: the default Epsilon of Compare nodes).  Keep the
+            # value with float32-level significant digits instead.
+            return 0.0 if val == 0.0 else float(f"{val:.7g}")
         # Normalise -0.0 (produced by round() of tiny negatives) to 0.0:
         # both are the same float32 value and the roundtrip may flip the
         # sign, which would otherwise produce spurious hash differences.
@@ -50,6 +68,9 @@ def clean_value(val):
         return 0.0 if rounded == 0.0 else rounded
     if isinstance(val, (int, str, bool)):
         return val
+
+    if val is None:
+        return None
 
     if _HAS_MATHUTILS:
         if isinstance(val, Vector):
@@ -189,6 +210,8 @@ def unclean_value(val, expected_type=None, context=None):
     """
     def _warn(msg):
         """Print a [DEFAULT_VALUE] warning with optional context."""
+        global _coercion_count
+        _coercion_count += 1
         prefix = "[DEFAULT_VALUE]"
         if context:
             _log.debug(f"{prefix} {context}: {msg}")
@@ -207,6 +230,8 @@ def unclean_value(val, expected_type=None, context=None):
         type is also zero, so the coercion has no effect on the
         final result.  Only non-trivial coercions are logged.
         """
+        global _coercion_count
+        _coercion_count += 1
         prefix = "[COERCE]"
         if context:
             _log.debug(f"{prefix} {context}: {msg}")

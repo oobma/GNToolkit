@@ -81,7 +81,7 @@ class ValidationIssue:
         parts = [self.node_name]
         if self.socket_name:
             parts.append(f"({self.socket_name})")
-        parts.append(f"→ {self.details}")
+            parts.append(f"-> {self.details}")
         return " ".join(parts)
 
 

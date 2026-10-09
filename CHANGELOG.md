@@ -14,6 +14,33 @@ All notable changes to this project are documented in this file.
   baselines are re-stamped automatically (`HASH_VERSION` 10). Regression:
   `tests/diag_enum_flag_determinism.py` (two Blender processes with
   different `PYTHONHASHSEED` must serialize identical JSON).
+- **Tiny float values are no longer collapsed to zero.** The serializer
+  rounded floats to 6 *decimals*, so values with `|v| < 5e-7` — e.g. the
+  default `Epsilon` of Compare nodes (1e-7), 114 sockets in the real
+  project — were stored as `0.0`: the JSON did not represent the source and
+  a rebuild restored `0.0`. Tiny magnitudes now keep float32-level
+  significant digits; normal magnitudes keep the previous rounding
+  (`HASH_VERSION` 11). Regression: `tests/diag_float_precision.py`
+  (gate 5.1/5.2).
+- **`None` values stay `null`** in the serializer instead of the string
+  `"None"` (latent today: the properties that can be `None` are skipped).
+- **Deterministic import order**: `dependency_ordered_names` sorts each
+  node's children before recursing (the set iteration order could vary
+  between processes; the rebuilt scene was unaffected).
+- **Console ASCII follow-up**: report messages built in variables
+  (`parts.append`/`msg =`) are ASCII too — a few em dashes and arrows had
+  survived the earlier sweep and showed as mojibake.
+
+### Changed
+
+- **Import reports count value coercions**: non-trivial coercions and
+  fallbacks during an import are summarized in the result ("N value
+  coercion(s)"; details in the log with `GNT_DEBUG=1`) instead of being
+  silent.
+- **Cross-process determinism sweep in the gate**:
+  `tests/diag_export_determinism.py` exports the real 582-group project in
+  two Blender processes with different `PYTHONHASHSEED` values and requires
+  all 638 files to be byte-identical.
 
 ## [0.3.1] - 2026-10-08
 

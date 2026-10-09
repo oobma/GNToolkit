@@ -1615,10 +1615,10 @@ def _divergence_parts(divergent, metadata, pkg_name=None) -> list:
     base = "Divergent" + (f" vs {pkg_name}" if pkg_name else "")
     parts = []
     if untracked:
-        parts.append(f"{base}: {', '.join(untracked)} — not tracked yet; "
+        parts.append(f"{base}: {', '.join(untracked)} - not tracked yet; "
                      "Track Group/Track All, then Pull to align")
     if tracked:
-        parts.append(f"{base}: {', '.join(tracked)} — Pull or Keep JSON to align")
+        parts.append(f"{base}: {', '.join(tracked)} - Pull or Keep JSON to align")
     return parts
 
 
@@ -1720,8 +1720,11 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
 
     def execute(self, context):
         import os
+        from .codec import coercion_count, reset_coercion_count
         from .error_tracker import ImportErrorTracker
         from .importer import import_node_tree_recursive
+
+        reset_coercion_count()
 
         if not self.filepath or not os.path.isfile(self.filepath):
             self.report({'ERROR'}, "Select a JSON package file first")
@@ -1781,7 +1784,10 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
         if plan["external"]:
             parts.append(f"Unconnected refs: {', '.join(plan['external'])}")
         if tracker.has_issues:
-            parts.append(f"{tracker.issue_count} import issue(s) — check console")
+            parts.append(f"{tracker.issue_count} import issue(s) - check console")
+        coercions = coercion_count()
+        if coercions:
+            parts.append(f"{coercions} value coercion(s) (GNT_DEBUG=1 for details)")
         msg = " - ".join(parts) or "Nothing to import"
         if imported:
             msg += " - not tracked yet; use Track Group / Track All to sync"
