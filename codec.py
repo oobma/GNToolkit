@@ -69,6 +69,13 @@ def clean_value(val):
     if isinstance(val, dict):
         return {str(k): clean_value(v) for k, v in val.items()}
 
+    # Enum-flag RNA properties (e.g. Set Handle Type `mode`) come back as
+    # Python sets, whose iteration order changes between processes (string
+    # hash randomisation): sort them, or the JSON and the canonical hash
+    # would differ from one Blender session to the next.
+    if isinstance(val, (set, frozenset)):
+        return sorted((clean_value(v) for v in val), key=str)
+
     if hasattr(val, '__iter__') and not isinstance(val, str):
         return [clean_value(v) for v in val]
 

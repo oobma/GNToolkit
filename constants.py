@@ -381,7 +381,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 9
+HASH_VERSION: int = 10
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

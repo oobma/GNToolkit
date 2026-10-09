@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Enum-flag properties are serialized in a stable order.** RNA enum-flag
+  properties (e.g. the `mode` of a "Set Handle Type" node) come back as
+  Python sets, whose iteration order changes between processes (string hash
+  randomisation): two exports of the same .blend could produce different
+  JSON and different hashes. Sets are now sorted in `codec.clean_value`;
+  baselines are re-stamped automatically (`HASH_VERSION` 10). Regression:
+  `tests/diag_enum_flag_determinism.py` (two Blender processes with
+  different `PYTHONHASHSEED` must serialize identical JSON).
+
 ## [0.3.1] - 2026-10-08
 
 ### Fixed
