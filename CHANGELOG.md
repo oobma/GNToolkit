@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`gnt_check.py --diff A B`**: readable semantic summary of what changed
+  between two JSON versions (folders or files, standalone files or unified
+  packages): interface items, nodes added/removed grouped by name prefix,
+  value/property changes and re-linked connections; layout-only properties
+  (position, sizes, selection) are ignored. With `--repo` and `--subdir`,
+  A and B can be git revisions (e.g. `--diff HEAD~1 HEAD --repo . --subdir
+  motor/NodeGroups`). Repo tool, not part of the extension package.
+  Motivated by live feedback ("human readable commits" for large
+  single-tree projects). Regression: `tests/test_gnt_check_diff.py`
+  (9, gate).
+
 ### Fixed
 
 - **Enum-flag properties are serialized in a stable order.** RNA enum-flag

@@ -126,6 +126,18 @@ are the same ones the addon computes inside Blender, so a hook and a
 `Refresh Status` always agree. The full status check of a 582-group
 project runs in ~3 seconds.
 
+`gnt_check.py --diff A B` prints a readable summary of what changed
+between two JSON versions (folders or files, standalone files or unified
+packages): interface items, nodes added/removed (grouped by name prefix),
+value/property changes and re-linked connections — layout-only properties
+(position, sizes, selection) are ignored. Handy for reviewing a commit
+without reading hundreds of raw JSON lines. A and B can also be git
+revisions:
+
+```bash
+python gnt_check.py --diff HEAD~1 HEAD --repo /path/to/project --subdir motor/NodeGroups
+```
+
 ### Building the platform package - repository tool
 
 The package uploaded to the Blender Extensions Platform is reproducible
