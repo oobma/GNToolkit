@@ -825,10 +825,10 @@ class GN_OT_SyncResolveBlend(bpy.types.Operator):
         sync_manager.save()
         if ok is False:
             self.report({'ERROR'},
-                        "Could not write the JSON — check the console/log "
+                        "Could not write the JSON - check the console/log "
                         "(e.g. unwritable file)")
             return {'CANCELLED'}
-        self.report({'INFO'}, "Conflict resolved — kept the .blend version")
+        self.report({'INFO'}, "Conflict resolved - kept the .blend version")
         return {'FINISHED'}
 
 
@@ -845,10 +845,10 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
         sync_manager.save()
         if tracker is not None and tracker.error_count:
             self.report({'ERROR'},
-                        "Could not apply the JSON side — check the console/log "
+                        "Could not apply the JSON side - check the console/log "
                         "(library-linked groups must be made local first)")
             return {'CANCELLED'}
-        self.report({'INFO'}, "Conflict resolved — kept the JSON version")
+        self.report({'INFO'}, "Conflict resolved - kept the JSON version")
         return {'FINISHED'}
 
 

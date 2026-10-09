@@ -114,7 +114,7 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
             return {'CANCELLED'}
         if group_library_path(tree):
             self.report({'ERROR'},
-                        f"'{tree.name}' is linked from a library — "
+                        f"'{tree.name}' is linked from a library - "
                         "make it local to track it")
             return {'CANCELLED'}
 
@@ -229,7 +229,7 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
         status = sync_manager.check_status(self.sync_uuid)
         if status == SyncStatus.SYNCED:
-            self.report({'INFO'}, "Already synced — nothing to import")
+            self.report({'INFO'}, "Already synced - nothing to import")
             return {'CANCELLED'}
 
         tracker = sync_manager.import_from_json(self.sync_uuid, context)
@@ -240,12 +240,12 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
         if tracker.error_count:
             self.report({'ERROR'},
-                        f"Pull failed ({tracker.error_count} error(s)) — "
+                        f"Pull failed ({tracker.error_count} error(s)) - "
                         "check the console/log")
             return {'CANCELLED'}
         if tracker.warn_count:
             self.report({'WARNING'},
-                        f"Pull completed with {tracker.warn_count} warning(s) — check console")
+                        f"Pull completed with {tracker.warn_count} warning(s) - check console")
         else:
             self.report({'INFO'}, "Pull from JSON completed")
         return {'FINISHED'}
@@ -289,7 +289,7 @@ class GN_OT_SyncExport(bpy.types.Operator):
             return {'FINISHED'}
         else:
             self.report({'ERROR'},
-                        "Commit blocked — the JSON was modified externally. "
+                        "Commit blocked - the JSON was modified externally. "
                         "Pull first or resolve the conflict.")
             return {'CANCELLED'}
 
@@ -318,7 +318,7 @@ class GN_OT_SyncIgnore(bpy.types.Operator):
         sync_manager.save()
         for area in context.screen.areas:
             area.tag_redraw()
-        self.report({'INFO'}, "Issue ignored — status still tracked")
+        self.report({'INFO'}, "Issue ignored - status still tracked")
         return {'FINISHED'}
 
 
@@ -366,7 +366,7 @@ class GN_OT_SyncCheck(bpy.types.Operator):
             self.report({'INFO'}, "No tracked groups")
             return {'FINISHED'}
         ensure_check_pump()
-        self.report({'INFO'}, f"Checking {total} groups…")
+        self.report({'INFO'}, f"Checking {total} groups...")
         return {'FINISHED'}
 
 
@@ -612,7 +612,7 @@ class GN_OT_GitCommit(bpy.types.Operator):
             return {'CANCELLED'}
         git_submit("commit", repo=self.repo,
                    message=self.message.strip() or "Update node groups")
-        self.report({'INFO'}, "Git commit started in background…")
+        self.report({'INFO'}, "Git commit started in background...")
         return {'FINISHED'}
 
 
@@ -631,12 +631,12 @@ class GN_OT_GitSync(bpy.types.Operator):
             return {'CANCELLED'}
         if not git_online_allowed():
             self.report({'ERROR'},
-                        "Online access is disabled in Blender preferences — "
+                        "Online access is disabled in Blender preferences - "
                         "Git Sync needs it to push/pull. Git Commit still "
                         "works locally")
             return {'CANCELLED'}
         git_submit("sync", repo=self.repo)
-        self.report({'INFO'}, "Git sync started in background…")
+        self.report({'INFO'}, "Git sync started in background...")
         return {'FINISHED'}
 
 
@@ -751,7 +751,7 @@ class GN_OT_SyncTrackDeps(bpy.types.Operator):
         if result["errors"]:
             self.report({'WARNING'},
                         f"Tracked {result['tracked']} dependency group(s), "
-                        f"{result['errors']} error(s) — see the log")
+                        f"{result['errors']} error(s) - see the log")
         elif result["tracked"]:
             self.report({'INFO'},
                         f"Now tracking {result['tracked']} dependency group(s)")
@@ -815,7 +815,7 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     def execute(self, context):
         if not bpy.data.filepath:
             self.report({'INFO'},
-                        "The .blend is not saved yet — tracking is kept in memory "
+                        "The .blend is not saved yet - tracking is kept in memory "
                         "until you save. Save the file to persist the sidecar and "
                         "relative JSON paths.")
 
@@ -837,7 +837,7 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
                    f"{result['skipped']} already tracked, "
                    f"{result['errors']} errors")
             if result.get("linked_skipped"):
-                msg += (f", {result['linked_skipped']} library-linked skipped — "
+                msg += (f", {result['linked_skipped']} library-linked skipped - "
                         "make them local to track")
             context.window_manager.progress_end()
             self.report({'INFO'}, msg)
@@ -915,7 +915,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                 reason = json_read_failure_reason(fp)
                 if reason == "encoding":
                     self.report({'ERROR'},
-                                f"'{os.path.basename(fp)}' is not valid UTF-8 — "
+                                f"'{os.path.basename(fp)}' is not valid UTF-8 - "
                                 "re-save it as UTF-8 and retry")
                 else:
                     self.report({'ERROR'}, f"Failed to read '{os.path.basename(fp)}'")
@@ -1151,7 +1151,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
                            if result.get('still_differ') else "")
                         + (f", {result.get('linked_skipped', 0)} library-linked skipped"
                            if result.get('linked_skipped') else "")
-                        + (f" — {len(result.get('failures', []))} failed, "
+                        + (f" - {len(result.get('failures', []))} failed, "
                            "see the panel to retry"
                            if result.get('failures') else ""))
         except Exception as e:
@@ -1188,10 +1188,10 @@ class GN_OT_SyncRetryFailed(bpy.types.Operator):
             area.tag_redraw()
         if result.get("failures"):
             self.report({'WARNING'},
-                        f"{len(result['failures'])} group(s) still failing — see the panel")
+                        f"{len(result['failures'])} group(s) still failing - see the panel")
         else:
             self.report({'INFO'},
-                        f"Retry complete — {result['imported']} group(s) imported")
+                        f"Retry complete - {result['imported']} group(s) imported")
         return {'FINISHED'}
 
 
@@ -1236,7 +1236,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 
         if not bpy.data.filepath:
             self.report({'INFO'},
-                        "The .blend is not saved yet — tracking is kept in memory "
+                        "The .blend is not saved yet - tracking is kept in memory "
                         "until you save. Save the file to persist the sidecar and "
                         "relative JSON paths.")
 
@@ -1251,12 +1251,12 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
             reason = json_read_failure_reason(json_path)
             if reason == "encoding":
                 self.report({'ERROR'},
-                            f"'{os.path.basename(json_path)}' is not valid UTF-8 — "
+                            f"'{os.path.basename(json_path)}' is not valid UTF-8 - "
                             "re-save it as UTF-8 in your editor (File > Save As > "
                             "UTF-8) and try again")
             elif reason == "conflict":
                 self.report({'ERROR'},
-                            f"'{os.path.basename(json_path)}' has merge conflicts — "
+                            f"'{os.path.basename(json_path)}' has merge conflicts - "
                             "resolve them with your Git tooling")
             else:
                 self.report({'ERROR'}, "Failed to read JSON (unreadable or concurrent write)")
@@ -1264,7 +1264,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 
         if not isinstance(data, dict):
             self.report({'ERROR'},
-                        f"'{os.path.basename(json_path)}' is not a node group package — "
+                        f"'{os.path.basename(json_path)}' is not a node group package - "
                         "pick the unified package (single file) or a per-group export "
                         "(NodeGroups folder)")
             return {'CANCELLED'}
@@ -1276,11 +1276,11 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
             if "modifier_name" in data:
                 self.report({'ERROR'},
                             f"'{os.path.basename(json_path)}' is a modifier export, "
-                            "not a node group package — pick the unified package "
+                            "not a node group package - pick the unified package "
                             "(single file) or a per-group export (NodeGroups folder)")
             else:
                 self.report({'ERROR'},
-                            f"No node groups found in '{os.path.basename(json_path)}' — "
+                            f"No node groups found in '{os.path.basename(json_path)}' - "
                             "pick the unified package (single file) or a per-group "
                             "export (NodeGroups folder)")
             return {'CANCELLED'}
@@ -1684,12 +1684,12 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
                 state.open = False
                 if reason == "encoding":
                     self.report({'ERROR'},
-                                f"'{os.path.basename(self.filepath)}' is not valid UTF-8 — "
+                                f"'{os.path.basename(self.filepath)}' is not valid UTF-8 - "
                                 "re-save it as UTF-8 in your editor (File > Save As > "
                                 "UTF-8) and try again")
                 elif reason == "conflict":
                     self.report({'ERROR'},
-                                f"'{os.path.basename(self.filepath)}' has merge conflicts — "
+                                f"'{os.path.basename(self.filepath)}' has merge conflicts - "
                                 "resolve them with your Git tooling")
                 else:
                     self.report({'ERROR'},
@@ -1782,9 +1782,9 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
             parts.append(f"Unconnected refs: {', '.join(plan['external'])}")
         if tracker.has_issues:
             parts.append(f"{tracker.issue_count} import issue(s) — check console")
-        msg = " — ".join(parts) or "Nothing to import"
+        msg = " - ".join(parts) or "Nothing to import"
         if imported:
-            msg += " — not tracked yet; use Track Group / Track All to sync"
+            msg += " - not tracked yet; use Track Group / Track All to sync"
         self.report({'WARNING'} if (plan["divergent"] or plan["external"]
                                     or tracker.has_issues) else {'INFO'}, msg)
         return {'FINISHED'}
@@ -1820,7 +1820,7 @@ class GN_OT_SyncImportGroupTrack(bpy.types.Operator, ExportHelper):
             info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
             self.report({'WARNING'},
                         f"'{self.group_name}' is already tracked to "
-                        f"{info.get('json_path', '?')} — use Commit/Pull instead")
+                        f"{info.get('json_path', '?')} - use Commit/Pull instead")
             return {'CANCELLED'}
         sync_manager.link_group(tree, self.filepath)
         sync_manager.save()
@@ -1992,7 +1992,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
         if errors:
             msg += f", {errors} failed"
         if untracked_left:
-            msg += (f" — {untracked_left} untracked dependency group(s) "
+            msg += (f" - {untracked_left} untracked dependency group(s) "
                     "left out of the commit")
         self.report({'WARNING' if (errors or untracked_left) else 'INFO'}, msg)
         return {'FINISHED'}

@@ -185,7 +185,7 @@ def _selftest() -> int:
         h2 = hu.canonical_hash_from_json_path(fa)
         h3 = hu.canonical_hash_from_json_path(fb)
         ok = (h1 is not None and h1 == h2 and h1 != h3 and "bpy" not in sys.modules)
-    print("selftest: " + ("OK — canonical hashing works without bpy"
+    print("selftest: " + ("OK - canonical hashing works without bpy"
                           if ok else "FAILED"))
     return 0 if ok else 1
 
@@ -241,7 +241,7 @@ def run_impact(baseline_path: str, target_name: str, as_json: bool,
     if consumers:
         print(f'Used by {len(consumers)} object modifier(s):')
         for c in consumers:
-            print(f'  [object] {c["object"]} — "{c["modifier"]}"')
+            print(f'  [object] {c["object"]} - "{c["modifier"]}"')
     return 0
 
 
@@ -286,10 +286,10 @@ def run_health(folder: str | None, baseline_path: str | None,
         print(json.dumps(report))
     else:
         print(f'health: {report["files"]} files, {report["groups"]} groups')
-        print(f'  unreadable: {len(report["unreadable"])} · '
-              f'conflicts: {len(report["conflicts"])} · '
-              f'duplicate buckets: {len(report["duplicates"])} · '
-              f'missing files: {len(report["missing_files"])} · '
+        print(f'  unreadable: {len(report["unreadable"])} - '
+              f'conflicts: {len(report["conflicts"])} - '
+              f'duplicate buckets: {len(report["duplicates"])} - '
+              f'missing files: {len(report["missing_files"])} - '
               f'external refs: {len(report["external_refs"])}')
         for u in report["unreadable"]:
             print(f"  [UNREADABLE] {u}")

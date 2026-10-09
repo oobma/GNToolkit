@@ -286,7 +286,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                "excluded libraries." if excluded_names else ""))
         except PermissionError:
             self.report({'ERROR'},
-                        f"Cannot write to {self.filepath} — save the .blend "
+                        f"Cannot write to {self.filepath} - save the .blend "
                         "file in a writable location and try again")
             return {'CANCELLED'}
         except Exception as e:
@@ -365,7 +365,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
             self.report({'INFO'}, f"Exported '{tree.name}' successfully.")
         except PermissionError:
             self.report({'ERROR'},
-                        f"Cannot write to {self.filepath} — save the .blend "
+                        f"Cannot write to {self.filepath} - save the .blend "
                         "file in a writable location and try again")
             return {'CANCELLED'}
         except Exception as e:
@@ -603,12 +603,12 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
                 counts = (f"{self._groups_imported} imported, "
                           f"{self._groups_skipped} skipped (already exist)")
                 if self._tracker and self._tracker.has_issues:
-                    msg = (f"Package import finished in {elapsed:.1f}s — "
-                           f"{counts} — {self._tracker.issue_count} issue(s) "
+                    msg = (f"Package import finished in {elapsed:.1f}s - "
+                           f"{counts} - {self._tracker.issue_count} issue(s) "
                            "(Check Console).")
                     self.report({'WARNING'}, msg)
                 else:
-                    msg = f"Package import finished in {elapsed:.1f}s — {counts}."
+                    msg = f"Package import finished in {elapsed:.1f}s - {counts}."
                     if self._groups_skipped:
                         msg += (" Enable 'Update existing groups' to rebuild "
                                 "existing ones in place (or Pull from JSON for "

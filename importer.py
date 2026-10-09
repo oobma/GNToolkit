@@ -1266,7 +1266,7 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                         level="WARN",
                     )
                     _log.debug(f"[DEFAULT_VALUE] Node '{node.name}': input socket '{sname}' "
-                          f"(id={sid}) not found — default_value kept at Blender default")
+                          f"(id={sid}) not found - default_value kept at Blender default")
 
         out_name_counts = {}
         for out_data in node_data.get("outputs", []):

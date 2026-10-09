@@ -36,6 +36,17 @@ All notable changes to this project are documented in this file.
   every cancelled path.
 - **Renamed files in the system-Git engine.** `git status` renames/copies
   (`-z` pairs) are parsed correctly instead of listing a mangled path.
+- **Multi-input connection order is now part of the canonical hash.** The
+  order of the links into a multi-input socket (e.g. Join Geometry) is
+  functional — it defines the index ranges of each domain, and tools like
+  Node Arrange deliberately change it. Serialization and rebuild already
+  preserved it; the hash compared the links as a sorted set, so a reorder
+  was invisible to status checks. Baselines are re-stamped automatically
+  (`HASH_VERSION` 9).
+- **ASCII-only console messages.** Blender's console on Windows (codepage
+  850) rendered typographic characters in reports/logs as mojibake
+  (`Package import finished … ÔÇö`); every report, log and print string is
+  plain ASCII now.
 
 ### Changed
 
@@ -56,7 +67,9 @@ All notable changes to this project are documented in this file.
 - **Console noise**: importer/codec diagnostics (`[DEFAULT_VALUE]`,
   `[COERCE]`, `[OK]`) go to the add-on log at debug level; set `GNT_DEBUG=1`
   to see them on the console. Issue messages from the tracker are also
-  written to the log file now.
+  written to the log file now. Measured on a live Windows console: a printed
+  line costs ~0.36 ms while a dropped debug record is ~0.0003 ms, so large
+  imports no longer spend seconds scrolling the console.
 - **Issue tracker naming**: `has_issues`/`issue_count` are the documented
   names (`has_errors` remains as a legacy alias) and `warn_count` counts
   warnings only.

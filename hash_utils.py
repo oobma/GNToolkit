@@ -287,8 +287,15 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     # same link (a socket accepts one link) — 5.1 exports can carry the
     # same link twice under the type-variant sockets (e.g. Compare A and
     # A_INT both named "A"), so duplicates are collapsed.
+    #
+    # Order matters for links that share a TARGET (multi-input sockets,
+    # e.g. Join Geometry: the connection order defines the index ranges
+    # of each domain and tools like Node Arrange deliberately change it),
+    # so each link carries its position among its target's links.  Links
+    # to different targets stay order-independent.
     links = []
     seen = set()
+    target_order = {}
     for lk in data.get("links", []):
         ld = dict(lk)
         ld["from_socket_name"] = ld.get("from_socket_name", ld.get("from_socket_id", ""))
@@ -300,14 +307,18 @@ def canonicalize_node_tree_data(data: dict) -> dict:
         if key in seen:
             continue
         seen.add(key)
+        target_key = (ld.get("to_node", ""), ld["to_socket_name"])
+        ld["_multi_input_order"] = target_order.get(target_key, 0)
+        target_order[target_key] = ld["_multi_input_order"] + 1
         links.append(ld)
     out["links"] = sorted(
         links,
         key=lambda x: (
-            x.get("from_node", ""),
-            x.get("from_socket_name", ""),
             x.get("to_node", ""),
             x.get("to_socket_name", ""),
+            x.get("_multi_input_order", 0),
+            x.get("from_node", ""),
+            x.get("from_socket_name", ""),
         ),
     )
 

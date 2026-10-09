@@ -1913,7 +1913,7 @@ class SyncManager:
         linked_skipped = sum(1 for ng in all_groups.values()
                              if group_library_path(ng))
         if linked_skipped:
-            _log.info("[Link All] skipping %d library-linked group(s) — "
+            _log.info("[Link All] skipping %d library-linked group(s) - "
                       "make them local to track", linked_skipped)
         all_groups = {name: ng for name, ng in all_groups.items()
                       if not group_library_path(ng)}
@@ -2516,7 +2516,7 @@ class SyncManager:
                     # .blend after the JSON was exported — same content.
                     fallback_name = next(iter(json_cache))
                     _log.warning(
-                        "[Import Modified] '%s' not found in the package — "
+                        "[Import Modified] '%s' not found in the package - "
                         "using its only group '%s'", blend_name, fallback_name)
                     tree_data = json_cache[fallback_name]
             elif isinstance(data, dict) and "nodes" in data:
