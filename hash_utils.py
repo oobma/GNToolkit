@@ -262,6 +262,15 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                                 and not k.startswith("bl_")
                                 and k != "vector_dimensions"}
             nd["properties"] = dict(sorted(nd["properties"].items()))
+        # Custom properties: user content (versioned like anything else);
+        # the add-on's own gnt_* keys are bookkeeping.  A missing key and
+        # an empty dict must hash the same (JSON from older releases).
+        custom = {k: v for k, v in (nd.get("custom_properties") or {}).items()
+                  if not str(k).startswith("gnt_")}
+        if custom:
+            nd["custom_properties"] = dict(sorted(custom.items()))
+        else:
+            nd.pop("custom_properties", None)
         # Node sockets: canonical form is by NAME. Socket identifiers are
         # reordered by the roundtrip (like interface identifiers), so
         # sorting by identifier yields different orders per side.
@@ -357,6 +366,12 @@ def canonicalize_node_tree_data(data: dict) -> dict:
         if k not in HASH_EXCLUDE_TREE_PROPS:
             tree_props[k] = v
     out["tree_properties"] = dict(sorted(tree_props.items()))
+
+    # Custom properties: user content (see the node-level handling above).
+    tree_custom = {k: v for k, v in (data.get("custom_properties") or {}).items()
+                   if not str(k).startswith("gnt_")}
+    if tree_custom:
+        out["custom_properties"] = dict(sorted(tree_custom.items()))
 
     return _normalize_floats(out)
 

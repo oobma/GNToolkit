@@ -31,6 +31,14 @@ All notable changes to this project are documented in this file.
   curves/points with locations and handle types) and the importer restores
   them; the real project's four custom ramps round-trip 582/582.
   Regression: `tests/test_struct_props.py` (15, gate 5.1/5.2).
+- **Custom properties are versioned.** User-defined ID properties on node
+  trees and nodes (the real projects store `sp_version` on every tree and
+  `_nd_orig_use`/`_nd_orig_color` on many nodes) lived only in the .blend:
+  a rebuilt group lost them and editing them did not move the canonical
+  hash.  They are now serialized (`custom_properties`, omitted when
+  empty; the add-on's own `gnt_*` bookkeeping stays out), hashed and
+  restored on import (`HASH_VERSION` 13).  Regression:
+  `tests/test_custom_props.py` (12, gate 5.1/5.2).
 
 ### Fixed
 

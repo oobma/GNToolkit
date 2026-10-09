@@ -726,6 +726,25 @@ def _restore_struct_prop(node, prop_name: str, data: dict, tracker) -> None:
             f"'{struct_name}' on '{prop_name}': {exc}", level="DEBUG")
 
 
+def _apply_custom_properties(target, props, ctx: str, tracker) -> None:
+    """Restore serialized custom (ID) properties on a node or tree.
+
+    Values are plain JSON (int/float/str/bool/list/dict); Blender converts
+    lists/dicts to IDPropertyArray/Group.  The add-on's own gnt_* keys are
+    skipped defensively (the serializer never writes them).
+    """
+    if not isinstance(props, dict):
+        return
+    for key, val in props.items():
+        if str(key).startswith("gnt_") or val is None:
+            continue
+        try:
+            target[key] = val
+        except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+            tracker.record(f"{ctx}: could not set custom property '{key}': {exc}",
+                           level="DEBUG")
+
+
 def _apply_scalar_props(target, data: dict, skip: tuple = ()) -> None:
     """setattr every plain scalar of a struct dump (enums, floats, bools).
 
@@ -2224,6 +2243,8 @@ def _import_node_tree_gen(
             _log.debug(f"[DEFAULT_VALUE] Tree '{name}' property '{prop_name}': "
                   f"kept Blender default (assignment failed: {exc})")
 
+    _apply_custom_properties(ng, data.get("custom_properties"), f"Tree '{name}'", tracker)
+
     # Blender does NOT persist zero-user node groups across save/reload;
     # an imported group must survive the save, so give it a fake user.
     # (The canonical hash excludes use_fake_user, so sync is unaffected.)
@@ -2312,6 +2333,9 @@ def _import_node_tree_gen(
                     f"Node '{new_node.name}': could not set property '{prop_name}': {exc}",
                     level="DEBUG",
                 )
+
+        _apply_custom_properties(new_node, node_data.get("custom_properties"),
+                                 f"Node '{new_node.name}'", tracker)
 
         if node_type == "GeometryNodeGroup":
             ref_name = node_data.get("node_tree_reference")

@@ -309,6 +309,10 @@ def serialize_node(node, skip_output_defaults: bool = False):
             continue
         data["properties"][prop.identifier] = clean_value(val)
 
+    custom = _custom_properties(node)
+    if custom:
+        data["custom_properties"] = custom
+
     # Dispatch to type-specific serializer
     handler = _NODE_SERIALIZERS.get(node.bl_idname)
     if handler:
@@ -336,6 +340,27 @@ def serialize_node(node, skip_output_defaults: bool = False):
         data["node_tree_reference"] = node.node_tree.name if node.node_tree else None
 
     return data
+
+
+def _custom_properties(id_block) -> dict:
+    """Custom (ID) properties of a node or node tree, JSON-cleaned.
+
+    The add-on's own bookkeeping keys (``gnt_*``, e.g. the sync uuid and
+    the degraded-socket map) are excluded: they are metadata, not content.
+    """
+    props = {}
+    try:
+        keys = list(id_block.keys())
+    except (AttributeError, TypeError, RuntimeError):
+        return props
+    for key in keys:
+        if key.startswith("gnt_"):
+            continue
+        try:
+            props[key] = clean_value(id_block[key])
+        except (TypeError, AttributeError, ValueError, RuntimeError):
+            continue
+    return props
 
 
 def serialize_node_tree(tree):
@@ -549,5 +574,9 @@ def serialize_node_tree(tree):
             data["tree_properties"][prop.identifier] = clean_value(val)
         except (TypeError, AttributeError, ValueError, RuntimeError):
             pass
+
+    custom = _custom_properties(tree)
+    if custom:
+        data["custom_properties"] = custom
 
     return data
