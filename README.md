@@ -126,6 +126,23 @@ are the same ones the addon computes inside Blender, so a hook and a
 `Refresh Status` always agree. The full status check of a 582-group
 project runs in ~3 seconds.
 
+### Building the platform package - repository tool
+
+The package uploaded to the Blender Extensions Platform is reproducible
+from this repository:
+
+```bash
+python build_platform.py
+```
+
+It writes `dist/GNToolkit-<version>.zip` with the platform file set,
+removes the legacy-only source blocks, and **fails** on any compliance
+violation (module-path manipulation, threading, OS-level calls,
+system-Git use, non-pure wheels, missing imports, version drift). The
+build is deterministic (same input, same bytes). Run Blender's
+`--command extension validate` on the result if you have Blender
+available.
+
 ### Headless export — no UI
 
 The whole .blend can be exported to a folder export (one JSON per group,

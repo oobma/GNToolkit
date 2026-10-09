@@ -97,7 +97,12 @@ class JsonLock:
                 fd = None
             if fd is not None:
                 try:
-                    os.write(fd, f"{os.getpid()}\n{time.time()}".encode("utf-8"))
+                    payload = f"{os.getpid()}\n{time.time()}".encode("utf-8")
+                    while payload:
+                        written = os.write(fd, payload)
+                        if written <= 0:
+                            break
+                        payload = payload[written:]
                 finally:
                     os.close(fd)
                 return True

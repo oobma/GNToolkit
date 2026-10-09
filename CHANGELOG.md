@@ -60,6 +60,12 @@ All notable changes to this project are documented in this file.
 - **Manifest build rules** (`[build] paths_exclude_pattern`): a standard
   `blender --command extension build` from the repository now produces the
   same clean package (no system-Git engine, docs, scripts or dev files).
+- **Reproducible platform build**: `build_platform.py` (repository tool,
+  next to `gnt_check.py` in the GitHub repository) is the canonical builder
+  for the uploaded package: it applies the platform file set, strips the
+  legacy-only source blocks and enforces the compliance guards, so the
+  package can be rebuilt from a clean checkout. The build is deterministic;
+  the maintainer gate only adds Blender's `--command extension validate`.
 - README scopes `gnt_check.py` and `scripts/` as GitHub repository tools
   (they are not part of the extension package).
 - **Network timeout**: raised from 60 s to 300 s with a message that
