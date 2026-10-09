@@ -118,9 +118,13 @@ at the same tag as your addon (the canonical hasher must match) and run
 it with any Python 3.10+ interpreter; no Blender needed.
 
 Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
-errors. The canonical hashes are the same ones the addon computes inside
-Blender, so a hook and a `Refresh Status` always agree. The full status
-check of a 582-group project runs in ~3 seconds.
+errors, `3` = the `.gntsync` baseline was written by a different
+hash-algorithm version (the checker refuses to report false changes:
+use `gnt_check.py` from the add-on's release, or open the project once
+with the current add-on to re-stamp the sidecar). The canonical hashes
+are the same ones the addon computes inside Blender, so a hook and a
+`Refresh Status` always agree. The full status check of a 582-group
+project runs in ~3 seconds.
 
 ### Headless export — no UI
 

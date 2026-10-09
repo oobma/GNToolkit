@@ -47,6 +47,11 @@ All notable changes to this project are documented in this file.
   850) rendered typographic characters in reports/logs as mojibake
   (`Package import finished … ÔÇö`); every report, log and print string is
   plain ASCII now.
+- **`gnt_check.py` version guard.** The sidecar records the hash-algorithm
+  version that produced its baselines; a checker from a different release
+  now refuses to compare (exit `3`, with instructions) instead of reporting
+  every group as changed. README and the CI template document that the
+  checker and the add-on must come from the same release.
 
 ### Changed
 

@@ -21,10 +21,18 @@ Baseline sources:
     * a .gntsync sidecar next to a .blend (paths relative to the sidecar dir)
     * a flat JSON mapping group name -> canonical hash
 
+    Sidecar baselines record the hash-algorithm version that produced their
+    hashes.  Comparing a baseline with a checker from a different release
+    would report every group as changed, so the checker refuses to compare
+    (exit 3) and asks for matched versions instead.
+
 Exit codes:
     0  all groups clean (or, without a baseline, everything parsed)
     1  changes or missing groups detected
     2  usage / IO / parse errors (with --strict, unparseable files also exit 2)
+    3  baseline written by a different hash-algorithm version (update the
+       checker to the add-on's release, or open the project once with the
+       current add-on to re-stamp the baseline)
     In --cross mode, --strict exits 1 when divergent forks are found.
 """
 
@@ -71,6 +79,44 @@ def _load_audit():
 
 def _is_gntsync(path: str) -> bool:
     return path.lower().endswith(".gntsync")
+
+
+def _current_hash_version():
+    """Hash-algorithm version of this checker (from its own constants.py)."""
+    _load_hash_utils()
+    return getattr(sys.modules.get("gnt_core.constants"), "HASH_VERSION", None)
+
+
+def _baseline_version_problem(path: str) -> str | None:
+    """Return a message when a sidecar baseline cannot be compared here.
+
+    Sidecar baselines record the hash-algorithm version that produced their
+    hashes (``hash_version``); comparing across versions would report every
+    group as changed.  Flat ``{name: hash}`` baselines carry no version and
+    are left to the caller.
+    """
+    if not _is_gntsync(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict) or "tracked_groups" not in data:
+        return None
+    stored = data.get("hash_version")
+    current = _current_hash_version()
+    if stored == current:
+        return None
+    name = os.path.basename(path)
+    if not isinstance(stored, int):
+        return (f"baseline '{name}' has no hash algorithm version (old "
+                f"sidecar): open the project once with the current add-on to "
+                f"re-stamp it")
+    return (f"baseline '{name}' was written with hash algorithm v{stored} but "
+            f"this checker uses v{current}: use gnt_check.py from the same "
+            f"release as the add-on that maintains the baseline, or open the "
+            f"project once with the current add-on to re-stamp it")
 
 
 def _load_baseline(path: str, base_dir: str):
@@ -350,7 +396,10 @@ def main(argv=None) -> int:
                     "(no Blender needed).")
     ap.add_argument("target", nargs="?",
                     help="folder of per-group JSONs or a package file")
-    ap.add_argument("--baseline", help=".gntsync sidecar or flat {name: hash} JSON")
+    ap.add_argument("--baseline",
+                    help=".gntsync sidecar or flat {name: hash} JSON (a "
+                         "sidecar written by another hash-algorithm version "
+                         "exits 3)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--strict", action="store_true",
                     help="exit 2 if any file cannot be parsed")
@@ -381,6 +430,12 @@ def main(argv=None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
+
+    if args.baseline:
+        problem = _baseline_version_problem(args.baseline)
+        if problem:
+            print(f"error: {problem}")
+            return 3
 
     if args.impact:
         return run_impact(args.baseline, args.impact, args.json,

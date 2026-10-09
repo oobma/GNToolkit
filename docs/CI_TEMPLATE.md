@@ -39,7 +39,10 @@ python gnt_check.py NodeGroups --baseline project.blend.gntsync --health --stric
 ```
 
 `gnt_check.py` must come from the same tag as the addon: the canonical hashes
-must match the ones the team computes inside Blender.
+must match the ones the team computes inside Blender. The sidecar records the
+hash-algorithm version it was written with and the checker refuses to compare
+across versions (exit `3`, with instructions) instead of reporting false
+changes — so update the pinned tag here whenever the team updates the add-on.
 
 Optionally, `--impact "Group"` reports what depends on a group — directly
 and transitively — plus the objects using it as a modifier (from the
@@ -99,6 +102,10 @@ Optional extra step (add it and set your group name — informational):
   (Refresh Status inside Blender) or restore the group that was overwritten.
 - `2` — unreadable files or unresolved conflict markers (with `--strict`):
   fix the merge before it can pass.
+- `3` — the `.gntsync` baseline was written by a different hash-algorithm
+  version: pin this workflow to the tag the team uses (or open the project
+  once with the current add-on to re-stamp the sidecar). Never treat it as
+  real changes.
 
 The duplicate audit is informational (always exits `0`); the health audit
 fails under `--strict` only on hard problems (unreadable files, conflict
