@@ -22,6 +22,15 @@ All notable changes to this project are documented in this file.
   +83/-37 links; add SP - Split N-Gons (307 nodes)"). The comparison lives
   in the shared `semantic_diff.py` module (also used by `gnt_check --diff`).
   Regression: `repro_folder_flow` check 7b (gate).
+- **ColorRamp and CurveMapping contents are versioned.** The Color Ramp
+  (`ShaderNodeValToRGB`) and the Float/Vector Curve nodes keep their ramp
+  and curve data in read-only struct properties that were skipped
+  silently: editing a ramp did not move the canonical hash and the
+  importer rebuilt the node with its default content. The serializer now
+  dumps those structs (`__struct__` marker: elements with position/color,
+  curves/points with locations and handle types) and the importer restores
+  them; the real project's four custom ramps round-trip 582/582.
+  Regression: `tests/test_struct_props.py` (15, gate 5.1/5.2).
 
 ### Fixed
 
@@ -58,6 +67,21 @@ All notable changes to this project are documented in this file.
   significant digits; normal magnitudes keep the previous rounding
   (`HASH_VERSION` 11). Regression: `tests/diag_float_precision.py`
   (gate 5.1/5.2).
+- **Data-type-driven socket defaults were invisible to the hash.** The
+  active-socket table was keyed `"COLOR"`/`"VECTOR"` while Blender reports
+  `"RGBA"` (Compare) and `"FLOAT_VECTOR"` (Random Value): those active
+  sockets were treated as inactive and dropped from the canonical hash, so
+  editing the default of a color Compare or a vector Random Value did not
+  move the hash — a real false "Synced" on 5.1 and 5.2. The tables now use
+  the identifiers Blender actually reports, per node, and an unknown data
+  type keeps its sockets (a visible mismatch beats a silent drop).
+  Regression: `tests/test_socket_active_types.py` (13, gate 5.1/5.2).
+- **Tiny float components collapsed in mathutils values.** The 0e20e5d
+  precision policy covered scalars, but the contiguous mathutils branch
+  still rounded to 6 absolute decimals: a rotation socket default of 3e-7
+  (an Euler on the Rotation input of Rotate Rotation) serialized as 0.0.
+  Both branches share `_round_float` now (`HASH_VERSION` 12). Regression:
+  `tests/diag_float_precision.py` checks 10-12.
 - **`None` values stay `null`** in the serializer instead of the string
   `"None"` (latent today: the properties that can be `None` are skipped).
 - **Deterministic import order**: `dependency_ordered_names` sorts each

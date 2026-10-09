@@ -36,6 +36,21 @@ except ImportError:
     _HAS_MATHUTILS = False
 
 
+def _round_float(val: float) -> float:
+    """Shared float policy for scalars and mathutils components.
+
+    Absolute 6-decimal rounding is meaningless below 1e-4 (1e-7 -> 0.0:
+    the default Epsilon of Compare nodes), so tiny magnitudes keep 7
+    significant digits.  -0.0 is normalised to 0.0 (both are the same
+    float32 value and the roundtrip may flip the sign, which would
+    produce spurious hash differences).
+    """
+    if abs(val) < 1e-4:
+        return 0.0 if val == 0.0 else float(f"{val:.7g}")
+    rounded = round(val, 6)
+    return 0.0 if rounded == 0.0 else rounded
+
+
 def clean_value(val):
     """Convert a Python/Blender value into a JSON-safe representation."""
     if val is None:
@@ -56,16 +71,7 @@ def clean_value(val):
         return [clean_value(v) for v in val]
 
     if isinstance(val, float):
-        if abs(val) < 1e-4:
-            # Absolute 6-decimal rounding is meaningless at tiny magnitudes
-            # (1e-7 -> 0.0: the default Epsilon of Compare nodes).  Keep the
-            # value with float32-level significant digits instead.
-            return 0.0 if val == 0.0 else float(f"{val:.7g}")
-        # Normalise -0.0 (produced by round() of tiny negatives) to 0.0:
-        # both are the same float32 value and the roundtrip may flip the
-        # sign, which would otherwise produce spurious hash differences.
-        rounded = round(val, 6)
-        return 0.0 if rounded == 0.0 else rounded
+        return _round_float(val)
     if isinstance(val, (int, str, bool)):
         return val
 
@@ -74,18 +80,18 @@ def clean_value(val):
 
     if _HAS_MATHUTILS:
         if isinstance(val, Vector):
-            return [round(v, 6) for v in val]
+            return [_round_float(v) for v in val]
         if isinstance(val, Color):
-            return [round(val.r, 6), round(val.g, 6), round(val.b, 6)]
+            return [_round_float(val.r), _round_float(val.g), _round_float(val.b)]
         if isinstance(val, Euler):
-            return [round(v, 6) for v in val]
+            return [_round_float(v) for v in val]
         if isinstance(val, Quaternion):
             # 4-component vector variants (e.g. NodeSocketVectorEuler4D)
             # expose their default_value as a Quaternion (w, x, y, z).
-            return [round(val.w, 6), round(val.x, 6),
-                    round(val.y, 6), round(val.z, 6)]
+            return [_round_float(val.w), _round_float(val.x),
+                    _round_float(val.y), _round_float(val.z)]
         if isinstance(val, Matrix):
-            return [[round(v, 6) for v in row] for row in val]
+            return [[_round_float(v) for v in row] for row in val]
 
     if isinstance(val, dict):
         return {str(k): clean_value(v) for k, v in val.items()}

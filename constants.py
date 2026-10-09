@@ -47,7 +47,7 @@ NODE_PROPS_TO_SKIP: frozenset[str] = frozenset({
     'generation_items', 'capture_items', 'active_item', 'parent', 'menu_items',
     'enum_items', 'index_switch_items', 'list_items',
     # Read-only / non-serializable properties
-    'asset_data', 'is_preview',
+    'asset_data', 'is_preview', 'rna_type',
 })
 
 # Node-tree-level properties to skip during serialization.
@@ -381,7 +381,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 11
+HASH_VERSION: int = 12
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

@@ -33,15 +33,36 @@ def _is_datablock_ref(value) -> bool:
     return value is None or (isinstance(value, dict) and "name" in value)
 
 
-# data_type property -> socket type of the ACTIVE input for nodes whose
-# socket layout is data-type-driven (Compare, Random Value).
-_SOCKET_ACTIVE_TYPES = {
-    "BOOLEAN": "BOOLEAN",
-    "INT": "INT",
+# data_type property -> socket type of the ACTIVE input, per node.  The
+# identifiers are the ones Blender actually reports: Compare uses the
+# classic set (FLOAT/INT/VECTOR/RGBA/STRING...), while Random Value uses
+# the generic 5.x data-type set (FLOAT_VECTOR, not VECTOR).  The previous
+# single table was keyed "COLOR"/"VECTOR" and matched neither Compare's
+# "RGBA" nor Random Value's "FLOAT_VECTOR": those active sockets were
+# treated as inactive and silently dropped from the canonical hash — a
+# real false-"Synced" (editing the default of a color Compare or of a
+# vector Random Value did not move the hash).
+_COMPARE_ACTIVE_TYPES = {
     "FLOAT": "VALUE",
+    "INT": "INT",
+    "BOOLEAN": "BOOLEAN",
     "VECTOR": "VECTOR",
-    "COLOR": "RGBA",
+    "RGBA": "RGBA",
     "STRING": "STRING",
+    "OBJECT": "OBJECT",
+    "IMAGE": "IMAGE",
+    "COLLECTION": "COLLECTION",
+    "MATERIAL": "MATERIAL",
+    "FONT": "FONT",
+    "SOUND": "SOUND",
+}
+_RANDOM_ACTIVE_TYPES = {
+    "FLOAT": "VALUE",
+    "INT": "INT",
+    # Boolean random values expose no Min/Max sockets (5.2) and none of
+    # the 5.1 variants is boolean: None keeps nothing on both engines.
+    "BOOLEAN": None,
+    "FLOAT_VECTOR": "VECTOR",
 }
 
 
@@ -53,23 +74,31 @@ def node_socket_is_active(bl_idname: str, props: dict, sname: str, stype: str, s
     contain every variant (A_INT/A_VEC3/..., Min/Min_001/...).  The
     canonical hash and the importer apply this same rule on BOTH engines
     so fingerprints stay version-independent.
+
+    An unknown data type keeps every record: a visible cross-version
+    mismatch beats a silently dropped active socket.
     """
     if bl_idname == "FunctionNodeCompare":
-        want = _SOCKET_ACTIVE_TYPES.get(props.get("data_type"))
+        dt = props.get("data_type")
         if sname in ("A", "B"):
-            return stype == want
+            if dt not in _COMPARE_ACTIVE_TYPES:
+                return True
+            return stype == _COMPARE_ACTIVE_TYPES[dt]
         if sname == "C":
             return props.get("mode") == "DOT_PRODUCT"
         if sname == "Angle":
             return props.get("mode") == "DIRECTION"
         if sname == "Epsilon":
-            return (props.get("data_type") in ("FLOAT", "VECTOR")
+            return (dt in ("FLOAT", "VECTOR")
                     and props.get("operation") in ("EQUAL", "NOT_EQUAL"))
         return True
     if bl_idname == "FunctionNodeRandomValue":
-        want = _SOCKET_ACTIVE_TYPES.get(props.get("data_type"))
+        dt = props.get("data_type")
         if sname in ("Min", "Max"):
-            return stype == want
+            if dt not in _RANDOM_ACTIVE_TYPES:
+                return True
+            want = _RANDOM_ACTIVE_TYPES[dt]
+            return want is not None and stype == want
         if sname in ("ID", "Seed"):
             return True
         # Probability and the type variants are 5.1-only

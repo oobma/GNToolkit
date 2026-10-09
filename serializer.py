@@ -8,6 +8,8 @@ re-imported by ``gn_toolkit.importer``.
 
 from __future__ import annotations
 
+import bpy
+
 from .codec import clean_value
 from .constants import (
     NODE_PROPS_TO_SKIP,
@@ -166,6 +168,66 @@ _NON_SCALAR_SOCKET_TYPES = frozenset({
     'MATRIX', 'CLOSURE',
 })
 
+# Struct properties skipped in the embedded-struct dump (see
+# serialize_struct_value): RNA plumbing and UI-only selection.
+_STRUCT_SKIP_PROPS = frozenset({"rna_type", "select"})
+
+# Struct types whose CONTENT is dumped when they appear as a top-level
+# read-only pointer property.  The allowlist keeps the dump away from
+# object-like structs: `paired_output` on zone nodes points to a Node,
+# and dumping it would serialize a whole nested node (identifiers that
+# shift on rebuild, UI widths, ...).  Nested structs inside an allowed
+# type (ColorRampElement, CurveMap, CurveMapPoint, ...) dump freely.
+_STRUCT_DUMP_TYPES = frozenset({"ColorRamp", "CurveMapping", "CurveProfile"})
+
+
+def serialize_struct_value(val, depth: int = 0):
+    """Dump an embedded RNA struct (ColorRamp, CurveMapping, ...) to JSON.
+
+    Read-only pointer properties (the ColorRamp of a Color Ramp node, the
+    CurveMapping of the Float/Vector Curve nodes) cannot be replaced, but
+    their CONTENT is real semantics.  Without this dump they were skipped
+    silently: editing the ramp did not move the canonical hash (a false
+    "Synced") and the importer rebuilt the node with its default content.
+
+    Returns None for anything that is not a nested struct (data-block IDs,
+    scalars) or whose top-level type is not in ``_STRUCT_DUMP_TYPES``.
+    Collections and nested structs are walked recursively; the result is
+    plain, deterministic JSON (same RNA order, cleaned floats) and is
+    restored by ``importer._restore_struct_prop``.
+    """
+    if depth > 4 or val is None:
+        return None
+    if not isinstance(val, bpy.types.bpy_struct):
+        return None
+    if isinstance(val, bpy.types.ID):
+        return None
+    struct_name = val.bl_rna.identifier
+    if depth == 0 and struct_name not in _STRUCT_DUMP_TYPES:
+        return None
+    out = {"__struct__": struct_name}
+    for prop in val.bl_rna.properties:
+        if prop.identifier in _STRUCT_SKIP_PROPS:
+            continue
+        try:
+            sub_val = getattr(val, prop.identifier)
+        except (TypeError, AttributeError, ValueError, RuntimeError):
+            continue
+        if prop.type == 'COLLECTION':
+            items = []
+            for item in sub_val:
+                sub = serialize_struct_value(item, depth + 1)
+                if sub is not None:
+                    items.append(sub)
+            out[prop.identifier] = items
+        elif prop.type == 'POINTER':
+            sub = serialize_struct_value(sub_val, depth + 1)
+            if sub is not None:
+                out[prop.identifier] = sub
+        else:
+            out[prop.identifier] = clean_value(sub_val)
+    return out
+
 
 def serialize_node(node, skip_output_defaults: bool = False):
     """Serialize a single Blender node into a JSON-safe dictionary.
@@ -231,13 +293,21 @@ def serialize_node(node, skip_output_defaults: bool = False):
         data["outputs"].append(out_data)
 
     for prop in node.bl_rna.properties:
-        if prop.identifier in NODE_PROPS_TO_SKIP or prop.is_readonly:
+        if prop.identifier in NODE_PROPS_TO_SKIP:
             continue
         try:
             val = getattr(node, prop.identifier)
-            data["properties"][prop.identifier] = clean_value(val)
         except (TypeError, AttributeError, ValueError, RuntimeError):
-            pass
+            continue
+        if prop.is_readonly:
+            # Embedded read-only structs (ColorRamp, CurveMapping, ...):
+            # their content is real semantics — dump it instead of
+            # silently skipping the property.
+            dump = serialize_struct_value(val)
+            if dump is not None:
+                data["properties"][prop.identifier] = dump
+            continue
+        data["properties"][prop.identifier] = clean_value(val)
 
     # Dispatch to type-specific serializer
     handler = _NODE_SERIALIZERS.get(node.bl_idname)

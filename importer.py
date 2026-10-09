@@ -694,6 +694,99 @@ def _rebuild_menu_switch_items(node, menu_names: list, target_ids: list,
 
 
 # ---------------------------------------------------------------------------
+# Step 1 helper: Embedded struct properties (ColorRamp, CurveMapping, ...)
+# ---------------------------------------------------------------------------
+
+def _restore_struct_prop(node, prop_name: str, data: dict, tracker) -> None:
+    """Restore an embedded read-only struct property from its serialized
+    dump (see ``serializer.serialize_struct_value``)."""
+
+    try:
+        target = getattr(node, prop_name)
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return
+    struct_name = data.get("__struct__", "")
+    try:
+        if struct_name == "ColorRamp":
+            _apply_scalar_props(target, data, skip=("elements",))
+            _restore_color_ramp_elements(target, data.get("elements", []))
+        elif struct_name == "CurveMapping":
+            _apply_scalar_props(target, data, skip=("curves",))
+            _restore_curve_mapping_curves(target, data.get("curves", []))
+        else:
+            # Unknown struct: restore plain scalars, best effort.
+            _apply_scalar_props(target, data)
+            tracker.record(
+                f"Node '{node.name}': struct '{struct_name}' on "
+                f"'{prop_name}' restored best-effort (no dedicated writer)",
+                level="DEBUG")
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        tracker.record(
+            f"Node '{node.name}': could not restore struct "
+            f"'{struct_name}' on '{prop_name}': {exc}", level="DEBUG")
+
+
+def _apply_scalar_props(target, data: dict, skip: tuple = ()) -> None:
+    """setattr every plain scalar of a struct dump (enums, floats, bools).
+
+    Keys the target does not expose (e.g. an older dump restored on a
+    newer Blender) are skipped.
+    """
+    for key, val in data.items():
+        if key == "__struct__" or key in skip or isinstance(val, (dict, list)):
+            continue
+        try:
+            setattr(target, key, val)
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            pass
+
+
+def _restore_color_ramp_elements(ramp, elements: list) -> None:
+    """Rebuild a ColorRamp's elements from the serialized dump."""
+    if not elements:
+        return
+    elems = ramp.elements
+    while len(elems) > len(elements):
+        elems.remove(elems[-1])
+    while len(elems) < len(elements):
+        elems.new(0.0)
+    for element, elem_data in zip(elems, elements):
+        for key, val in elem_data.items():
+            if key == "__struct__":
+                continue
+            try:
+                setattr(element, key, val)
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                pass
+
+
+def _restore_curve_mapping_curves(mapping, curves: list) -> None:
+    """Rebuild a CurveMapping's curves/points from the serialized dump."""
+    for curve_index, curve_data in enumerate(curves):
+        if curve_index >= len(mapping.curves):
+            break
+        curve = mapping.curves[curve_index]
+        if isinstance(curve_data, dict):
+            points = curve_data.get("points", [])
+            _apply_scalar_props(curve, curve_data, skip=("points",))
+        else:
+            points = curve_data
+        pts = curve.points
+        while len(pts) > len(points):
+            pts.remove(pts[-1])
+        while len(pts) < len(points):
+            pts.new(0.0, 0.0)
+        for point, point_data in zip(pts, points):
+            for key, val in point_data.items():
+                if key in ("__struct__", "select"):
+                    continue
+                try:
+                    setattr(point, key, val)
+                except (AttributeError, TypeError, ValueError, RuntimeError):
+                    pass
+
+
+# ---------------------------------------------------------------------------
 # Step 1 helper: Node-specific configuration
 # ---------------------------------------------------------------------------
 
@@ -2187,6 +2280,9 @@ def _import_node_tree_gen(
             new_node.label = node_data["label"]
 
         for prop_name, prop_val in node_data.get("properties", {}).items():
+            if isinstance(prop_val, dict) and "__struct__" in prop_val:
+                _restore_struct_prop(new_node, prop_name, prop_val, tracker)
+                continue
             try:
                 ctx = f"Node '{new_node.name}' property '{prop_name}'"
                 final_val = unclean_value(prop_val, context=ctx)
