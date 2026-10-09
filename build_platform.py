@@ -53,7 +53,7 @@ INCLUDES = [
     "git_network_worker.py", "hash_utils.py",
     "importer.py",
     "modifier_utils.py", "operators.py",
-    "serializer.py", "socket_utils.py", "sync_manager.py",
+    "serializer.py", "semantic_diff.py", "socket_utils.py", "sync_manager.py",
     "sync_metadata.py", "sync_operators.py", "sync_ui.py", "__init__.py",
 ]
 

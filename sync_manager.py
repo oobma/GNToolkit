@@ -286,6 +286,7 @@ class SyncManager:
         self._ext_verified: dict[str, float] = {}
         self._check_remaining: list = []
         self._check_total: int = 0
+        self.commit_suggestion: str = ""
 
     # --- Load / save -------------------------------------------------------
 

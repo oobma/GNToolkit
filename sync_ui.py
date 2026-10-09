@@ -453,8 +453,8 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
 
         if not has_cache and not load_report:
             layout.label(text=f"{len(tracked)} groups tracked", icon='NODETREE')
-            layout.label(text="Click 'Refresh Status' to check", icon='INFO')
-            layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
+            layout.label(text="Statuses not checked yet", icon='INFO')
+            layout.operator("gn.sync_check", text="Check Statuses", icon='FILE_REFRESH')
             return
 
         summary = sync_manager.get_status_summary()
@@ -511,7 +511,7 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
                        icon='ERROR')
         if not prefs.expand_issues:
             layout.separator()
-            layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
+            layout.operator("gn.sync_check", text="Re-check Issues", icon='FILE_REFRESH')
             return
 
         max_rows = 200
@@ -541,7 +541,11 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
             elif status == SyncStatus.JSON_MODIFIED:
                 actions.operator("gn.sync_import", text="Pull", icon='IMPORT').sync_uuid = uid
+                actions.operator("gn.sync_export", text="Commit", icon='EXPORT').sync_uuid = uid
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
+                box.label(text="The JSON differs from the tracked baseline - "
+                               "Pull applies the JSON, Commit keeps the .blend "
+                               "version", icon='INFO')
             elif status == SyncStatus.CONFLICT:
                 actions.operator("gn.sync_resolve_json", text="Keep JSON", icon='FILE_REFRESH').sync_uuid = uid
                 actions.operator("gn.sync_resolve_blend", text="Keep Blend", icon='LIGHT').sync_uuid = uid

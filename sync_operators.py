@@ -14,9 +14,10 @@ from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProp
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import ADDON_VERSION
+from .serializer import serialize_node_tree
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
-    group_library_path,
+    group_library_path, resolve_json_path,
 )
 from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
 
@@ -54,8 +55,75 @@ def _untracked_deps_note() -> str:
         return ""
     if not count:
         return ""
-    return (f" — warning: {count} untracked dependency group(s) were NOT "
-            "committed (Sync Issues → Track)")
+    return (f" - warning: {count} untracked dependency group(s) were NOT "
+            "committed (Sync Issues -> Track)")
+
+
+def _refresh_after_sync_change(context=None):
+    """Recalculate statuses and git state after tracking/commit operations.
+
+    The panels draw from caches; without this the user sees stale numbers
+    until pressing Refresh Status manually.
+    """
+    sync_manager.invalidate_cache()
+    sync_manager.check_all_statuses()
+    try:
+        from .git_integration import invalidate_git_state
+        invalidate_git_state()
+    except Exception:
+        pass
+    if context is not None:
+        try:
+            for area in context.screen.areas:
+                area.tag_redraw()
+        except Exception:
+            pass
+
+
+def _collect_commit_suggestion():
+    """Build a compact message describing what a commit is about to write.
+
+    Stored on the sync manager so "Git Commit…" can pre-fill its message.
+    """
+    from . import semantic_diff
+    try:
+        statuses = sync_manager.check_all_statuses()
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+        changed = []
+        new_groups = []
+        for uid, status in statuses.items():
+            if status == SyncStatus.SYNCED:
+                continue
+            info = tracked.get(uid)
+            if not info:
+                continue
+            blend_name = info.get("blend_name", "")
+            tree = bpy.data.node_groups.get(blend_name)
+            if tree is None:
+                continue
+            entry = None
+            json_path = resolve_json_path(info.get("json_path", ""),
+                                          sync_manager._blend_dir())
+            if json_path and os.path.isfile(json_path):
+                data = read_json_tolerant(json_path)
+                if isinstance(data, dict):
+                    if data.get("type") == "GN_UNIFIED_PACKAGE":
+                        entry = data.get("node_groups", {}).get(blend_name)
+                    elif "nodes" in data:
+                        entry = data
+            if entry is None:
+                new_groups.append((blend_name, len(tree.nodes)))
+                continue
+            result = semantic_diff.compare_groups(entry,
+                                                  serialize_node_tree(tree))
+            if result is not None:
+                changed.append(semantic_diff.summarize_group(blend_name,
+                                                             result))
+        message = semantic_diff.suggest_message(changed, new_groups)
+    except Exception:
+        message = ""
+    sync_manager.commit_suggestion = message
+    return message
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +205,7 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, f"Failed to link: {e}")
             return {'CANCELLED'}
 
+        _refresh_after_sync_change(context)
         return {'FINISHED'}
 
 
@@ -201,8 +270,7 @@ class GN_OT_SyncUnlinkAll(bpy.types.Operator):
     def execute(self, context):
         n = sync_manager.unlink_all_groups()
         sync_manager.save()
-        for area in context.screen.areas:
-            area.tag_redraw()
+        _refresh_after_sync_change(context)
         self.report({'INFO'}, f"Stopped tracking {n} groups")
         return {'FINISHED'}
 
@@ -272,15 +340,16 @@ class GN_OT_SyncExport(bpy.types.Operator):
             return {'CANCELLED'}
 
         try:
-            success = sync_manager.export_to_json(self.sync_uuid)
+            _collect_commit_suggestion()
+            force = (sync_manager.check_status(self.sync_uuid)
+                     == SyncStatus.JSON_MODIFIED)
+            success = sync_manager.export_to_json(self.sync_uuid, force=force)
         except PermissionError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         if success:
             sync_manager.save()
-            # Force UI redraw so issue disappears immediately
-            for area in context.screen.areas:
-                area.tag_redraw()
+            _refresh_after_sync_change(context)
             note = _untracked_deps_note()
             if note:
                 self.report({'WARNING'}, "Commit to JSON completed" + note)
@@ -604,7 +673,10 @@ class GN_OT_GitCommit(bpy.types.Operator):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        return context.window_manager.invoke_props_dialog(self, width=400)
+        suggestion = getattr(sync_manager, "commit_suggestion", "")
+        if suggestion:
+            self.message = suggestion[:300]
+        return context.window_manager.invoke_props_dialog(self, width=520)
 
     def execute(self, context):
         if not self.repo or not os.path.isdir(self.repo):
@@ -745,9 +817,7 @@ class GN_OT_SyncTrackDeps(bpy.types.Operator):
         only = [self.group_name] if self.group_name else None
         result = sync_manager.track_untracked_dependencies(only_names=only)
         sync_manager.save()
-        sync_manager.invalidate_cache()
-        for area in context.screen.areas:
-            area.tag_redraw()
+        _refresh_after_sync_change(context)
         if result["errors"]:
             self.report({'WARNING'},
                         f"Tracked {result['tracked']} dependency group(s), "
@@ -846,6 +916,7 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, f"Batch link failed: {e}")
             return {'CANCELLED'}
 
+        _refresh_after_sync_change(context)
         return {'FINISHED'}
 
 
@@ -976,7 +1047,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
 
         sync_manager._dirty = True
         sync_manager.save()
-        sync_manager.invalidate_cache()
+        _refresh_after_sync_change(context)
 
         msg = (f"Tracked {len(linked_by_name)} group(s) from folder, "
                f"{skipped} skipped (already tracked or not in .blend)")
@@ -1028,12 +1099,11 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
 
         context.window_manager.progress_begin(0, len(tracked))
         try:
+            _collect_commit_suggestion()
             result = sync_manager.export_all(force=self.force, context=context)
             sync_manager.save()
             context.window_manager.progress_end()
-            # Force UI redraw so issues disappear immediately
-            for area in context.screen.areas:
-                area.tag_redraw()
+            _refresh_after_sync_change(context)
             note = _untracked_deps_note()
             self.report({'WARNING' if note else 'INFO'},
                         f"Committed {result['exported']} groups, "
@@ -1080,12 +1150,11 @@ class GN_OT_SyncExportModified(bpy.types.Operator):
 
         context.window_manager.progress_begin(0, len(tracked))
         try:
+            _collect_commit_suggestion()
             result = sync_manager.export_all_modified(force=True, context=context)
             sync_manager.save()
             context.window_manager.progress_end()
-            # Force UI redraw so issues disappear immediately
-            for area in context.screen.areas:
-                area.tag_redraw()
+            _refresh_after_sync_change(context)
             note = _untracked_deps_note()
             self.report({'WARNING' if note else 'INFO'},
                         f"Committed {result['exported']} groups, "
@@ -1344,8 +1413,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
         sync_manager.save()
 
         # Refresh status cache
-        sync_manager.invalidate_cache()
-        sync_manager.check_all_statuses()
+        _refresh_after_sync_change(context)
 
         msg = f"Tracking started: {linked} groups, {skipped} skipped (already tracked or not in .blend)"
         if linked_skipped:
@@ -1871,19 +1939,22 @@ class GN_CommitReview(bpy.types.PropertyGroup):
 
 
 def _populate_commit_review() -> dict:
-    """Fill the scene review collection with the modified/conflicted groups.
+    """Fill the scene review collection with the modified/conflicted/diverged
+    groups.
 
     Excludes ignored groups.  Also lists every untracked dependency group
-    (default: track it).  Returns ``{"modified": n, "conflicts": m}``.
+    (default: track it).  Returns ``{"modified": n, "conflicts": m,
+    "diverged": k}``.
     """
     from .sync_metadata import is_ignored
     review = bpy.context.scene.gnt_commit_review
     review.items.clear()
     review.deps.clear()
-    counts = {"modified": 0, "conflicts": 0}
+    counts = {"modified": 0, "conflicts": 0, "diverged": 0}
     statuses = sync_manager.check_all_statuses()
     for uid, status in statuses.items():
-        if status not in (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT):
+        if status not in (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT,
+                          SyncStatus.JSON_MODIFIED):
             continue
         if is_ignored(sync_manager.metadata, uid):
             continue
@@ -1892,12 +1963,19 @@ def _populate_commit_review() -> dict:
         item.sync_uuid = uid
         item.blend_name = info.get("blend_name", "?")
         item.is_conflict = status == SyncStatus.CONFLICT
-        # Conflicts default to Skip: the JSON changed externally, so a
-        # force-commit overwrites it — that must be a conscious choice.
-        item.choice = 'SKIP' if item.is_conflict else 'KEEP_BLEND'
         if item.is_conflict:
+            # Conflicts default to Skip: the JSON changed externally, so a
+            # force-commit overwrites it - that must be a conscious choice.
+            item.choice = 'SKIP'
             counts["conflicts"] += 1
+        elif status == SyncStatus.JSON_MODIFIED:
+            # The JSON differs from the tracked baseline (e.g. after
+            # adopting a base): the default is to leave it alone; Keep
+            # Blend commits the .blend version.
+            item.choice = 'SKIP'
+            counts["diverged"] += 1
         else:
+            item.choice = 'KEEP_BLEND'
             counts["modified"] += 1
     for dep in sync_manager.find_untracked_dependencies():
         item = review.deps.add()
@@ -1921,7 +1999,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
         _populate_commit_review()
         review = context.scene.gnt_commit_review
         if not review.items and not review.deps:
-            self.report({'INFO'}, "No locally edited groups to commit")
+            self.report({'INFO'}, "No groups to review")
             return {'CANCELLED'}
         return context.window_manager.invoke_props_dialog(self, width=480)
 
@@ -1954,6 +2032,7 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
 
     def execute(self, context):
         review = context.scene.gnt_commit_review
+        _collect_commit_suggestion()
         to_track = [dep.group_name for dep in review.deps if dep.track]
         untracked_left = len(review.deps) - len(to_track)
         tracked_new = 0
@@ -1976,7 +2055,9 @@ class GN_OT_SyncCommitReview(bpy.types.Operator):
                 skipped += 1
                 continue
             if item.choice == 'KEEP_BLEND':
-                ok = sync_manager.export_to_json(uid, force=item.is_conflict)
+                # The user explicitly chose to keep the .blend version,
+                # which may overwrite a JSON that changed externally.
+                ok = sync_manager.export_to_json(uid, force=True)
             else:
                 tracker = sync_manager.import_from_json(uid, context)
                 ok = not tracker.has_issues

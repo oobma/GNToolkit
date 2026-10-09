@@ -16,9 +16,32 @@ All notable changes to this project are documented in this file.
   Motivated by live feedback ("human readable commits" for large
   single-tree projects). Regression: `tests/test_gnt_check_diff.py`
   (9, gate).
+- **Commit-message suggestion.** "Git Commit…" pre-fills its message from
+  the same semantic comparison: groups changed since their JSON plus the
+  new ones, with compact counts ("SP - SubD to Compound: +37/-4 nodes,
+  +83/-37 links; add SP - Split N-Gons (307 nodes)"). The comparison lives
+  in the shared `semantic_diff.py` module (also used by `gnt_check --diff`).
+  Regression: `repro_folder_flow` check 7b (gate).
 
 ### Fixed
 
+- **Panels refresh automatically after sync actions.** Track Group, Track
+  All, Track Folder, Track deps, Commit All, Commit Modified, Commit to
+  JSON, the commit review and Stop Tracking now recalculate statuses and
+  invalidate the git state, so the Sync/Collaboration panels show the new
+  numbers immediately instead of keeping stale values (and the subtle
+  "No status yet" hint) until a manual Refresh Status.
+- **Canonical folder export.** "Export package" with folder structure now
+  writes one-group packages (the same shape the commits write), so the
+  first commit after a folder export no longer rewrites every file: a
+  one-group change is a one-file diff (previously the whole folder was
+  re-serialized into the package shape). Regression: `repro_folder_flow`
+  check 2b (gate).
+- **"Changed in JSON" rows offer "Commit".** The issue row for a group
+  whose JSON differs from the tracked baseline now includes a Commit button
+  (keep the .blend version; the safety guard is bypassed for this explicit
+  action) plus a line explaining the direction ("Pull applies the JSON,
+  Commit keeps the .blend version").
 - **Enum-flag properties are serialized in a stable order.** RNA enum-flag
   properties (e.g. the `mode` of a "Set Handle Type" node) come back as
   Python sets, whose iteration order changes between processes (string hash
@@ -54,6 +77,13 @@ All notable changes to this project are documented in this file.
   `tests/diag_export_determinism.py` exports the real 582-group project in
   two Blender processes with different `PYTHONHASHSEED` values and requires
   all 638 files to be byte-identical.
+- **Distinct buttons in Sync Issues**: the panel no longer repeats the
+  "Refresh Status" label three times; it offers "Check Statuses" (nothing
+  checked yet) and "Re-check Issues" (collapsed list / bottom), leaving the
+  main "Refresh Status" in the Sync panel.
+- **Commit with Review also lists diverged groups**: groups whose JSON
+  differs from the tracked baseline appear with the default *Skip* (a
+  conscious *Keep Blend* commits the .blend version over the JSON).
 
 ## [0.3.1] - 2026-10-08
 

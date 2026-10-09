@@ -30,7 +30,7 @@ from .modifier_utils import (
 )
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
-from .sync_manager import SyncManager
+from .sync_manager import SyncManager, _ensure_package_shape
 
 _log = logging.getLogger("GNToolkit.operators")
 
@@ -210,7 +210,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 for i, tree in enumerate(trees):
                     context.window_manager.progress_update(i)
                     context.workspace.status_text_set(f"Exporting: {tree.name}")
-                    data = serialize_node_tree(tree)
+                    data = _ensure_package_shape(serialize_node_tree(tree))
                     stem = ng_names.allocate(tree.name, "node_group")
                     write_json_file(os.path.join(ng_dir, f"{stem}.json"),
                                     data, dump_args)
