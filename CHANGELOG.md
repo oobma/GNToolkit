@@ -58,8 +58,11 @@ All notable changes to this project are documented in this file.
 - **Manifest copyright** now credits the authors of the bundled wheels
   (dulwich, keyring and dependencies) alongside the add-on author.
 - **Manifest build rules** (`[build] paths_exclude_pattern`): a standard
-  `blender --command extension build` from the repository now produces the
-  same clean package (no system-Git engine, docs, scripts or dev files).
+  `blender --command extension build` from the repository no longer packs
+  the system-Git engine, docs, scripts, tests, tools or dev files. The
+  uploaded package is still built with `build_platform.py`, which
+  additionally strips the legacy-only code blocks and enforces the
+  compliance guards (Blender's build cannot remove code blocks).
 - **Reproducible platform build**: `build_platform.py` (repository tool,
   next to `gnt_check.py` in the GitHub repository) is the canonical builder
   for the uploaded package: it applies the platform file set, strips the

@@ -13,10 +13,16 @@ What it enforces (any problem fails the build):
     removed from the shipped sources (the GitHub add-on build keeps them);
   * compliance guards: no ``sys.path``/``sys.modules`` writes, no
     threading/queue imports, no ctypes, no OS-level calls, no direct
-    network/browser access, no bpy monkey-patching, no system-Git use;
+    network/browser access, no bpy monkey-patching, no system-Git use, no
+    dynamic code execution, no funding/promotion links, no references to
+    other extensions;
+  * manifest constraints beyond Blender's own validator: required fields
+    non-empty, no "Blender" in the name, tagline and permission reasons
+    within the terse-description limits, ``blender_version_min`` >= 4.2.0,
+    the reserved ``[build.generated]`` table not declared;
   * every relative import is shipped (``git_backend_git`` is optional);
-  * the wheels set is pure (``*-py3-none-any.whl``), complete and in sync
-    with the manifest.
+  * the wheels set is pure (``*-py3-none-any.whl``), complete, in sync with
+    the manifest, and contains no compiled files or unsafe paths.
 
 Usage:
     python build_platform.py [--out DIR]
@@ -85,7 +91,18 @@ FORBIDDEN = [
      "direct network/browser access"),
     (r"setattr\s*\(\s*bpy\s*\.", "patches bpy"),
     (r'shutil\.which\(\s*[\'"]git[\'"]\s*\)', "uses the system Git"),
+    (r"\beval\(|\bexec\(|pickle\.loads|__import__\(",
+     "dynamic code execution"),
+    (r"patreon|gumroad|paypal|ko-fi|buymeacoffee|donat|blendermarket"
+     r"|superhive", "funding/promotion link (ToS 6.1)"),
+    (r"bl_ext\.", "references another extension's namespace (ToS 5.3)"),
 ]
+
+TERSE_MAX = 64
+TERSE_END = ".!?:;,"
+
+WHEEL_BINARY_SUFFIXES = (".so", ".pyd", ".dll", ".dylib", ".exe", ".pyc",
+                         ".pyo", ".bin")
 
 
 def fail(message: str):
@@ -183,6 +200,60 @@ def check_wheels() -> None:
              + ", ".join(manifest_wheels))
 
 
+def check_manifest() -> None:
+    manifest = read_text("blender_manifest.toml")
+
+    def field(name):
+        match = re.search(rf'(?m)^{name}\s*=\s*"([^"]*)"', manifest)
+        return match.group(1) if match else None
+
+    for key in ("schema_version", "id", "name", "version", "tagline",
+                "maintainer", "type", "blender_version_min"):
+        if not field(key):
+            fail(f"manifest field missing or empty: {key}")
+
+    license_match = re.search(r'(?m)^license\s*=\s*\[([^\]]*)\]', manifest)
+    if not license_match or not license_match.group(1).strip():
+        fail("manifest license list missing or empty")
+
+    if re.search(r"(?i)blender", field("name")):
+        fail("manifest name must not contain 'Blender' (ToS 2.1)")
+
+    tagline = field("tagline")
+    if len(tagline) > TERSE_MAX or tagline[-1] in TERSE_END:
+        fail(f"tagline must be <= {TERSE_MAX} chars without end punctuation")
+
+    version_min = field("blender_version_min")
+    try:
+        parts = tuple(int(p) for p in version_min.split("."))
+    except ValueError:
+        fail(f"blender_version_min is not a version: {version_min!r}")
+    if parts < (4, 2, 0):
+        fail("blender_version_min must be at least 4.2.0")
+
+    perms = re.findall(r'(?m)^(files|network|clipboard|camera|microphone)'
+                       r'\s*=\s*"([^"]*)"', manifest)
+    if not perms:
+        fail("manifest declares no [permissions] entries")
+    for _key, reason in perms:
+        if len(reason) > TERSE_MAX or reason[-1] in TERSE_END:
+            fail(f"permission reason must be <= {TERSE_MAX} chars without "
+                 f"end punctuation: {reason!r}")
+
+    if "build.generated" in manifest:
+        fail("manifest declares the reserved [build.generated] table")
+
+
+def check_wheel_contents() -> None:
+    for name in EXPECTED_WHEELS:
+        with zipfile.ZipFile(ROOT / "wheels" / name) as zf:
+            for entry in zf.namelist():
+                if entry.startswith("/") or ".." in entry:
+                    fail(f"{name}: unsafe wheel path {entry!r}")
+                if entry.lower().endswith(WHEEL_BINARY_SUFFIXES):
+                    fail(f"{name}: non-Python file in a pure wheel: {entry}")
+
+
 def build_zip(version: str, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     zip_path = out_dir / f"GNToolkit-{version}.zip"
@@ -216,6 +287,8 @@ def main(argv=None) -> int:
     check_imports()
     check_compliance()
     check_wheels()
+    check_manifest()
+    check_wheel_contents()
     zip_path = build_zip(version, Path(args.out))
     print(f"Built {zip_path} ({len(INCLUDES)} files + "
           f"{len(EXPECTED_WHEELS)} wheels, version {version})")
