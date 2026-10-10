@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-10
+
 ### Added
 
 - **`gnt_check.py --diff A B`**: readable semantic summary of what changed
