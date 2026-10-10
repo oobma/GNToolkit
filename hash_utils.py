@@ -20,6 +20,7 @@ from .constants import (
     HASH_EXCLUDE_SOCKET_PROPS,
     HASH_EXCLUDE_INTERFACE_PROPS,
     NON_RECREATABLE_FALLBACKS,
+    parse_interface_socket_variant,
 )
 
 
@@ -120,23 +121,59 @@ def node_socket_is_active(bl_idname: str, props: dict, sname: str, stype: str, s
     return True
 
 
-# The importer creates 2D vector interface sockets as NodeSocketVector2D
-# (NodeSocketVectorTranslation2D is not accepted by interface.new_socket);
-# the two types are functionally identical and must hash the same.
-_2D_VECTOR_SOCKETS = frozenset({
-    "NodeSocketVector2D",
-    "NodeSocketVectorTranslation2D",
-})
+def _canonicalize_interface_socket_entry(it: dict) -> None:
+    """Fold an interface socket entry to its canonical identity.
 
+    Blender 5.2 spells the same socket either as a variant CLASS
+    (NodeSocketFloatAngle, NodeSocketVectorXYZ, ...) or as its base class
+    with a subtype/dimensions property.  The importer recreates variant
+    classes from a base type plus properties and Blender keeps the recast
+    class, so source and rebuilt trees can disagree on ``bl_socket_idname``
+    without any content change (the 2D variants accepted by
+    ``interface.new_socket`` are a subset of those classes).  Canonical
+    form: the base class name, with ``dimensions``/``subtype`` derived
+    from the variant name when the class encodes them.
 
-def _normalize_interface_socket_type(bl_socket_idname: str) -> str:
-    if bl_socket_idname in _2D_VECTOR_SOCKETS:
-        return "NodeSocketVector2D"
-    # Variants that exist as classes but cannot be built by the Python API
-    # (Unsigned, integer vectors) are recreated as their base type; hash
-    # both sides the same so sync does not report phantom divergence.  The
-    # import report warns about the degradation.
-    return NON_RECREATABLE_FALLBACKS.get(bl_socket_idname, bl_socket_idname)
+    Variants that exist as classes but cannot be built through the Python
+    API (Unsigned, integer vectors) are recreated as their base type and
+    hash as that fallback only, so sync does not report phantom
+    divergence; the import report warns about the degradation.
+    """
+    raw = it.get("bl_socket_idname")
+    if not isinstance(raw, str):
+        return
+    fallback = NON_RECREATABLE_FALLBACKS.get(raw)
+    if fallback is not None:
+        it["bl_socket_idname"] = fallback
+        it.pop("properties", None)
+        it.pop("socket_type", None)
+        it.pop("enum_items", None)
+        return
+    variant = parse_interface_socket_variant(raw)
+    if variant is None:
+        return
+    base, dimensions, subtype = variant
+    it["bl_socket_idname"] = base
+    if (dimensions is not None and dimensions != 3) or subtype is not None:
+        props = it.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            it["properties"] = props
+        if dimensions is not None and dimensions != 3:
+            props["dimensions"] = dimensions
+        if subtype is not None:
+            props["subtype"] = subtype
+    # A legacy default can carry more components than the socket's current
+    # dimension (a Vector edited from 3D to 2D keeps 3 floats in the blob);
+    # the rebuild normalises the array to the dimension.  Truncate so both
+    # sides hash equal — the RNA oracle declares the same equivalence.
+    props = it.get("properties")
+    if isinstance(props, dict):
+        dims = props.get("dimensions")
+        dv = props.get("default_value")
+        if (isinstance(dims, int) and not isinstance(dims, bool) and dims > 0
+                and isinstance(dv, list) and len(dv) > dims):
+            props["default_value"] = dv[:dims]
 
 
 def _normalize_floats(value):
@@ -192,15 +229,7 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             parent = it.pop("parent", None)
             if parent:
                 it["parent"] = parent
-            if "bl_socket_idname" in it:
-                raw_name = it["bl_socket_idname"]
-                it["bl_socket_idname"] = _normalize_interface_socket_type(raw_name)
-                if raw_name in NON_RECREATABLE_FALLBACKS:
-                    # The socket cannot be rebuilt (properties and defaults
-                    # are lost); hash it as its fallback name only.
-                    it.pop("properties", None)
-                    it.pop("socket_type", None)
-                    it.pop("enum_items", None)
+            _canonicalize_interface_socket_entry(it)
             if "properties" in it and isinstance(it["properties"], dict):
                 it["properties"] = {
                     k: v for k, v in it["properties"].items()
@@ -224,11 +253,7 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             for item in lst:
                 it = dict(item)
                 it.pop("identifier", None)
-                if "bl_socket_idname" in it:
-                    raw_name = it["bl_socket_idname"]
-                    it["bl_socket_idname"] = _normalize_interface_socket_type(raw_name)
-                    if raw_name in NON_RECREATABLE_FALLBACKS:
-                        it.pop("properties", None)
+                _canonicalize_interface_socket_entry(it)
                 if "properties" in it and isinstance(it["properties"], dict):
                     it["properties"] = {
                         k: v for k, v in it["properties"].items()

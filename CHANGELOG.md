@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file.
   Distance, …) or a Vector with Translation/XYZ was written to the JSON
   without it, so the rebuilt group degraded to the base type. The read now
   uses the RNA attribute (the earlier 5.2 fix covered subtype *classes*
-  only, via the class-name remap). `HASH_VERSION` 14.
+  only, via the class-name remap).
 - **A vector dimension edited on a base class survives the roundtrip.** A
   plain Vector socket set to 2D (no `...2D` class name) lost its dimension
   on import: `dimensions` was skipped on the premise that the class name
@@ -24,6 +24,17 @@ All notable changes to this project are documented in this file.
   Blender re-synchronises the proxy sockets whenever the interface changes
   during wiring and post-sync, resetting their per-instance `hide` state
   after the defaults pass; a late pass re-applies it (7 real groups).
+- **The canonical hash folds socket-class variants to their base form.**
+  The same interface socket can be spelled as a 5.2 variant class
+  (`NodeSocketFloatAngle`, `NodeSocketVectorXYZ`) or as its base class
+  plus a subtype/dimensions property; the importer recreates variants
+  from the base type and Blender keeps the recast class, so source and
+  rebuilt trees disagreed on `bl_socket_idname` and the folder-recreation
+  gate hashed identical content as different (41 groups). The
+  canonicaliser now folds both spellings to base + `dimensions`/`subtype`
+  — the same equivalence the RNA oracle declares in its contract.
+  `HASH_VERSION` 15 (includes the subtype/dimensions serialization above;
+  14 was never released).
 
 ### Verified
 
