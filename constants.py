@@ -106,8 +106,6 @@ EXCLUSIONS: dict[str, dict[str, str]] = {
         "is_inspect_output": "Blender 5.0+ derived/UI-specific socket state.",
         "layer_selection_field": "Blender 5.0+ derived/UI-specific socket "
                                  "state.",
-        "dimensions": "Vector dimension is conveyed by the socket class/"
-                      "remap (2D variants).",
         "select": "Editor selection state.",
     },
     "tree": {
@@ -460,7 +458,7 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # meaningless, and SyncManager._ensure_hash_version() silently re-stamps
 # them (preserving any real divergence) instead of reporting a spurious
 # "everything changed".
-HASH_VERSION: int = 13
+HASH_VERSION: int = 14
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

@@ -470,9 +470,28 @@ def serialize_node_tree(tree):
                 # full subtype enum is accepted by the setter.
                 if prop.identifier == 'subtype' and prop.type == 'ENUM':
                     try:
-                        current = item.get(prop.identifier)
+                        current = getattr(item, prop.identifier, None)
                         if current and current != 'NONE':
                             i_data["properties"][prop.identifier] = current
+                    except Exception:
+                        pass
+                    continue
+                if prop.identifier == 'dimensions':
+                    # Encoded variants (NodeSocketVector2D, ...2D) convey the
+                    # dimension in the socket class name; a dimension edited
+                    # on a BASE class (plain NodeSocketVector set to 2) does
+                    # not, so it is serialized explicitly and restored by the
+                    # importer's property pass.
+                    try:
+                        dims = getattr(item, 'dimensions', None)
+                        if dims is not None:
+                            variant = parse_interface_socket_variant(
+                                i_data.get('bl_socket_idname') or '')
+                            variant_dims = None
+                            if variant and len(variant) > 1 and variant[1] is not None:
+                                variant_dims = int(variant[1])
+                            if int(dims) != 3 and variant_dims != int(dims):
+                                i_data["properties"][prop.identifier] = int(dims)
                     except Exception:
                         pass
                     continue
@@ -500,7 +519,7 @@ def serialize_node_tree(tree):
                         # validate against rna_prop.enum_items — Blender
                         # 5.2 reports only ["DEFAULT"] there.
                         try:
-                            current = item.get('subtype')
+                            current = getattr(item, 'subtype', None)
                             if current and current != 'NONE':
                                 s_data['subtype'] = current
                         except Exception:

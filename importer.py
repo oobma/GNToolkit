@@ -492,6 +492,17 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
         except Exception:
             tracker.record(f"Could not set subtype on '{i_data.get('name')}'", level="DEBUG")
 
+    # A dimension edited on a BASE socket class (plain NodeSocketVector set
+    # to 2) is serialized explicitly; encoded variants carry it in the class
+    # name and are built from the remap path instead.  Set before
+    # default_value (set last) so the default keeps its 3-component storage.
+    dims_val = props.get("dimensions")
+    if dims_val is not None and hasattr(new_item, 'dimensions'):
+        try:
+            setattr(new_item, 'dimensions', int(dims_val))
+        except Exception:
+            tracker.record(f"Could not set dimensions on '{i_data.get('name')}'", level="DEBUG")
+
     for p_name in OPTIONAL_SOCKET_PROPS:
         # 'subtype' is handled explicitly above with empty-string guard;
         # skip it here to avoid overwriting the guarded assignment.
@@ -1973,6 +1984,71 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
                     )
 
 
+def _reapply_interface_socket_hide(data: dict, node_map: dict,
+                                   interface_map: dict,
+                                   group_interface_maps: dict | None,
+                                   tracker: ImportErrorTracker) -> None:
+    """Re-apply socket ``hide`` on interface-driven sockets after step 5.
+
+    The sockets of NodeGroupInput/NodeGroupOutput proxies and of Group nodes
+    are re-synchronised by Blender whenever the interface changes during
+    wiring and post-sync, which resets their per-instance ``hide`` state.
+    This pass restores the serialized value on those sockets only (regular
+    nodes keep the value applied in the earlier default pass).
+    """
+    if group_interface_maps is None:
+        group_interface_maps = {}
+    for node_data in data["nodes"]:
+        node_name = node_data.get("name")
+        if node_name not in node_map:
+            continue
+        node = node_map[node_name]
+        blid = node.bl_idname
+        if blid == "GeometryNodeGroup":
+            ref_map = group_interface_maps.get(
+                getattr(getattr(node, 'node_tree', None), 'name', ''), {})
+        elif blid in ("NodeGroupInput", "NodeGroupOutput"):
+            ref_map = interface_map or {}
+        else:
+            continue
+        for direction, sockets in (("inputs", node.inputs),
+                                   ("outputs", node.outputs)):
+            name_counts = {}
+            for s_data in node_data.get(direction, []):
+                if "hide" not in s_data:
+                    continue
+                sname = s_data.get("name", "")
+                sid = s_data.get("identifier", "")
+                nidx = name_counts.get(sname, 0)
+                name_counts[sname] = nidx + 1
+                sock = None
+                if ref_map and sid:
+                    mapped = ref_map.get(sid)
+                    if mapped:
+                        sock = next((s for s in sockets
+                                     if s.identifier == mapped), None)
+                if sock is None:
+                    cands = [s for s in sockets if s.name == sname]
+                    if 0 <= nidx < len(cands):
+                        sock = cands[nidx]
+                    elif cands:
+                        sock = cands[0]
+                if sock is None or not hasattr(sock, "hide"):
+                    continue
+                try:
+                    want = bool(s_data["hide"])
+                    if bool(sock.hide) != want:
+                        sock.hide = want
+                except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+                    tracker.record(
+                        f"Node '{node_name}' {direction[:-1]} '{sname}': "
+                        f"could not re-apply hide: {exc}", level="DEBUG")
+                except Exception as exc:
+                    tracker.record(
+                        f"Node '{node_name}' {direction[:-1]} '{sname}': "
+                        f"could not re-apply hide: {exc}", level="DEBUG")
+
+
 # ---------------------------------------------------------------------------
 # Step 6 helper: Final Menu defaults verification
 # ---------------------------------------------------------------------------
@@ -2505,6 +2581,13 @@ def _import_node_tree_gen(
     # (like Self Side = 1 instead of the interface default 0) are
     # preserved.
     _reapply_group_node_defaults(data, node_map, group_interface_maps, tracker)
+
+    # --- Step 5b: Re-apply hide on interface-driven sockets ---
+    # NodeGroupInput/Output proxies and Group node sockets are re-synced by
+    # Blender during interface changes, which resets their per-instance
+    # ``hide`` state (observed on 7 real groups, 2026-10-10).
+    _reapply_interface_socket_hide(data, node_map, interface_map,
+                                   group_interface_maps, tracker)
 
     # --- Step 6: Final Menu defaults verification ---
     # Safety net for NodeSocketMenu default_values that weren't set by

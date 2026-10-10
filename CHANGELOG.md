@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Interface socket subtypes set on a base class are serialized.** The
+  serializer read `subtype` through the ID-property getter
+  (`item.get('subtype')`), which raises on interface items and was
+  swallowed: a plain Float socket with a manually chosen subtype (Angle,
+  Distance, …) or a Vector with Translation/XYZ was written to the JSON
+  without it, so the rebuilt group degraded to the base type. The read now
+  uses the RNA attribute (the earlier 5.2 fix covered subtype *classes*
+  only, via the class-name remap). `HASH_VERSION` 14.
+- **A vector dimension edited on a base class survives the roundtrip.** A
+  plain Vector socket set to 2D (no `...2D` class name) lost its dimension
+  on import: `dimensions` was skipped on the premise that the class name
+  always carries it. It is now serialized explicitly when the class name
+  does not encode it, and restored by the importer. Regression: both
+  covered by the RNA oracle on the real 582 groups.
+- **Socket `hide` on Group Input/Output proxies survives the roundtrip.**
+  Blender re-synchronises the proxy sockets whenever the interface changes
+  during wiring and post-sync, resetting their per-instance `hide` state
+  after the defaults pass; a late pass re-applies it (7 real groups).
+
+### Verified
+
+- **Independent RNA oracle in the release gate.** A generic RNA walker
+  (no GNToolkit imports, no project lists) dumps source and rebuilt
+  GeometryNodeTrees and a pure-Python comparator diffs them against the
+  declarative contract S v1 (every exclusion carries its rationale).
+  Runs on the 5.2 all-nodes fixture and the real 582-group project, with
+  an automated double negative control (mutated default and deleted tree/
+  node custom properties must be detected). Currently: zero differences
+  outside S on both corpora. Test-only artifact (`tests/diag_rna_oracle.py`,
+  local), four gate steps.
+
 ## [0.3.2] - 2026-10-10
 
 ### Added
