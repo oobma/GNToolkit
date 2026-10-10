@@ -16,6 +16,7 @@ from .constants import (
     TREE_PROPS_TO_SKIP,
     INTERFACE_SKIP_PROPS,
     OPTIONAL_SOCKET_PROPS,
+    STRUCT_DUMP_TYPES as _STRUCT_DUMP_TYPES,
     parse_interface_socket_variant,
 )
 
@@ -172,13 +173,10 @@ _NON_SCALAR_SOCKET_TYPES = frozenset({
 # serialize_struct_value): RNA plumbing and UI-only selection.
 _STRUCT_SKIP_PROPS = frozenset({"rna_type", "select"})
 
-# Struct types whose CONTENT is dumped when they appear as a top-level
-# read-only pointer property.  The allowlist keeps the dump away from
-# object-like structs: `paired_output` on zone nodes points to a Node,
-# and dumping it would serialize a whole nested node (identifiers that
-# shift on rebuild, UI widths, ...).  Nested structs inside an allowed
-# type (ColorRampElement, CurveMap, CurveMapPoint, ...) dump freely.
-_STRUCT_DUMP_TYPES = frozenset({"ColorRamp", "CurveMapping", "CurveProfile"})
+# Struct dump allowlist: constants.STRUCT_DUMP_TYPES (declarative table with
+# rationale, M1), imported above as _STRUCT_DUMP_TYPES.  It keeps the dump
+# away from object-like structs: `paired_output` on zone nodes points to a
+# Node, and dumping it would serialize a whole nested node.
 
 
 def serialize_struct_value(val, depth: int = 0):

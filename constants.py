@@ -40,50 +40,129 @@ ZONE_OUTPUTS: frozenset[str] = frozenset({
     'NodeClosureOutput',
 })
 
-# Node properties to skip during serialization (handled separately or volatile).
-NODE_PROPS_TO_SKIP: frozenset[str] = frozenset({
-    'name', 'label', 'location', 'width', 'type', 'inputs', 'outputs', 'node_tree',
-    'repeat_items', 'simulation_items', 'state_items', 'input_items', 'main_items',
-    'generation_items', 'capture_items', 'active_item', 'parent', 'menu_items',
-    'enum_items', 'index_switch_items', 'list_items',
-    # Read-only / non-serializable properties
-    'asset_data', 'is_preview', 'rna_type',
-})
+# ---------------------------------------------------------------------------
+# Declarative exclusion tables (M1, 2026-10-10) — rationale as data.
+#
+# Every "not serialized" decision lives here with its reason.  The frozensets
+# below are DERIVED from these tables: the member set and its justification
+# cannot drift apart, and adding an omission is a one-line diff with a
+# mandatory rationale (checked by tests/test_exclusions_rationale.py).
+# ---------------------------------------------------------------------------
 
-# Node-tree-level properties to skip during serialization.
-TREE_PROPS_TO_SKIP: frozenset[str] = frozenset({
-    'name', 'type', 'rna_type', 'library', 'tag', 'is_embedded_data',
-    'is_embedded_id', 'users', 'parent', 'nodes', 'links', 'inputs', 'outputs',
-    'interface',
-    # Read-only / non-serializable properties
-    'asset_data', 'is_preview',
-    # Annotation data-blocks are viewport-only, cannot be serialized
-    'annotation',
-    # Node tool identifier — Blender 4.3+, not portable between versions
-    'node_tool_idname',
-    # File-management flags, not content (also excluded from the canonical
-    # hash): the .blend owns them and the importer forces a fake user so
-    # imported groups survive save/reload.  Serializing them would undo
-    # that on import and break byte-identical roundtrips.
-    'use_fake_user', 'use_extra_user',
-})
+EXCLUSIONS: dict[str, dict[str, str]] = {
+    "node": {
+        "name": "Identity anchor: nodes are keyed by name in the JSON.",
+        "label": "Presentation: editor label.",
+        "location": "Presentation: relative editor position; the absolute "
+                    "position is serialized via location_absolute.",
+        "width": "Presentation: editor width.",
+        "type": "bl_idname is serialized under the canonical 'type' key.",
+        "inputs": "Handled by the dedicated socket serializer "
+                  "(names, identifiers, defaults).",
+        "outputs": "Handled by the dedicated socket serializer.",
+        "node_tree": "Group references are serialized as name-based "
+                     "node_tree_reference.",
+        "repeat_items": "Zone item collection handled by its dedicated "
+                        "zone dispatcher.",
+        "simulation_items": "Zone item collection handled by its dedicated "
+                            "zone dispatcher.",
+        "state_items": "Zone item collection handled by its dedicated "
+                       "zone dispatcher.",
+        "input_items": "Zone item collection handled by its dedicated "
+                       "zone dispatcher.",
+        "main_items": "Zone item collection handled by its dedicated "
+                      "zone dispatcher.",
+        "generation_items": "Zone item collection handled by its dedicated "
+                            "zone dispatcher.",
+        "capture_items": "Capture Attribute item collection handled by its "
+                         "dedicated dispatcher.",
+        "active_item": "Runtime UI state (active item index).",
+        "parent": "Frame membership is layout-only (frames are not "
+                  "serialized).",
+        "menu_items": "MenuSwitch item collection handled by its dedicated "
+                      "dispatcher.",
+        "enum_items": "MenuSwitch enum collection handled by its dedicated "
+                      "dispatcher.",
+        "index_switch_items": "IndexSwitch item collection handled by its "
+                              "dedicated dispatcher.",
+        "list_items": "List node item collection handled by its dedicated "
+                      "dispatcher.",
+        "asset_data": "Asset-library metadata, not tree content.",
+        "is_preview": "Runtime preview state.",
+        "rna_type": "RNA introspection marker.",
+    },
+    "interface": {
+        "name": "Structural key written by the interface serializer itself.",
+        "item_type": "Structural key (SOCKET/PANEL); written as its own field.",
+        "in_out": "Structural key (INPUT/OUTPUT).",
+        "socket_type": "Structural key; written as the socket_type field.",
+        "bl_socket_idname": "Structural key; written as bl_socket_idname.",
+        "identifier": "Volatile identifier (renumbered on rebuild); items "
+                      "are matched by name.",
+        "parent": "Panel hierarchy is reconstructed from item order/type.",
+        "rna_type": "RNA introspection marker.",
+        "enum_items": "Menu items are harvested per item by the dedicated "
+                      "enum serializer.",
+        "is_inspect_output": "Blender 5.0+ derived/UI-specific socket state.",
+        "layer_selection_field": "Blender 5.0+ derived/UI-specific socket "
+                                 "state.",
+        "dimensions": "Vector dimension is conveyed by the socket class/"
+                      "remap (2D variants).",
+        "select": "Editor selection state.",
+    },
+    "tree": {
+        "name": "Identity anchor: the tree name keys the JSON/package.",
+        "type": "Tree class; constant for the supported GeometryNodeTree.",
+        "rna_type": "RNA introspection marker.",
+        "library": "Datablock linkage, not content.",
+        "tag": "Runtime invalidation flag.",
+        "is_embedded_data": "Datablock management flag (embedded trees).",
+        "is_embedded_id": "Datablock management flag.",
+        "users": "Runtime reference count.",
+        "parent": "Library parenting, runtime.",
+        "nodes": "Serialized by its dedicated section.",
+        "links": "Serialized by its dedicated section.",
+        "inputs": "Serialized by its dedicated section.",
+        "outputs": "Serialized by its dedicated section.",
+        "interface": "Serialized by its dedicated section.",
+        "asset_data": "Asset-library metadata, not tree content.",
+        "is_preview": "Runtime preview state.",
+        "annotation": "Viewport-only annotation data (cannot be serialized).",
+        "node_tool_idname": "Node tool identifier — Blender 4.3+, not "
+                            "portable between versions.",
+        "use_fake_user": "File-management flag owned by the .blend; the "
+                         "importer forces a fake user so imported groups "
+                         "survive save/reload.",
+        "use_extra_user": "File-management flag owned by the .blend (same "
+                          "reason as use_fake_user).",
+    },
+}
 
-# Interface item properties to skip when serializing bl_rna properties.
-INTERFACE_SKIP_PROPS: frozenset[str] = frozenset({
-    'name', 'item_type', 'in_out', 'socket_type', 'bl_socket_idname',
-    'identifier', 'parent', 'rna_type', 'enum_items',
-    # Vector/Rotation socket-specific properties (Blender 5.0+)
-    'is_inspect_output', 'layer_selection_field', 'dimensions',
-    # NOTE: 'is_panel_toggle' and 'structure_type' were previously skipped
-    # here, but they change how the modifier UI presents the socket (a bool
-    # acting as its panel's toggle; list/field structure) and are restored
-    # on import now that sockets are nested before properties are applied.
-    # NOTE: 'menu_expanded' and 'optional_label' were previously skipped,
-    # but they must be serialized so that Menu socket expansion state
-    # and the Optional label toggle are preserved across export/import.
-    # UI-only state — not meaningful to serialize
-    'select',
-})
+# Historical reinstatements (kept for reviewers): 'is_panel_toggle' and
+# 'structure_type' were previously skipped from the interface, but they
+# change how the modifier UI presents the socket and are restored on
+# import; 'menu_expanded' and 'optional_label' must be serialized so the
+# Menu socket expansion state and the Optional label toggle survive.
+INTERFACE_SKIP_PROPS: frozenset[str] = frozenset(EXCLUSIONS["interface"])
+
+# Node properties to skip during serialization (table above).
+NODE_PROPS_TO_SKIP: frozenset[str] = frozenset(EXCLUSIONS["node"])
+
+# Node-tree-level properties to skip during serialization (table above).
+TREE_PROPS_TO_SKIP: frozenset[str] = frozenset(EXCLUSIONS["tree"])
+
+# Readonly embedded structs whose interior IS serialized (allowlist), with
+# rationale per entry (M1).  Nested structs inside an allowed type
+# (ColorRampElement, CurveMap, CurveMapPoint, ...) dump freely.
+# `paired_output` is deliberately absent: it points to a Node (not an owned
+# struct) and dumping it would serialize a whole nested node.
+STRUCT_DUMP_TYPES: dict[str, str] = {
+    "ColorRamp": "Readonly embedded struct; stops/colors/interpolation "
+                 "are semantic (audit R3b).",
+    "CurveMapping": "Readonly embedded struct; tone-curve points are "
+                    "semantic.",
+    "CurveProfile": "Readonly embedded struct; profile points are semantic.",
+}
 
 # Mapping from short socket type names to full Blender socket class names.
 SOCKET_TYPE_MAP: dict[str, str] = {
