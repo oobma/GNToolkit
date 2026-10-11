@@ -318,6 +318,7 @@ def invalidate_git_state():
 _CHUNK_SIZE = 50
 _TASK_BUDGET = 2
 _CHUNK_BUDGET = 4
+_FETCH_ON_LOAD_TIMEOUT = 10.0
 
 _job_queue = []
 _active_job = None
@@ -375,7 +376,7 @@ def _job_status(payload):
         fetch_task = getattr(backend, "fetch_task", None)
         if fetch_task is not None:
             for root in repos:
-                yield ("task", fetch_task(root))
+                yield ("task", fetch_task(root, timeout=_FETCH_ON_LOAD_TIMEOUT))
             invalidate = getattr(backend, "invalidate", None)
             if invalidate is not None:
                 try:
@@ -425,6 +426,7 @@ def _job_commit(payload):
 def _job_sync(payload):
     """pull --ff-only then push, both through backend tasks."""
     repo = payload["repo"]
+    network_timeout = payload.get("network_timeout")
     backend = _backend()
     if backend is None:
         return {"status": "error", "detail": "No Git engine available",
@@ -439,12 +441,12 @@ def _job_sync(payload):
                 pass
 
     head_before = yield ("task", backend.head_task(repo))
-    pull = yield ("task", backend.pull_ff_task(repo))
+    pull = yield ("task", backend.pull_ff_task(repo, timeout=network_timeout))
     if pull.get("status") != "ok":
         _drop_cache()
         return {"status": pull.get("status", "error"),
                 "detail": pull.get("detail", ""), "files": []}
-    push = yield ("task", backend.push_task(repo))
+    push = yield ("task", backend.push_task(repo, timeout=network_timeout))
     if push.get("status") != "ok":
         _drop_cache()
         return {"status": "error", "detail": push.get("detail", ""),

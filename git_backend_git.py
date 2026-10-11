@@ -393,8 +393,9 @@ def status_task(repo_root, tracked_paths=None):
     return _MapTask(_SpawnTask(_STATUS_ARGS, repo_root, _TIMEOUT), _status_result)
 
 
-def fetch_task(repo_root):
-    task = _SpawnTask(["fetch", "--quiet"], repo_root, _FETCH_ON_LOAD_TIMEOUT)
+def fetch_task(repo_root, timeout=None):
+    task = _SpawnTask(["fetch", "--quiet"], repo_root,
+                      timeout or _FETCH_ON_LOAD_TIMEOUT)
 
     def _result(result):
         rc, out, err = result
@@ -416,8 +417,8 @@ def diff_names_task(repo_root, sha_a, sha_b):
                         if line.strip()] if result[0] == 0 else [])
 
 
-def pull_ff_task(repo_root):
-    task = _SpawnTask(["pull", "--ff-only"], repo_root, _TIMEOUT)
+def pull_ff_task(repo_root, timeout=None):
+    task = _SpawnTask(["pull", "--ff-only"], repo_root, timeout or _TIMEOUT)
 
     def _result(result):
         rc, out, err = result
@@ -429,8 +430,8 @@ def pull_ff_task(repo_root):
     return _MapTask(task, _result)
 
 
-def push_task(repo_root):
-    task = _SpawnTask(["push"], repo_root, _TIMEOUT)
+def push_task(repo_root, timeout=None):
+    task = _SpawnTask(["push"], repo_root, timeout or _TIMEOUT)
 
     def _result(result):
         rc, out, err = result

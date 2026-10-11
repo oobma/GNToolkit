@@ -1055,6 +1055,8 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 else "Engine: embedded (dulwich)"
             layout.label(text=label, icon='INFO')
         layout.prop(prefs, "fetch_on_load", toggle=True, icon='URL')
+        if addon_prefs is not None:
+            layout.prop(addon_prefs, "network_timeout", text="Network timeout (s)")
 
 
 # ---------------------------------------------------------------------------
@@ -1105,6 +1107,15 @@ class GN_AddonPrefs(bpy.types.AddonPreferences):
         update=_on_git_backend_changed,
     )
 
+    network_timeout: bpy.props.IntProperty(
+        name="Network Timeout (s)",
+        description="Maximum seconds to wait for remote Git operations "
+                    "(fetch, pull, push) before cancelling them",
+        default=300,
+        min=10,
+        max=3600,
+    )
+
     git_host: bpy.props.StringProperty(
         name="Host",
         description="Host the credentials apply to (e.g. github.com) — "
@@ -1128,6 +1139,7 @@ class GN_AddonPrefs(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "git_backend")
+        layout.prop(self, "network_timeout")
         layout.separator()
         layout.label(text="Credentials")
         layout.prop(self, "git_host")

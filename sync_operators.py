@@ -548,9 +548,21 @@ def _git_pump_tick():
     return None
 
 
+def _network_timeout() -> int:
+    """Remote-operation timeout (seconds) from the add-on preferences."""
+    prefs = _addon_preferences(bpy.context)
+    try:
+        value = int(getattr(prefs, "network_timeout", 300) or 300)
+    except (TypeError, ValueError):
+        value = 300
+    return max(10, min(3600, value))
+
+
 def git_submit(kind, **payload):
     ensure_git_pump()
     from .git_integration import submit_git_job
+    if kind == "sync":
+        payload.setdefault("network_timeout", _network_timeout())
     submit_git_job(kind, **payload)
 
 
@@ -1536,13 +1548,15 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
             # from the divergence comparison.
             def _canon_stripped(raw):
                 canon = canonicalize_node_tree_data(raw)
+                canon.pop("derived_node_groups", None)
                 for nd in canon.get("nodes", []):
                     if (nd.get("type") == "GeometryNodeGroup"
                             and nd.get("node_tree_reference") in external_set):
                         nd.pop("inputs", None)
                         nd.pop("outputs", None)
                 return canon
-            tree_canon = _canon_stripped(serialize_node_tree(tree))
+            tree_canon = _canon_stripped(
+                serialize_node_tree(tree, derived=False))
             json_canon = _canon_stripped(entry)
             if tree_canon != json_canon:
                 divergent.append(name)

@@ -41,9 +41,11 @@ import time
 import dulwich
 
 _NETWORK_TIMEOUT = 300.0
-_TIMEOUT_DETAIL = (
-    f"network operation cancelled after {int(_NETWORK_TIMEOUT)}s (timeout) — "
-    "the remote did not answer in time; retry or check the connection")
+
+
+def _timeout_detail(seconds):
+    return (f"network operation cancelled after {int(seconds)}s (timeout) — "
+            "the remote did not answer in time; retry or check the connection")
 
 _porcelain_module = None
 _repo_class = None
@@ -454,11 +456,12 @@ def _worker_command():
 class _WorkerTask(_Task):
     """Run git_network_worker.py and poll it across pump ticks."""
 
-    def __init__(self, op, repo_root, username, token):
+    def __init__(self, op, repo_root, username, token, timeout=None):
         self._op = op
         self._repo = repo_root
         self._username = username
         self._token = token
+        self._timeout = float(timeout) if timeout else _NETWORK_TIMEOUT
         self._proc = None
         self._out = None
         self._err = None
@@ -479,7 +482,7 @@ class _WorkerTask(_Task):
                 return None
             self._kill_process()
             self._value = {"status": "error",
-                           "detail": _TIMEOUT_DETAIL,
+                           "detail": _timeout_detail(self._timeout),
                            "head_after": ""}
             self._close_files()
             self._done = True
@@ -520,7 +523,7 @@ class _WorkerTask(_Task):
         except OSError:
             pass
         self._token = ""
-        self._deadline = time.monotonic() + _NETWORK_TIMEOUT
+        self._deadline = time.monotonic() + self._timeout
 
     def _collect(self, returncode):
         text = _read_temp(self._out)
@@ -573,8 +576,9 @@ def _read_temp(handle):
         return ""
 
 
-def _run_task_sync(task):
-    deadline = time.monotonic() + _NETWORK_TIMEOUT + 10.0
+def _run_task_sync(task, timeout=None):
+    limit = float(timeout) if timeout else _NETWORK_TIMEOUT
+    deadline = time.monotonic() + limit + 10.0
     while True:
         value = task.poll()
         if value is not None:
@@ -582,7 +586,7 @@ def _run_task_sync(task):
         if time.monotonic() > deadline:
             task.kill()
             return {"status": "error",
-                    "detail": _TIMEOUT_DETAIL, "head_after": ""}
+                    "detail": _timeout_detail(limit), "head_after": ""}
         time.sleep(0.02)
 
 
@@ -598,19 +602,19 @@ def diff_names_task(repo_root, sha_a, sha_b):
     return _CallTask(lambda: diff_names(repo_root, sha_a, sha_b))
 
 
-def fetch_task(repo_root):
+def fetch_task(repo_root, timeout=None):
     username, token = _credentials_for(repo_root)
-    return _WorkerTask("fetch", repo_root, username, token)
+    return _WorkerTask("fetch", repo_root, username, token, timeout)
 
 
-def pull_ff_task(repo_root):
+def pull_ff_task(repo_root, timeout=None):
     username, token = _credentials_for(repo_root)
-    return _WorkerTask("pull_ff", repo_root, username, token)
+    return _WorkerTask("pull_ff", repo_root, username, token, timeout)
 
 
-def push_task(repo_root):
+def push_task(repo_root, timeout=None):
     username, token = _credentials_for(repo_root)
-    return _WorkerTask("push", repo_root, username, token)
+    return _WorkerTask("push", repo_root, username, token, timeout)
 
 
 def fetch(repo_root):
