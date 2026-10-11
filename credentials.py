@@ -17,10 +17,10 @@ legacy string is accepted as a token. ``save`` clears the preference
 fields when the vault accepted the record, so the secret does not stay in
 plain text. Secrets are never logged and never written to project files.
 
-keyring is optional: when it cannot be imported (legacy installs, the
-zipimport wheels cannot carry the jaraco namespace packages) or no
-backend exists (headless Linux), every operation degrades to the next
-level without raising.
+keyring is optional: when it cannot be imported (zipimported wheels
+cannot carry the jaraco namespace packages) or no backend exists
+(headless Linux), every operation degrades to the next level without
+raising.
 """
 
 from __future__ import annotations

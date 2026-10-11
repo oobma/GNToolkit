@@ -10,10 +10,9 @@ below. The system Git program is never invoked — that is what lets the
 add-on collaborate without Git installed (the extension-platform build
 ships only this backend).
 
-The extension-platform package relies on Blender installing the bundled
-wheels when the add-on is enabled. The legacy (GitHub) build appends its
-own ``wheels/*.whl`` to the module search path before importing dulwich
-(the marked block below; stripped from the platform package).
+The extension package relies on Blender installing the bundled wheels
+when the add-on is enabled; nothing is added to ``sys.path`` at runtime
+(the GitHub box is an extension too, with the same wheel install flow).
 
 A repo status is cached behind a cheap stat signature (index, refs,
 config and the tracked JSONs), so refreshing the panel on a clean repo
@@ -38,24 +37,6 @@ import os
 import subprocess
 import tempfile
 import time
-
-# platform-strip:begin
-import glob
-import sys
-
-
-def _append_legacy_wheels():
-    """Legacy add-on installs don't install bundled wheels automatically."""
-    wheels_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "wheels")
-    for whl in sorted(glob.glob(os.path.join(wheels_dir, "*.whl"))):
-        path = os.path.abspath(whl)
-        if path not in sys.path:
-            sys.path.append(path)
-
-
-_append_legacy_wheels()
-# platform-strip:end
 
 import dulwich
 

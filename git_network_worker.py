@@ -17,8 +17,8 @@ Protocol:
 
 The script is self-contained (no relative imports): the parent process
 passes the location of the installed dulwich through the standard
-``PYTHONPATH`` variable, so it runs in the source checkout, legacy
-installs and extension installs alike. Remotes over SSH are rejected —
+``PYTHONPATH`` variable, so it runs in the source checkout and in
+extension installs alike. Remotes over SSH are rejected —
 the embedded engine speaks HTTPS/files only (SSH stays on the Git CLI
 engine).
 """

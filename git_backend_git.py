@@ -18,9 +18,9 @@ Every call runs on the main thread through the task protocol of
 the UI never blocks on a slow remote. Child output goes to temporary
 files, never pipes: a verbose command cannot deadlock on a full buffer.
 
-This module is EXCLUDED from the extension-platform build (the platform
-zip ships only ``git_backend_dulwich``); the GitHub/release build keeps
-it and can use either engine.
+This module is EXCLUDED from the extension-platform box (which ships
+only ``git_backend_dulwich``); the GitHub box keeps it and can use
+either engine.
 """
 
 from __future__ import annotations

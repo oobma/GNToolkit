@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Build the extension-platform package: dist/GNToolkit-<version>.zip.
+"""Build the extension packages: dist/GNToolkit-<version>.zip (platform)
+and, with ``--include-git``, dist/GNToolkit-<version>-github.zip.
 
-Canonical, self-contained platform build for this repository: run it from
-a clean checkout and you get the same package that is uploaded to the
-Blender Extensions Platform.  No private tooling involved.
+Canonical, self-contained build for this repository: run it from a clean
+checkout and you get the same packages.  The platform box is the one
+uploaded to the Blender Extensions Platform; the GitHub box is the
+release asset: the same extension layout plus the system-Git backend
+(``git_backend_git.py``), with the manifest's exclusion line for that
+file removed.
 
 What it enforces (any problem fails the build):
   * versions agree across blender_manifest.toml, constants.py and bl_info;
   * only the files the extension needs are shipped (no docs, tools, tests,
-    scripts or Git-CLI backend);
-  * legacy-only blocks marked with ``# platform-strip:begin/end`` are
-    removed from the shipped sources (the GitHub add-on build keeps them);
+    scripts; the platform box ships no Git-CLI backend);
   * compliance guards: no ``sys.path``/``sys.modules`` writes, no
     threading/queue imports, no ctypes, no OS-level calls, no direct
     network/browser access, no bpy monkey-patching, no system-Git use, no
@@ -19,13 +21,17 @@ What it enforces (any problem fails the build):
   * manifest constraints beyond Blender's own validator: required fields
     non-empty, no "Blender" in the name, tagline and permission reasons
     within the terse-description limits, ``blender_version_min`` >= 4.2.0,
-    the reserved ``[build.generated]`` table not declared;
-  * every relative import is shipped (``git_backend_git`` is optional);
+    the reserved ``[build.generated]`` table not declared, and
+    ``git_backend_git.py`` listed in the exclusion pattern (the GitHub
+    box embeds the manifest with that one line removed);
+  * every relative import is shipped (``git_backend_git`` is optional in
+    the platform box and required in the GitHub box);
   * the wheels set is pure (``*-py3-none-any.whl``), complete, in sync with
     the manifest, and contains no compiled files or unsafe paths.
 
 Usage:
-    python build_platform.py [--out DIR]
+    python build_platform.py                  # platform box
+    python build_platform.py --include-git    # GitHub box (system-Git engine)
 
 Blender's own ``--command extension validate`` is not run here (it needs a
 Blender executable); the maintainer gate runs it right after this script.
@@ -74,9 +80,8 @@ EXPECTED_WHEELS = [
     "zipp-4.1.1-py3-none-any.whl",
 ]
 
-STRIP_RE = re.compile(
-    r"(?ms)^[ \t]*#\s*platform-strip:begin\b.*?"
-    r"^[ \t]*#\s*platform-strip:end\b[^\S\r\n]*\r?\n")
+GIT_EXCLUDE_RE = re.compile(
+    r'(?m)^[ \t]*"git_backend_git\.py",[^\S\r\n]*\r?\n')
 
 FORBIDDEN = [
     (r"sys\s*\.\s*path\s*(\.append|\.insert|\.extend|\+=|=)",
@@ -132,26 +137,29 @@ def check_versions() -> str:
     return manifest_ver
 
 
-def check_files() -> None:
-    missing = [n for n in INCLUDES if not (ROOT / n).is_file()]
+def check_files(files) -> None:
+    missing = [n for n in files if not (ROOT / n).is_file()]
     if missing:
         fail(f"missing files: {', '.join(missing)}")
 
 
-def shipped_text(name: str) -> str:
-    text = read_text(name)
-    if not name.endswith(".py"):
+def shipped_manifest(include_git: bool) -> str:
+    text = read_text("blender_manifest.toml")
+    if not include_git:
         return text
-    return STRIP_RE.sub("", text)
+    patched = GIT_EXCLUDE_RE.sub("", text)
+    if patched == text:
+        fail("git_backend_git.py exclusion line not found in the manifest")
+    return patched
 
 
-def check_imports() -> None:
-    module_names = {Path(n).stem for n in INCLUDES if n.endswith(".py")}
+def check_imports(files) -> None:
+    module_names = {Path(n).stem for n in files if n.endswith(".py")}
     problems = []
-    for name in INCLUDES:
+    for name in files:
         if not name.endswith(".py"):
             continue
-        text = shipped_text(name)
+        text = read_text(name)
         refs = re.findall(r"(?m)^\s*from\s+\.(\w+)\s+import", text)
         for group in re.findall(
                 r"(?m)^\s*from\s+\.\s+import\s+([^\r\n#]+)", text):
@@ -166,13 +174,11 @@ def check_imports() -> None:
         fail("relative imports not shipped: " + ", ".join(problems))
 
 
-def check_compliance() -> None:
-    for name in INCLUDES:
+def check_compliance(files) -> None:
+    for name in files:
         if not name.endswith(".py"):
             continue
-        text = shipped_text(name)
-        if "platform-strip" in text:
-            fail(f"unbalanced platform-strip marker in {name}")
+        text = read_text(name)
         for pattern, reason in FORBIDDEN:
             if re.search(pattern, text):
                 fail(f"forbidden pattern in {name}: {reason}")
@@ -243,6 +249,11 @@ def check_manifest() -> None:
     if "build.generated" in manifest:
         fail("manifest declares the reserved [build.generated] table")
 
+    if not re.search(r'(?m)^[ \t]*"git_backend_git\.py",?[^\S\r\n]*$',
+                     manifest):
+        fail("manifest must list git_backend_git.py in paths_exclude_pattern "
+             "(the platform build ships no system-Git backend)")
+
 
 def check_wheel_contents() -> None:
     for name in EXPECTED_WHEELS:
@@ -254,16 +265,18 @@ def check_wheel_contents() -> None:
                     fail(f"{name}: non-Python file in a pure wheel: {entry}")
 
 
-def build_zip(version: str, out_dir: Path) -> Path:
+def build_zip(version: str, out_dir: Path, files, manifest_text: str,
+              include_git: bool) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = out_dir / f"GNToolkit-{version}.zip"
+    suffix = "-github" if include_git else ""
+    zip_path = out_dir / f"GNToolkit-{version}{suffix}.zip"
     if zip_path.exists():
         zip_path.unlink()
-    entries = INCLUDES + [f"wheels/{w}" for w in EXPECTED_WHEELS]
+    entries = files + [f"wheels/{w}" for w in EXPECTED_WHEELS]
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in entries:
-            if name.endswith(".py"):
-                payload = shipped_text(name).encode("utf-8")
+            if name == "blender_manifest.toml":
+                payload = manifest_text.encode("utf-8")
             else:
                 payload = (ROOT / name).read_bytes()
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
@@ -276,22 +289,31 @@ def build_zip(version: str, out_dir: Path) -> Path:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="build_platform",
-        description="Build the extension-platform package "
-                    "(dist/GNToolkit-<version>.zip).")
+        description="Build the extension packages "
+                    "(dist/GNToolkit-<version>.zip, and with --include-git "
+                    "dist/GNToolkit-<version>-github.zip).")
     parser.add_argument("--out", default=str(ROOT / "dist"),
                         help="output directory (default: dist/)")
+    parser.add_argument("--include-git", action="store_true",
+                        help="also ship the system-Git backend "
+                             "(GitHub release box)")
     args = parser.parse_args(argv)
 
+    include_git = bool(args.include_git)
+    files = INCLUDES + (["git_backend_git.py"] if include_git else [])
     version = check_versions()
-    check_files()
-    check_imports()
-    check_compliance()
+    check_files(files)
+    check_imports(files)
+    check_compliance(files)
     check_wheels()
     check_manifest()
     check_wheel_contents()
-    zip_path = build_zip(version, Path(args.out))
-    print(f"Built {zip_path} ({len(INCLUDES)} files + "
-          f"{len(EXPECTED_WHEELS)} wheels, version {version})")
+    manifest_text = shipped_manifest(include_git)
+    zip_path = build_zip(version, Path(args.out), files, manifest_text,
+                         include_git)
+    box = "github" if include_git else "platform"
+    print(f"Built {zip_path} ({len(files)} files + "
+          f"{len(EXPECTED_WHEELS)} wheels, version {version}, {box} box)")
     return 0
 
 

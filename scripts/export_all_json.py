@@ -21,8 +21,8 @@ is left untouched.
 path contains FRAG, both for the export and for --make-local: use it to
 keep Blender's bundled assets (e.g. "datafiles\\assets") or third-party
 toolsets out of the export/conversion.  The addon is enabled
-automatically when missing (legacy install, extension module or the
-repo copy next to this script).
+automatically when missing (extension module or the repo copy next to
+this script).
 
 The folder export can then be versioned and used with
 'Track from Existing JSON' / 'Track Folder…' inside Blender, and checked
