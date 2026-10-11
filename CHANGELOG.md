@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **One distribution for everything: the GitHub package is an extension
+  too.** The release asset is now `GNToolkit-<version>-github.zip` — the
+  same extension layout as the platform package plus the optional
+  system-Git engine, with Blender installing the bundled wheels when the
+  extension is enabled. The legacy `scripts/addons` zip, its wheel-path
+  loader and the platform-strip source markers are gone; the repository
+  contains no `sys.path`/`sys.modules` manipulation anywhere.
+  `build_platform.py` builds both boxes (add `--include-git` for the
+  GitHub one). **Migrating:** replace a manual install once — install
+  the extension package and remove the old `scripts/addons/GNToolkit`
+  folder; the two cannot coexist.
+
 ## [0.3.3] - 2026-10-10
 
 ### Fixed

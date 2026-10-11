@@ -138,17 +138,17 @@ revisions:
 python gnt_check.py --diff HEAD~1 HEAD --repo /path/to/project --subdir motor/NodeGroups
 ```
 
-### Building the platform package - repository tool
+### Building the release packages - repository tool
 
-The package uploaded to the Blender Extensions Platform is reproducible
-from this repository:
+Both extension packages are reproducible from this repository:
 
 ```bash
-python build_platform.py
+python build_platform.py                  # platform box (Extensions Platform)
+python build_platform.py --include-git    # GitHub box (+ system-Git engine)
 ```
 
-It writes `dist/GNToolkit-<version>.zip` with the platform file set,
-removes the legacy-only source blocks, and **fails** on any compliance
+They write `dist/GNToolkit-<version>.zip` and
+`dist/GNToolkit-<version>-github.zip` and **fail** on any compliance
 violation (module-path manipulation, threading, OS-level calls,
 system-Git use, non-pure wheels, missing imports, version drift). The
 build is deterministic (same input, same bytes). Run Blender's
@@ -455,12 +455,15 @@ port required:
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
   and 5.2 produce identical fingerprints (the rule shipped as
-  HASH_VERSION 5; the algorithm is versioned and currently at 8) and projects
-  track across versions without noise.
+  HASH_VERSION 5; the algorithm is versioned and currently at 15) and
+  projects track across versions without noise.
 
 ## Installation
 
-**From the Blender Extensions platform (Blender 4.2+, recommended):**
+Every install is an **extension** (Blender 4.2+), installed from disk or
+from the Blender Extensions platform.
+
+**From the Blender Extensions platform (recommended):**
 
 1. In Blender: **Edit → Preferences → Get Extensions**, search for
    **GNToolkit** and press **Install** (it is enabled automatically).
@@ -469,21 +472,25 @@ port required:
 **From the release zip (offline machines / manual installs):**
 
 1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
-   and download the addon zip of the latest release (e.g.
-   `GNToolkit-v0.3.0.zip`).
-2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
-   downloaded zip (the zip contains the `GNToolkit/` addon folder).
-3. Enable **"GNToolkit"** in the list.
-4. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
+   and download the **`GNToolkit-<version>-github.zip`** asset of the
+   latest release.
+2. In Blender: **Edit → Preferences → Extensions**, open the dropdown
+   (⌄) → **Install from Disk...** and select the downloaded zip.
+3. Open the Node Editor and find the **GN Tools** tab in the sidebar (N).
+
+The GitHub box is the same extension plus the optional system-Git
+engine; the platform box omits that engine and keeps the bundled one.
+
+**Upgrading from a manual install (pre-0.4.0):** the old "unzip into
+`scripts/addons`" layout is gone. Install the extension and remove the
+old `scripts/addons/GNToolkit` folder — the two cannot coexist.
 
 **From the repository (development):**
 
-1. Clone this repository and zip the `GNToolkit` folder — the repository
-   root is the addon folder itself; a source zip extracts to a
-   version-suffixed folder such as `GNToolkit-main`, which is not a valid
-   add-on module name, so use the release asset for regular installs.
-2. In Blender: **Edit → Preferences → Add-ons → Install...**, select the
-   `.zip` file and enable **"GNToolkit"**.
+1. Clone this repository and build the development package:
+   `python build_platform.py --include-git`.
+2. **Install from Disk...** with
+   `dist/GNToolkit-<version>-github.zip`.
 
 ## JSON format
 
