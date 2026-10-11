@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable network timeout.** A "Network Timeout" preference
+  (10 s–1 h, 5 minutes by default) governs how long fetch, pull and push
+  may take before cancelling, on both engines. The automatic fetch on
+  file open keeps its own fixed, short 10 s wait so opening a file never
+  hangs on a slow remote.
+- **Bake configuration is versioned.** The bake metadata of NODES
+  modifiers (one element per Bake node, with mode/target, custom path and
+  custom frame range) and the item list of Bake nodes (names, socket
+  types, attribute flags and domains) now round-trips and participates in
+  change detection and hashing. The baked data itself (binary caches) is
+  never stored. Groups using bakes show a one-time "Changed" after
+  updating — the bake metadata enters the fingerprint — and re-sync with
+  a normal commit.
+- **Untracked dependency groups travel with their parent.** When a
+  tracked group references local groups that are not tracked, the parent's
+  JSON entry now embeds them (marked as derived content): editing an
+  untracked nested group moves the parent's fingerprint (no more false
+  "Synced"), and a clone from a single file rebuilds the whole subtree.
+  Once the nested group is tracked on its own, its embedded copy is
+  retracted on the next export (one-time "Changed" on the parent).
+  Library-linked groups stay out of scope, as before. `HASH_VERSION` 16
+  folds both new contents in.
+
 ### Changed
 
 - **One distribution for everything: the GitHub package is an extension
