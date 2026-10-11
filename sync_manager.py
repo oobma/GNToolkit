@@ -34,7 +34,7 @@ from .hash_utils import (
     canonicalize_node_tree_data,
     get_json_mtime,
 )
-from .importer import import_node_tree_recursive
+from .importer import import_node_tree_recursive, merge_derived_groups
 from .serializer import serialize_node_tree
 from .socket_utils import get_tree_dependencies
 from .sync_metadata import (
@@ -1313,15 +1313,18 @@ class SyncManager:
             )
             return tracker
 
+        real_names = set()
         if isinstance(json_data, dict) and json_data.get("type") == "GN_UNIFIED_PACKAGE":
             groups = json_data.get("node_groups", {})
             if not groups:
                 tracker = ImportErrorTracker()
                 tracker.record("No node groups found in JSON package")
                 return tracker
-            json_cache = groups
+            real_names = set(groups)
+            json_cache = merge_derived_groups(groups)
         elif isinstance(json_data, dict) and "nodes" in json_data:
             json_cache = {blend_name: json_data}
+            real_names = {blend_name}
         else:
             tracker = ImportErrorTracker()
             tracker.record(f"Unrecognized JSON format in {json_path}")
@@ -1390,8 +1393,13 @@ class SyncManager:
 
         ng = bpy.data.node_groups.get(blend_name)
         if ng is not None:
-            # Auto-link any newly imported groups that aren't tracked
-            self._auto_link_imported_groups(json_path, json_cache, json_path_stored=json_path_stored)
+            # Auto-link any newly imported groups that aren't tracked —
+            # only REAL package entries: derived copies (embedded
+            # untracked dependencies) are not top-level groups and must
+            # not be auto-tracked.
+            self._auto_link_imported_groups(json_path, json_cache,
+                                            json_path_stored=json_path_stored,
+                                            only_names=real_names)
 
             # Invalidate status cache for all groups sharing this JSON file
             for uid, ig in self.metadata.get("tracked_groups", {}).items():
@@ -1478,9 +1486,16 @@ class SyncManager:
                     )
 
     def _auto_link_imported_groups(self, json_path_abs: str, json_cache: dict,
-                                    json_path_stored: str) -> None:
-        """Auto-link groups that were imported as dependencies but aren't tracked."""
+                                    json_path_stored: str,
+                                    only_names: set | None = None) -> None:
+        """Auto-link groups that were imported as dependencies but aren't tracked.
+
+        ``only_names`` restricts the pass to real package entries (when
+        the cache also carries derived copies of untracked dependencies).
+        """
         for group_name in json_cache:
+            if only_names is not None and group_name not in only_names:
+                continue
             tree = bpy.data.node_groups.get(group_name)
             if tree is None or group_library_path(tree):
                 continue
@@ -2514,9 +2529,11 @@ class SyncManager:
                 continue
 
             if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                json_cache = data.get("node_groups", {})
+                groups = data.get("node_groups", {})
+                real_count = len(groups)
+                json_cache = merge_derived_groups(groups)
                 tree_data = json_cache.get(blend_name)
-                if (tree_data is None and len(json_cache) == 1
+                if (tree_data is None and real_count == 1
                         and next(iter(json_cache)) not in tracked_by_name):
                     # Single-group package: the group was renamed in the
                     # .blend after the JSON was exported — same content.

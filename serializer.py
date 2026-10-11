@@ -135,9 +135,31 @@ def _handle_list_items(node, data: dict) -> None:
         ]
 
 
+def _handle_bake(node, data: dict) -> None:
+    """Bake node item list (Blender 5.x): names, sockets, attribute flags.
+
+    The item color is read-only (derived from the socket type) and is not
+    serialized; active_index/show_options are UI-only.  The list keeps its
+    creation order (semantic, like sockets).
+    """
+    items = getattr(node, "bake_items", None)
+    if items is None:
+        return
+    data["bake_items_data"] = [
+        {
+            "name": getattr(item, "name", "Value"),
+            "socket_type": getattr(item, "socket_type", "FLOAT"),
+            "is_attribute": bool(getattr(item, "is_attribute", False)),
+            "attribute_domain": getattr(item, "attribute_domain", "POINT"),
+        }
+        for item in items
+    ]
+
+
 # Dispatch table: bl_idname → handler(node, data)
 _NODE_SERIALIZERS: dict[str, callable] = {
     "GeometryNodeMenuSwitch": _handle_menu_switch,
+    "GeometryNodeBake": _handle_bake,
     "GeometryNodeSimulationOutput": _handle_simulation_output,
     "GeometryNodeRepeatOutput": _handle_repeat_output,
     "GeometryNodeForeachGeometryElementOutput": _handle_foreach_output,
@@ -361,8 +383,13 @@ def _custom_properties(id_block) -> dict:
     return props
 
 
-def serialize_node_tree(tree):
-    """Serialize an entire Blender node tree into a JSON-safe dictionary."""
+def _serialize_node_tree_core(tree):
+    """Serialize a tree WITHOUT derived-dependency embedding.
+
+    Public callers go through ``serialize_node_tree``, which can embed
+    the local untracked dependency trees; derived copies are serialized
+    with this core (the map is flat, one level).
+    """
     data = {"name": tree.name, "inputs": [], "outputs": [], "nodes": [], "links": []}
 
     group_input_node = next((n for n in tree.nodes if n.bl_idname == 'NodeGroupInput'), None)
@@ -596,4 +623,59 @@ def serialize_node_tree(tree):
     if custom:
         data["custom_properties"] = custom
 
+    return data
+
+
+def tracked_blend_names() -> set:
+    """Names of the currently tracked groups (ambient tracking context)."""
+    try:
+        from .sync_manager import sync_manager
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+    except Exception:
+        return set()
+    return {info.get("blend_name", "") for info in tracked.values()}
+
+
+def collect_derived_untracked(tree) -> dict:
+    """Local, untracked, reachable dependency trees of *tree*.
+
+    Library-linked trees are excluded by design (they belong to another
+    .blend and are out of the versioning scope).  The root tree itself is
+    never part of its own derived map.
+    """
+    from .socket_utils import get_tree_dependencies
+    tracked = tracked_blend_names()
+    derived = {}
+    for name, dep in get_tree_dependencies(tree).items():
+        if not name or name == tree.name or name in tracked:
+            continue
+        if getattr(dep, "library", None) is not None:
+            continue
+        derived[name] = dep
+    return derived
+
+
+def serialize_node_tree(tree, derived=None):
+    """Serialize an entire Blender node tree into a JSON-safe dictionary.
+
+    Embedded dependencies: by default (``derived=None``) a *tracked* tree
+    embeds its local untracked dependency trees under
+    ``derived_node_groups`` (a flat name→tree map).  Editing an untracked
+    nested group then moves the parent's hash (no more false Synced) and
+    the entry stays self-contained for cloning.  When the dependency
+    becomes tracked, its copy is dropped from the parent on the next
+    export.  ``derived=False`` disables the embedding (manual exports
+    that already ship every dependency as its own entry); a dict gives
+    the exact name→tree set (used when a group is being tracked and its
+    full dependency closure must be recorded).
+    """
+    data = _serialize_node_tree_core(tree)
+    if derived is None:
+        if tree.name in tracked_blend_names():
+            derived = collect_derived_untracked(tree)
+    if derived:
+        data["derived_node_groups"] = {
+            name: _serialize_node_tree_core(dep)
+            for name, dep in sorted(derived.items())
+        }
     return data

@@ -21,10 +21,12 @@ from .codec import clean_value, unclean_value, reset_coercion_count, coercion_co
 from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
-from .importer import _import_node_tree_gen
+from .importer import _import_node_tree_gen, merge_derived_groups
 from .modifier_utils import (
+    apply_modifier_bake_meta,
     iter_modifier_sockets,
     modifier_input_is_attribute,
+    modifier_task_bake_entry,
     modifier_uses_rna_inputs,
     remap_input_keys,
 )
@@ -141,6 +143,7 @@ def apply_modifier_tasks(mod_data_list: list, interface_maps: dict | None) -> in
             mod.show_render = bool(m["show_render"])
         _apply_modifier_inputs(mod, m.get("inputs", {}),
                                interface_maps.get(m.get("node_group")))
+        apply_modifier_bake_meta(mod, m.get("bake"))
         applied += 1
     return applied
 
@@ -210,7 +213,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 for i, tree in enumerate(trees):
                     context.window_manager.progress_update(i)
                     context.workspace.status_text_set(f"Exporting: {tree.name}")
-                    data = _ensure_package_shape(serialize_node_tree(tree))
+                    data = _ensure_package_shape(
+                        serialize_node_tree(tree, derived=False))
                     stem = ng_names.allocate(tree.name, "node_group")
                     write_json_file(os.path.join(ng_dir, f"{stem}.json"),
                                     data, dump_args)
@@ -233,6 +237,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "show_viewport": mod.show_viewport,
                                 "show_render": mod.show_render,
                                 "inputs": _serialize_modifier_inputs(mod),
+                                **modifier_task_bake_entry(mod),
                             }
                             stem = mod_names.allocate(f"{obj.name}_{mod.name}",
                                                       "modifier")
@@ -264,7 +269,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 }
                 for i, tree in enumerate(trees):
                     context.window_manager.progress_update(i)
-                    master_data["node_groups"][tree.name] = serialize_node_tree(tree)
+                    master_data["node_groups"][tree.name] = \
+                        serialize_node_tree(tree, derived=False)
 
                 all_objects = bpy.data.objects
                 for obj in all_objects:
@@ -278,6 +284,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "show_viewport": mod.show_viewport,
                                 "show_render": mod.show_render,
                                 "inputs": _serialize_modifier_inputs(mod),
+                                **modifier_task_bake_entry(mod),
                             })
                 write_json_file(self.filepath, master_data, dump_args)
                 self.report({'INFO'},
@@ -344,7 +351,8 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
         }
 
         for d_name, d_tree in deps.items():
-            master_data["node_groups"][d_name] = serialize_node_tree(d_tree)
+            master_data["node_groups"][d_name] = \
+                serialize_node_tree(d_tree, derived=False)
 
         obj = context.active_object
         if obj:
@@ -358,6 +366,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
                         "show_viewport": mod.show_viewport,
                         "show_render": mod.show_render,
                         "inputs": _serialize_modifier_inputs(mod),
+                        **modifier_task_bake_entry(mod),
                     })
 
         try:
@@ -410,6 +419,7 @@ def load_package_sources(filepath: str) -> tuple[dict, list]:
             mod_data_list = master_data.get("modifiers", [])
         elif "name" in master_data and "nodes" in master_data:
             json_cache[master_data["name"]] = master_data
+    merge_derived_groups(json_cache)
     return json_cache, mod_data_list
 
 

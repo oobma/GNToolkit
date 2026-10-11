@@ -398,17 +398,31 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     if tree_custom:
         out["custom_properties"] = dict(sorted(tree_custom.items()))
 
+    # Derived (embedded local untracked dependencies): part of the entry's
+    # content — an edit inside a derived subtree must move the hash (that
+    # is the point of the embedding).  Each copy is canonicalized like a
+    # tree of its own; the map is flat.
+    derived = data.get("derived_node_groups")
+    if isinstance(derived, dict) and derived:
+        out["derived_node_groups"] = {
+            str(name): canonicalize_node_tree_data(dep)
+            for name, dep in sorted(derived.items())
+            if isinstance(dep, dict)
+        }
+
     return _normalize_floats(out)
 
 
-def canonical_hash_from_tree(tree) -> str:
+def canonical_hash_from_tree(tree, derived=None) -> str:
     """Compute a deterministic SHA-256 hash for a Blender node tree.
 
     Uses the existing serializer to produce the data dict, then
-    canonicalizes it before hashing.
+    canonicalizes it before hashing.  ``derived`` is forwarded to the
+    serializer (see ``serialize_node_tree``): None keeps the default
+    tracked-tree embedding, False disables it, a dict forces that set.
     """
     from .serializer import serialize_node_tree
-    raw_data = serialize_node_tree(tree)
+    raw_data = serialize_node_tree(tree, derived=derived)
     canonical = canonicalize_node_tree_data(raw_data)
     canonical_json = json.dumps(canonical, sort_keys=True, separators=(',', ':'))
     return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import bpy
 
+from .codec import clean_value, unclean_value
+
 
 def modifier_uses_rna_inputs(mod) -> bool:
     """True when the NODES modifier stores its inputs as RNA (Blender 5.2+)."""
@@ -214,6 +216,122 @@ def restore_modifier_inputs(snapshots, remap) -> int:
                     restored += 1
                 except (TypeError, AttributeError, ValueError, RuntimeError):
                     pass
+    return restored
+
+
+_BAKE_ELEMENT_FIELDS = (
+    "bake_mode", "bake_target", "use_custom_path", "directory",
+    "use_custom_simulation_frame_range", "frame_start", "frame_end",
+)
+
+
+def serialize_modifier_bake_meta(mod) -> dict:
+    """Bake metadata of a NODES modifier (Blender 4.3+), caches excluded.
+
+    ``bake_id`` (read-only, reassigned by Blender) and the baked data
+    blocks (binary caches) are NOT serialized; the semantic bake
+    configuration is: which bake elements exist (one per Bake node in the
+    group), their mode/target, custom path and custom frame range.  Empty
+    when the modifier exposes no bake surface (Blender 4.2).
+    """
+    meta = {}
+    directory = getattr(mod, "bake_directory", None)
+    if isinstance(directory, str) and directory:
+        meta["bake_directory"] = directory
+    bakes = getattr(mod, "bakes", None)
+    if bakes is None:
+        return meta
+    elements = []
+    for elem in bakes:
+        item = {}
+        node = getattr(elem, "node", None)
+        node_name = getattr(node, "name", "") if node is not None else ""
+        if node_name:
+            item["node"] = node_name
+        for attr in _BAKE_ELEMENT_FIELDS:
+            try:
+                item[attr] = clean_value(getattr(elem, attr))
+            except (TypeError, AttributeError, ValueError, RuntimeError):
+                continue
+        if item:
+            elements.append(item)
+    if elements:
+        meta["bakes"] = elements
+    return meta
+
+
+def apply_modifier_bake_meta(mod, meta) -> int:
+    """Restore ``serialize_modifier_bake_meta`` output on a bound modifier.
+
+    Bake elements are matched to the rebuilt tree's Bake nodes by node
+    name (names are serialized and restored faithfully).  Returns the
+    number of properties applied.
+    """
+    if not isinstance(meta, dict) or not meta:
+        return 0
+    applied = 0
+    directory = meta.get("bake_directory")
+    if isinstance(directory, str) and directory:
+        try:
+            mod.bake_directory = directory
+            applied += 1
+        except (TypeError, AttributeError, ValueError, RuntimeError):
+            pass
+    stored = meta.get("bakes")
+    bakes = getattr(mod, "bakes", None)
+    if bakes is None or not isinstance(stored, list):
+        return applied
+    by_node = {}
+    for entry in stored:
+        if isinstance(entry, dict) and entry.get("node"):
+            by_node[str(entry["node"])] = entry
+    for elem in bakes:
+        node = getattr(elem, "node", None)
+        node_name = getattr(node, "name", "") if node is not None else ""
+        entry = by_node.get(node_name)
+        if not entry:
+            continue
+        for attr in _BAKE_ELEMENT_FIELDS:
+            if attr not in entry:
+                continue
+            try:
+                setattr(elem, attr, unclean_value(entry[attr]))
+                applied += 1
+            except (TypeError, AttributeError, ValueError, RuntimeError):
+                continue
+    return applied
+
+
+def modifier_task_bake_entry(mod) -> dict:
+    """``{"bake": meta}`` for a serialized modifier task; empty dict when
+    the modifier has no bake configuration (keeps old packages/hashes
+    byte-stable for non-bake projects)."""
+    meta = serialize_modifier_bake_meta(mod)
+    return {"bake": meta} if meta else {}
+
+
+def snapshot_modifier_bakes(tree):
+    """Capture bake metadata of the NODES modifiers bound to *tree*.
+
+    Must run BEFORE the tree's nodes are rebuilt (the rebuild re-creates
+    the Bake nodes and resets the per-element configuration).
+    """
+    snapshots = []
+    for obj in bpy.data.objects:
+        for mod in obj.modifiers:
+            if mod.type != 'NODES' or mod.node_group != tree:
+                continue
+            meta = serialize_modifier_bake_meta(mod)
+            if meta:
+                snapshots.append((mod, meta))
+    return snapshots
+
+
+def restore_modifier_bakes(snapshots) -> int:
+    """Re-apply snapshotted bake metadata after a rebuild."""
+    restored = 0
+    for mod, meta in snapshots:
+        restored += apply_modifier_bake_meta(mod, meta)
     return restored
 
 

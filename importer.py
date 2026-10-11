@@ -30,7 +30,9 @@ from .constants import (
 from .error_tracker import ImportErrorTracker
 from .modifier_utils import (
     build_identifier_remap,
+    restore_modifier_bakes,
     restore_modifier_inputs,
+    snapshot_modifier_bakes,
     snapshot_modifier_inputs,
 )
 from .socket_utils import (
@@ -873,6 +875,33 @@ def _configure_special_node(new_node, node_data: dict, node_type: str,
                 tracker.record(
                     f"CaptureAttribute '{new_node.name}': could not set data_type: {exc}", level="DEBUG",
                 )
+
+    elif node_type == "GeometryNodeBake":
+        bake_data = node_data.get("bake_items_data")
+        coll = getattr(new_node, "bake_items", None)
+        if coll is not None and bake_data:
+            _reset_collection(coll, tracker)
+            for itm in bake_data:
+                if not isinstance(itm, dict):
+                    continue
+                socket_type = itm.get("socket_type", "FLOAT")
+                name = itm.get("name", "Value")
+                try:
+                    item = coll.new(socket_type, name)
+                except (TypeError, ValueError, RuntimeError) as exc:
+                    tracker.record(
+                        f"Bake '{new_node.name}': could not add item "
+                        f"'{name}': {exc}", level="DEBUG")
+                    continue
+                try:
+                    item.is_attribute = bool(itm.get("is_attribute", False))
+                except (TypeError, AttributeError, ValueError, RuntimeError):
+                    pass
+                try:
+                    item.attribute_domain = itm.get("attribute_domain",
+                                                    "POINT")
+                except (TypeError, AttributeError, ValueError, RuntimeError):
+                    pass
 
     elif node_type in ("GeometryNodeFieldToList", "GeometryNodeClosureToList"):
         # 5.2 list nodes: the output socket is named after the active
@@ -2195,6 +2224,27 @@ def json_group_closure(groups: dict, start: str) -> tuple[list[str], list[str]]:
     return ordered, external
 
 
+def merge_derived_groups(json_cache: dict) -> dict:
+    """Add each entry's ``derived_node_groups`` as lower-priority sources.
+
+    Derived groups are the embedded copies of untracked dependencies; a
+    real package entry always wins over a derived copy of the same name.
+    Mutates and returns *json_cache* for chaining.
+    """
+    for name in list(json_cache):
+        entry = json_cache.get(name)
+        if not isinstance(entry, dict):
+            continue
+        derived = entry.get("derived_node_groups")
+        if not isinstance(derived, dict):
+            continue
+        for d_name, d_data in derived.items():
+            if (d_name and isinstance(d_data, dict)
+                    and d_name not in json_cache):
+                json_cache[d_name] = d_data
+    return json_cache
+
+
 def import_node_tree_recursive(
     data: dict,
     json_cache: dict,
@@ -2286,12 +2336,14 @@ def _import_node_tree_gen(
     # Get or create the node tree
     ng = bpy.data.node_groups.get(name)
     mod_snapshots = None
+    bake_snapshots = None
     old_iface_items = None
     if ng:
         # Modifier inputs are keyed by interface-socket identifier; the
         # rebuild below renumbers them, so capture the values first and
         # restore them once the new interface exists.
         mod_snapshots, old_iface_items = snapshot_modifier_inputs(ng)
+        bake_snapshots = snapshot_modifier_bakes(ng)
         for node in ng.nodes:
             ng.nodes.remove(node)
         if hasattr(ng, 'interface'):
@@ -2603,6 +2655,15 @@ def _import_node_tree_gen(
         if restored:
             tracker.record(
                 f"Restored {restored} modifier input(s) after rebuilding "
+                f"'{name}'", level="DEBUG",
+            )
+
+    # --- Step 7b: Modifier bake metadata surviving the node rebuild ---
+    if bake_snapshots:
+        restored_bakes = restore_modifier_bakes(bake_snapshots)
+        if restored_bakes:
+            tracker.record(
+                f"Restored {restored_bakes} bake setting(s) after rebuilding "
                 f"'{name}'", level="DEBUG",
             )
 
