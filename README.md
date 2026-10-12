@@ -252,6 +252,11 @@ repository — never part of the extension zip.
   (↩, with confirmation), bring the JSON version (→) — and a single
   "Save marked to JSON" button; nothing is marked by default. Untracked
   dependency groups appear as rows with their own Track button.
+- **Graph view**: draw the dependency graph — the whole project or the
+  neighbourhood of the selected group (±hops) — as a disposable node
+  tree coloured by sync status, to inspect "who uses this / what it
+  depends on" without leaving Blender. Nothing is saved; "Clear Graph"
+  removes it.
 - **Conflict resolution**: keep the .blend or the JSON version with a
   single click.
 - **JSON files visibility**: the Sync panel always shows where each

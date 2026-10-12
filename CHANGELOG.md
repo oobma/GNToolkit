@@ -6,6 +6,13 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Graph view (add-on).** A "Graph View…" action in the Sync panel
+  draws the dependency graph — the whole project or the neighbourhood of
+  the selected group (±`hops`) — as a **disposable node tree** in the
+  Node Editor: one node per group coloured by sync status, real links
+  for the dependencies, untracked references included and clearly
+  marked, plus a legend.  Nothing is saved: the board (and its helper
+  trees) disappears on reload, and "Clear Graph" removes it by hand.
 - **`gnt_check --render` (repository tool).** The JSON-side checker can
   now draw Graphviz diagrams from the same data: the whole project graph
   (with added/removed/changed coloring against another folder or git
