@@ -557,6 +557,85 @@ class GN_OT_SyncDiscardLocal(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Graph view: disposable dependency board in the node editor
+# ---------------------------------------------------------------------------
+
+class GN_OT_GraphView(bpy.types.Operator):
+    bl_idname = "gn.graph_view"
+    bl_label = "Graph View"
+    bl_description = ("Draw the dependency graph as a disposable node tree, "
+                      "coloured by sync status (nothing is saved)")
+    bl_options = {'REGISTER'}
+
+    mode: EnumProperty(
+        name="Scope",
+        items=(('NEIGHBORHOOD', "Around a group",
+                "The selected/active group and its dependencies/dependents"),
+               ('PROJECT', "Whole project", "Every tracked group")),
+        default='NEIGHBORHOOD',
+    )
+    hops: bpy.props.IntProperty(name="Hops", default=2, min=1, max=6)
+    include_externals: BoolProperty(
+        name="Include untracked references", default=True)
+    focus_name: StringProperty(name="Focus group", default="")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "mode")
+        if self.mode == 'NEIGHBORHOOD':
+            col.prop(self, "hops")
+        col.prop(self, "include_externals")
+
+    def execute(self, context):
+        from .graph_view import build_graph_tree, show_in_editor
+        if not sync_manager.metadata.get("tracked_groups"):
+            self.report({'ERROR'}, "No groups tracked.")
+            return {'CANCELLED'}
+        focus = self.focus_name
+        if self.mode == 'NEIGHBORHOOD' and not focus:
+            active = _get_active_tree(context)
+            if active is not None:
+                focus = active.name
+            if not focus:
+                self.report({'ERROR'},
+                            "Select a tracked group in a Node Editor (or "
+                            "switch to the whole project scope).")
+                return {'CANCELLED'}
+        report = build_graph_tree(mode=self.mode, focus=focus,
+                                  hops=self.hops,
+                                  include_externals=self.include_externals)
+        tree = bpy.data.node_groups.get(report["tree"])
+        shown = show_in_editor(context, tree) if tree is not None else False
+        msg = f"Graph: {report['nodes']} nodes, {report['links']} links"
+        if report["externals"]:
+            msg += f", {report['externals']} untracked reference(s)"
+        if report["clipped"]:
+            msg += f" ({report['clipped']} link(s) clipped)"
+        if not shown:
+            msg += " - open 'GNT Graph' from the editor header"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class GN_OT_GraphClear(bpy.types.Operator):
+    bl_idname = "gn.graph_clear"
+    bl_label = "Clear Graph"
+    bl_description = "Remove the disposable graph board and its helper trees"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .graph_view import clear_graph_trees, unpin_graph_editors
+        unpin_graph_editors(context)
+        removed = clear_graph_trees()
+        _tag_ui_redraw(context)
+        self.report({'INFO'}, f"Graph cleared ({removed} tree(s) removed)")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: Ignore changes (accept current state)
 # ---------------------------------------------------------------------------
 
@@ -2140,6 +2219,8 @@ classes = (
     GN_OT_SyncImportModified,
     GN_OT_SyncRetryFailed,
     GN_OT_SyncFailuresClear,
+    GN_OT_GraphView,
+    GN_OT_GraphClear,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,
     GN_OT_SyncImportGroupTrack,

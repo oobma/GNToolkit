@@ -309,6 +309,11 @@ class GN_PT_SyncPanel(bpy.types.Panel):
 
         _draw_changes_list(layout, context)
 
+        graph_row = layout.row(align=True)
+        graph_row.operator("gn.graph_view", text="Graph View…",
+                           icon='NODETREE')
+        graph_row.operator("gn.graph_clear", text="", icon='X')
+
         check_row = layout.row(align=True)
         if sync_manager.check_busy():
             done, total = sync_manager.check_progress()
