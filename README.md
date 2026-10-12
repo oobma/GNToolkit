@@ -352,7 +352,8 @@ The **Changes** list in the Sync panel shows every out-of-sync group
 (nothing is marked by default, like VS Code's Source Control):
 
 - **+** mark a group for the next save; **−** unmark it (the header has
-  mark-all / unmark-all),
+  mark-all / unmark-all). Marked rows regroup at the top under
+  **Marked (N)**, like VS Code's staged list,
 - **↩** discard the group's local edits and take the JSON version (asks
   for confirmation first),
 - **→** bring the JSON version into the .blend (Pull),
