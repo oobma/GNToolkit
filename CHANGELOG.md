@@ -31,6 +31,17 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- **The JSON side speaks "save"; "commit" now belongs to Git only (the
+  Sync panel gets a VS Code-style changes list).** "Commit with Review"
+  is replaced by a collapsible **Changes** list: one row per out-of-sync
+  group with mark (+), unmark (−), discard local edits (↩, with
+  confirmation) and bring-from-JSON (→) actions, plus a single
+  "Save N marked to JSON" button; nothing is marked by default.
+  Untracked dependency groups appear as rows with their own Track
+  button. The JSON-side labels become "Save … to JSON" ("Save Modified"
+  and "Save All" stay as shortcuts); the Git transport keeps
+  "Git Commit…" and gains VS Code's "Sync Changes" wording for its
+  pull+push button.
 - **One distribution for everything: the GitHub package is an extension
   too.** The release asset is now `GNToolkit-<version>-github.zip` — the
   same extension layout as the platform package plus the optional
