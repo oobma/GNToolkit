@@ -381,7 +381,7 @@ def _change_rows() -> dict:
     for uid, entry in sync_manager.load_report.items():
         statuses.setdefault(uid, entry.get("status"))
     saveable = (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT,
-                SyncStatus.JSON_MISSING)
+                SyncStatus.JSON_MODIFIED, SyncStatus.JSON_MISSING)
     pullable = (SyncStatus.JSON_MODIFIED, SyncStatus.CONFLICT,
                 SyncStatus.ORPHAN)
     discardable = (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT)
