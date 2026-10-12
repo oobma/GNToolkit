@@ -609,7 +609,10 @@ class GN_OT_GraphView(bpy.types.Operator):
                                   include_externals=self.include_externals)
         tree = bpy.data.node_groups.get(report["tree"])
         shown = show_in_editor(context, tree) if tree is not None else False
-        msg = f"Graph: {report['nodes']} nodes, {report['links']} links"
+        cables = report["links"] - report.get("reroutes", 0)
+        msg = f"Graph: {report['nodes']} nodes, {cables} links"
+        if report.get("reroutes"):
+            msg += f", {report['reroutes']} routing nodes"
         if report["externals"]:
             msg += f", {report['externals']} untracked reference(s)"
         if report["clipped"]:

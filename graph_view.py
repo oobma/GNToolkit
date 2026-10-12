@@ -19,6 +19,28 @@ from .sync_manager import sync_manager
 GRAPH_TREE_NAME = "GNT Graph"
 PORT_TREE_PREFIX = "GNT Graph Port"
 MAX_PORTS = 12
+COL_GAP = 40.0        # air between the widest node of two columns
+BAR_HEIGHT = 28.0     # collapsed bar with up to three sockets
+SOCKET_ROW = 10.0     # every socket beyond the third grows the bar
+BAR_GAP = 16.0        # air between stacked bars
+REROUTE_W = 10.0      # requested dot box width
+REROUTE_H = 30.0      # requested dot box height (suppresses the 100-default
+                      # drop: the dot draws ~50 px below location when the
+                      # height stays at its 100 px default)
+REROUTE_ROW = 110.0   # lane height reserved per routing point: the dot can
+                      # draw anywhere within ±55 px of its location, so the
+                      # row is sized for the worst case and can never touch
+                      # a neighbouring bar (16 px of air still guaranteed)
+
+
+def _bar_height(sockets: int) -> float:
+    """Drawn height of a collapsed group node, measured on 5.1/5.2.
+
+    Blender keeps a compact socket slot per socket beyond the third
+    (1-3 sockets -> 28 px, then +10 px each), so a node with twelve
+    inputs draws ~118 px tall and the layout must reserve that.
+    """
+    return BAR_HEIGHT + max(0, int(sockets) - 3) * SOCKET_ROW
 LEGEND_ORDER = ("synced", "blend_modified", "json_modified", "conflict",
                 "orphan", "json_missing", "untracked")
 
@@ -146,7 +168,12 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
         label = f"{name} (untracked)" if name in ext_set else name
         labels[name] = ("* " + label) if name == focus else label
     widths = {n: _fitted_width(labels[n]) for n in kept_names}
-    layout = layered_layout(kept_names, kept_edges, widths=widths)
+    heights = {n: _bar_height(1 + min(indegree.get(n, 0), MAX_PORTS))
+               for n in kept_names}
+    routes: dict = {}
+    layout = layered_layout(kept_names, kept_edges, widths=widths,
+                            heights=heights, gap=BAR_GAP,
+                            routes_out=routes, route_row=REROUTE_ROW)
 
     graph = bpy.data.node_groups.new(GRAPH_TREE_NAME, "GeometryNodeTree")
     graph.use_fake_user = False
@@ -158,7 +185,8 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
         node.label = labels[name]
         node.node_tree = _port_tree(indegree.get(name, 0))
         x, y = layout.get(name, (0.0, 0.0))
-        node.location = (x, y)
+        node.location = (x - widths[name] / 2.0,
+                         y + heights[name] / 2.0)
         node.hide = True
         node.width = widths[name]
         key = status_keys.get(name, "untracked")
@@ -167,6 +195,7 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
         nodes[name] = node
 
     clipped = 0
+    reroutes = 0
     used = {n: 0 for n in kept_names}
     for a, b in kept_edges:
         src = nodes.get(a)
@@ -178,7 +207,24 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
             clipped += 1
             continue
         try:
-            graph.links.new(src.outputs[0], dst.inputs[slot])
+            tail = src.outputs[0]
+            for wx, wy in routes.get((a, b), ()):
+                rout = graph.nodes.new("NodeReroute")
+                rout.name = f"r{reroutes:04d}"
+                rout.width = REROUTE_W
+                rout.height = REROUTE_H
+                # Anchor the location AT the waypoint (+5 south) with the
+                # height pinned: the Reroute draws its dot at `location`
+                # when the height is 30, but 50 px lower while it keeps
+                # the 100 px default — with either behaviour the dot stays
+                # within ~15 px of the waypoint, inside the 16-21 px of
+                # lane clearance the layout leaves around each routing row.
+                rout.location = (wx - REROUTE_W / 2.0,
+                                 wy + REROUTE_W / 2.0)
+                graph.links.new(tail, rout.inputs[0])
+                tail = rout.outputs[0]
+                reroutes += 1
+            graph.links.new(tail, dst.inputs[slot])
         except Exception:
             clipped += 1
             continue
@@ -198,11 +244,20 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
         node.use_custom_color = True
         node.color = STATUS_COLORS[key]
 
+    # Unused sockets stay hidden by default — the state Ctrl+H toggles
+    # ("Toggle Hidden Node Sockets"): only the sockets that carry a link
+    # are drawn, so the compact bars stay clean.
+    for node in graph.nodes:
+        for sock in list(node.inputs) + list(node.outputs):
+            if hasattr(sock, "hide"):
+                sock.hide = not sock.is_linked
+
     return {
         "tree": graph.name,
         "nodes": len(kept_names),
         "edges": len(kept_edges),
         "links": len(graph.links),
+        "reroutes": reroutes,
         "clipped": clipped,
         "externals": len(extra_externals),
         "focus": focus if mode == "NEIGHBORHOOD" else "",
