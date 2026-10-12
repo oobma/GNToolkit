@@ -47,6 +47,28 @@ STATUS_LABELS = {
     SyncStatus.JSON_MISSING: "JSON File Missing",
 }
 
+
+def _layout_icon(*candidates: str) -> str:
+    """First candidate that exists in this Blender's layout icon enum.
+
+    Icon sets differ between versions (e.g. STATUS_WARNING exists in
+    5.2 but not in 5.1, where WARNING is the valid one).  A hardcoded
+    wrong name crashes panel draw at runtime only.
+    """
+    try:
+        valid = {item.identifier for item in
+                 bpy.types.UILayout.bl_rna.functions["label"]
+                 .parameters["icon"].enum_items}
+    except Exception:
+        valid = set()
+    for candidate in candidates:
+        if candidate in valid:
+            return candidate
+    return 'INFO'
+
+
+STATUS_WARNING_ICON = _layout_icon('STATUS_WARNING', 'WARNING', 'INFO')
+
 ISSUE_TYPE_ICONS = {
     IssueType.ATTRIBUTE_MISSING: 'ERROR',
     IssueType.GEOMETRY_DEGENERATE: 'ERROR',
@@ -172,7 +194,7 @@ def _draw_changes_list(layout, context) -> None:
     tools = control.row(align=True)
     tools.alignment = 'RIGHT'
     tools.operator("gn.sync_stage_all", text="", icon='PLUS')
-    tools.operator("gn.sync_unstage_all", text="", icon='MINUS')
+    tools.operator("gn.sync_unstage_all", text="", icon='REMOVE')
 
     save_row = box.row()
     save_row.enabled = staged_count > 0
@@ -189,7 +211,7 @@ def _draw_changes_list(layout, context) -> None:
         actions.alignment = 'RIGHT'
         if r["saveable"]:
             op = actions.operator("gn.sync_change_stage", text="",
-                                  icon='MINUS' if r["staged"] else 'PLUS')
+                                  icon='REMOVE' if r["staged"] else 'PLUS')
             op.sync_uuid = r["uid"]
             op.stage = not r["staged"]
         if r["discardable"]:
@@ -338,7 +360,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                     if plan["external"]:
                         picker_box.label(
                             text=f"Unconnected refs: {', '.join(plan['external'])}",
-                            icon='STATUS_WARNING')
+                            icon=STATUS_WARNING_ICON)
                     for name, other_pkg in _tracked_elsewhere_notes(state, plan):
                         picker_box.label(
                             text=f"{name} — tracked to: {other_pkg} (not this package)",

@@ -472,8 +472,8 @@ def format_issue_report(issues: list[ValidationIssue]) -> str:
     lines.append("")
 
     for i, issue in enumerate(issues, 1):
-        icon = "ERROR" if issue.severity == IssueSeverity.ERROR else "WARN"
-        lines.append(f"[{i}] [{icon}] {issue.issue_type.value.upper()}")
+        tag = "ERROR" if issue.severity == IssueSeverity.ERROR else "WARN"
+        lines.append(f"[{i}] [{tag}] {issue.issue_type.value.upper()}")
         lines.append(f"    Group: {issue.tree_name}")
         lines.append(f"    Node: {issue.node_name}")
         if issue.socket_name:
