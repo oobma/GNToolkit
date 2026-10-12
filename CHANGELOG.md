@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **`gnt_check --render` (repository tool).** The JSON-side checker can
+  now draw Graphviz diagrams from the same data: the whole project graph
+  (with added/removed/changed coloring against another folder or git
+  revision), the neighborhood of one group (`--focus`/`--hops`), a single
+  group — optionally at its stored node positions — and a node-level
+  semantic diff; SVG by default, PNG for the detail views with `--png`.
+  Needs the Graphviz binaries (a missing install exits with a clear
+  message; `--dot-only` writes just the source).  Placement is not
+  canonical and the docs say so.  The case-study graphs under
+  `docs/case-studies/` are regenerated with this command.
 - **Configurable network timeout.** A "Network Timeout" preference
   (10 s–1 h, 5 minutes by default) governs how long fetch, pull and push
   may take before cancelling, on both engines. The automatic fetch on

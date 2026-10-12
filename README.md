@@ -95,6 +95,11 @@ python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --health
 
 # Compare two or more projects by content: shared logic, diverging forks
 python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups
+
+# Draw diagrams (needs Graphviz; SVG by default): whole project or the
+# neighborhood of one group, a single group, or a semantic diff
+python gnt_check.py --render deps NodeGroups/ --focus "My Group" --hops 2
+python gnt_check.py --render diff old.json --new new.json
 ```
 
 Audits answer the project questions that come before a change:
@@ -111,6 +116,15 @@ The same audits are available inside Blender: the **Sync Issues** panel
 has an **Audit** section (Run / Clear) that reports duplicates, JSON
 health and the dependency impact of the group selected in the Node
 Editor.
+
+`--render` draws the same JSONs as diagrams (project graph with
+added/removed/changed coloring, a focused neighborhood, a single group
+optionally at its stored node positions, or a node-level diff; SVG, or
+PNG on the detail views).  It needs the Graphviz binaries and, unlike the rest of the
+checker, **its placement is not canonical** — a different-looking render
+does not mean the project changed.  The graphs in
+[docs/case-studies](docs/case-studies/subd-to-compound/README.md) are
+produced this way.
 
 The checker is the standalone `gnt_check.py` script from this repository
 — a GitHub repository tool, not part of the extension package; fetch it

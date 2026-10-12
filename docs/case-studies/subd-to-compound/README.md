@@ -82,8 +82,21 @@ churn. Comparing raw JSON text (or socket ids) would have flagged this group as
 - `python gnt_check.py --cross old/NodeGroups new/NodeGroups` — pure Python, no Blender:
   lists *forks* (same group name, different content) and *shared* logic between the two
   exports, resolving the change set (581/1/1/0).
-- A diagnostic Graphviz script renders the same JSONs: the project dependency graph,
-  a focused neighborhood, a per-group semantic diff and a single-group graph.
+- The drawings come from the same JSONs through `gnt_check.py --render` (a Graphviz
+  diagram tool; SVG by default, PNG added for the detail views with `--png`).  When
+  the two exports live in a git repository, the revisions are read directly with
+  `--repo`/`--subdir`:
+
+  ```
+  python gnt_check.py --render deps <old-rev> --new <new-rev> --repo <repo> --subdir NodeGroups
+  python gnt_check.py --render deps <old-rev> --new <new-rev> --repo <repo> --subdir NodeGroups \
+      --focus "SP - SubD to Compound" --hops 2 --png
+  python gnt_check.py --render diff <old.json> --new <new.json> --png
+  python gnt_check.py --render group <new.json> --png
+  ```
+
+  The placement is decided by Graphviz and is **not canonical**: a different-looking
+  render does not mean the project changed — the hashes remain the source of truth.
 - Diff semantics: canonical node comparison (node positions and connected-socket
   defaults are ignored — cosmetic noise), links identified by socket name (ids are
   session-local).
