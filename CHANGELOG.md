@@ -13,6 +13,12 @@ All notable changes to this project are documented in this file.
   for the dependencies, untracked references included and clearly
   marked, plus a legend.  Nothing is saved: the board (and its helper
   trees) disappears on reload, and "Clear Graph" removes it by hand.
+  "Graph Poster…" exports the same board to a standalone **SVG poster**
+  (no Graphviz, opens in any browser) with the legend and per-status
+  counts.  Groups are drawn as compact bars sized to fit their name; the
+  columns are packed by real node widths, nodes are aligned and swapped
+  to keep the cables short and the crossings low, and links flow
+  left-to-right.
 - **`gnt_check --render` (repository tool).** The JSON-side checker can
   now draw Graphviz diagrams from the same data: the whole project graph
   (with added/removed/changed coloring against another folder or git

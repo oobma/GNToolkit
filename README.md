@@ -255,8 +255,13 @@ repository — never part of the extension zip.
 - **Graph view**: draw the dependency graph — the whole project or the
   neighbourhood of the selected group (±hops) — as a disposable node
   tree coloured by sync status, to inspect "who uses this / what it
-  depends on" without leaving Blender. Nothing is saved; "Clear Graph"
-  removes it.
+  depends on" without leaving Blender. Groups appear as compact bars
+  sized to fit their names; columns are packed by real widths and nodes
+  are aligned/reordered to keep the cables short and readable. Nothing
+  is saved; "Clear Graph" removes it.
+- **Graph poster**: the same board exports to a standalone **SVG poster**
+  (no Graphviz needed; opens in any browser) with the status legend and
+  per-status counts — handy for documentation and sharing.
 - **Conflict resolution**: keep the .blend or the JSON version with a
   single click.
 - **JSON files visibility**: the Sync panel always shows where each
