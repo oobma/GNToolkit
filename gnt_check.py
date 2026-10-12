@@ -17,6 +17,20 @@ Audit modes (same pure-Python core, no Blender):
 Cross-project identity (same pure-Python core, no Blender):
     python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups [--strict]
 
+Render modes (Graphviz diagrams — repo/documentation tool, NOT canonical):
+    python gnt_check.py --render deps <folder> [--focus GROUP] [--hops N]
+                        [--new <other_folder>] [--out DIR] [--png]
+    python gnt_check.py --render stats <folder>
+    python gnt_check.py --render group <json_file> [--layout dot|real]
+    python gnt_check.py --render diff A B [--repo R --subdir D] [--layout dot|real]
+
+    SVG by default (PNG for detail views with --png).  Needs the Graphviz
+    ``dot``/``neato`` binary on PATH (or a portable copy under
+    %TEMP%\\opencode\\graphviz\\*\\bin), except with ``--dot-only``, which
+    just writes the ``.dot`` source.  Placement is decided by Graphviz and
+    may vary between its versions: a different-looking render does NOT mean
+    the project changed — the hashes remain the source of truth.
+
 Baseline sources:
     * a .gntsync sidecar next to a .blend (paths relative to the sidecar dir)
     * a flat JSON mapping group name -> canonical hash
@@ -39,9 +53,12 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import glob
 import importlib.util
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -490,6 +507,579 @@ def run_diff(path_a: str, path_b: str, repo: str | None = None,
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Render modes (Graphviz) — repo/documentation tool, not canonical
+# ---------------------------------------------------------------------------
+
+_RENDER_STYLES = {
+    "added": ('fillcolor="#dcf5dc", color="#2e7d32"', "#2e7d32", "solid"),
+    "removed": ('fillcolor="#f9dcdc", color="#b3261e"', "#b3261e", "dashed"),
+    "changed": ('fillcolor="#fff1c9", color="#a9791c"', "#a9791c", "solid"),
+    "same": ('fillcolor="white", color="#9e9e9e"', "#cfd4da", "solid"),
+}
+
+_RENDER_CHIP = {
+    "added": ("#dcf5dc", "#2e7d32"),
+    "removed": ("#f9dcdc", "#b3261e"),
+    "changed": ("#fff1c9", "#a9791c"),
+    "same": ("#ffffff", "#9e9e9e"),
+}
+
+_RENDER_NOTE = ("note: rendered graphs are not canonical — Graphviz decides "
+                "the placement and it may differ between versions; a "
+                "different-looking render does not mean the project changed "
+                "(the hashes remain the source of truth).")
+
+
+def _render_find_bin(name: str):
+    exe = shutil.which(name)
+    if exe:
+        return exe
+    # Standard Windows install locations (a fresh install may not be on the
+    # PATH of already-running processes).
+    for base in (os.environ.get("ProgramFiles") or r"C:\Program Files",
+                 os.environ.get("ProgramFiles(x86)"),
+                 os.path.join(os.environ.get("LOCALAPPDATA") or "",
+                              "Programs")):
+        if not base:
+            continue
+        candidate = os.path.join(base, "Graphviz", "bin", name + ".exe")
+        if os.path.isfile(candidate):
+            return candidate
+    pattern = os.path.join(os.environ.get("TEMP", ""), "opencode",
+                           "graphviz", "*", "bin", name + ".exe")
+    candidates = glob.glob(pattern)
+    return candidates[0] if candidates else None
+
+
+def _render_missing_bin(engine: str) -> int:
+    print(f"error: Graphviz '{engine}' not found. Install Graphviz "
+          "(https://graphviz.org/download/) and make sure it is on PATH, or "
+          "pass --dot-only to write just the .dot source. (Rendering is a "
+          "repo/documentation tool; the JSON check does not need it.)")
+    return 2
+
+
+def _render_q(text) -> str:
+    return str(text).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _render_lbl(*parts) -> str:
+    return "\\n".join(_render_q(p) for p in parts)
+
+
+def _render_html(text) -> str:
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def _render_chip_label(title_lines, chips) -> str:
+    span = max(1, len(chips))
+    rows = "".join(
+        f'<TR><TD COLSPAN="{span}" BORDER="0">{_render_html(line)}</TD></TR>'
+        for line in title_lines)
+    cells = "".join(
+        f'<TD BGCOLOR="{fill}" COLOR="{border}" BORDER="1" CELLPADDING="6">'
+        f'<FONT POINT-SIZE="11">{_render_html(text)}</FONT></TD>'
+        for text, fill, border in chips)
+    return (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="8">{rows}'
+            f"<TR>{cells}</TR></TABLE>>")
+
+
+def _render_slug(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", text)[:80] or "graph"
+
+
+def _render_default_out(target: str) -> str:
+    return os.path.join(os.path.abspath(os.getcwd()), "gnt_render")
+
+
+def _render_write_and_run(dot_text: str, out_base: str, engine: str,
+                          extra=None, png: bool = False,
+                          dot_only: bool = False) -> list:
+    dot_path = out_base + ".dot"
+    os.makedirs(os.path.dirname(dot_path), exist_ok=True)
+    with open(dot_path, "w", encoding="utf-8") as f:
+        f.write(dot_text)
+    if dot_only:
+        return [dot_path]
+    args = [engine] + (extra or [])
+    svg = out_base + ".svg"
+    subprocess.run(args + ["-Tsvg", dot_path, "-o", svg], check=True)
+    outs = [dot_path, svg]
+    if png:
+        png_path = out_base + ".png"
+        subprocess.run(args + ["-Tpng", dot_path, "-o", png_path], check=True)
+        outs.append(png_path)
+    return outs
+
+
+def _render_engine(layout: str, dot_only: bool):
+    """(engine path or None, error code) — None engine only with --dot-only."""
+    if dot_only:
+        return "dot", 0
+    engine = _render_find_bin("dot" if layout == "dot" else "neato")
+    if not engine:
+        return None, _render_missing_bin("dot" if layout == "dot" else "neato")
+    return engine, 0
+
+
+def _render_deps_of(data: dict) -> list:
+    refs = []
+    for node in data.get("nodes", []):
+        if node.get("type") == "GeometryNodeGroup":
+            ref = node.get("node_tree_reference")
+            if ref:
+                refs.append(ref)
+    return refs
+
+
+def _render_stats(folder: str) -> int:
+    groups = _load_diff_groups(folder)
+    rows = []
+    for name, data in groups.items():
+        rows.append((len(data.get("nodes", [])), len(data.get("links", [])),
+                     len(_render_deps_of(data)), name))
+    rows.sort(reverse=True)
+    print(f"{len(groups)} groups in {folder}")
+    for nodes, links, refs, name in rows[:15]:
+        print(f"  {nodes:4d} nodes  {links:4d} links  {refs:2d} group-refs  "
+              f"{name}")
+    if rows:
+        med = rows[len(rows) // 2]
+        print(f"median: {med[0]} nodes — {med[3]}")
+    counts = {}
+    for _name, data in groups.items():
+        for ref in set(_render_deps_of(data)):
+            counts[ref] = counts.get(ref, 0) + 1
+    for ref, n in sorted(counts.items(), key=lambda kv: -kv[1])[:5]:
+        print(f"  most referenced: {n}x  {ref}")
+    return 0
+
+
+def _render_side_groups(side: str, repo, subdir: str) -> dict:
+    return _resolve_diff_side(side, repo, subdir)
+
+
+def _render_deps(folder: str, focus, hops: int, out_dir: str, png: bool,
+                 new_side, dot_only: bool, repo, subdir: str) -> int:
+    t0 = time.time()
+    groups = _render_side_groups(folder, repo, subdir)
+    new_groups = (_render_side_groups(new_side, repo, subdir)
+                  if new_side else {})
+    names = set(groups) | set(new_groups)
+
+    status = None
+    if new_side:
+        status = {}
+        for name in names:
+            if name not in groups:
+                status[name] = "added"
+            elif name not in new_groups:
+                status[name] = "removed"
+            elif _render_tree_same(groups[name], new_groups[name]):
+                status[name] = "same"
+            else:
+                status[name] = "changed"
+
+    edges = set()
+    for data in list(groups.values()) + list(new_groups.values()):
+        for ref in set(_render_deps_of(data)):
+            edges.add((data.get("name"), ref))
+
+    nodes = set(names)
+    if focus:
+        fwd, rev = {}, {}
+        for a, b in edges:
+            fwd.setdefault(a, set()).add(b)
+            rev.setdefault(b, set()).add(a)
+        keep = {focus} if focus in names else set()
+        frontier = set(keep)
+        for _ in range(hops):
+            nxt = set()
+            for n in frontier:
+                nxt |= fwd.get(n, set()) | rev.get(n, set())
+            nxt -= keep
+            keep |= nxt
+            frontier = nxt
+        nodes = keep
+        edges = {(a, b) for a, b in edges if a in nodes and b in nodes}
+        print(f"focus '{focus}' hops {hops}: {len(nodes)} nodes kept")
+
+    ext = sorted({b for _a, b in edges if b not in names})
+    lines = [
+        "digraph gnt_deps {",
+        "  rankdir=LR;",
+    ]
+    if status is not None:
+        counts = {k: sum(1 for v in status.values() if v == k)
+                  for k in _RENDER_STYLES}
+        label = _render_chip_label(
+            [f"project diff: {os.path.basename(os.path.normpath(folder))} -> "
+             f"{os.path.basename(os.path.normpath(new_side))}"],
+            [(f"added {counts['added']}", *_RENDER_CHIP["added"]),
+             (f"removed {counts['removed']}", *_RENDER_CHIP["removed"]),
+             (f"changed {counts['changed']}", *_RENDER_CHIP["changed"]),
+             (f"same {counts['same']}", *_RENDER_CHIP["same"])])
+        lines.append(f'  graph [label={label}, labelloc=t, '
+                     'fontname="Segoe UI", fontsize=12];')
+    lines += [
+        '  graph [overlap=false, splines=true, bgcolor="white", pad=0.3];',
+        '  node [shape=box, style="rounded,filled", fillcolor="#eef3fb", '
+        'color="#6b86b1", fontname="Segoe UI", fontsize=10];',
+        '  edge [color="#9aa7b8", arrowsize=0.7];',
+    ]
+    for n in sorted(nodes):
+        st = status.get(n) if status is not None else None
+        if st is None:
+            lines.append(f'  "{_render_q(n)}" [label="{_render_q(n)}"];')
+        else:
+            attrs, _ec, _es = _RENDER_STYLES[st]
+            lines.append(f'  "{_render_q(n)}" [label="{_render_q(n)}", '
+                         f"{attrs}];")
+    for b in ext:
+        lines.append(f'  "{_render_q(b)}" [label="{_render_q(b)}", '
+                     'style="rounded,dashed", fillcolor="#f6f6f6", '
+                     'color="#b9b9b9", fontcolor="#777777"];')
+    for a, b in sorted(edges):
+        attrs = ('style=dashed, color="#c9c9c9"'
+                 if b not in names else "")
+        lines.append(f'  "{_render_q(a)}" -> "{_render_q(b)}" [{attrs}];')
+    lines.append("}")
+    lines.append("")
+
+    engine, code = _render_engine("dot", dot_only)
+    if engine is None:
+        return code
+    prefix = "depsdiff_" if status is not None else "deps_"
+    base = os.path.join(out_dir, prefix + (_render_slug(focus) if focus
+                                           else "full"))
+    outs = _render_write_and_run("\n".join(lines), base, engine, png=png,
+                                 dot_only=dot_only)
+    dt = round(time.time() - t0, 2)
+    if status is not None:
+        counts = {k: sum(1 for v in status.values() if v == k)
+                  for k in _RENDER_STYLES}
+        print(f"status: same {counts['same']} | changed {counts['changed']} | "
+              f"added {counts['added']} | removed {counts['removed']}")
+    print(f"{len(nodes)} groups, {len(edges)} edges in {dt}s")
+    for path in outs:
+        print(f"  {path}  ({os.path.getsize(path)} bytes)")
+    return 0
+
+
+def _render_node_attrs(node: dict) -> str:
+    t = node.get("type", "")
+    if t == "GeometryNodeGroup":
+        return 'fillcolor="#dbe8ff", color="#4a6fb5"'
+    if t == "NodeGroupInput":
+        return 'fillcolor="#ddf3dd", color="#4f9b4f"'
+    if t == "NodeGroupOutput":
+        return 'fillcolor="#ededed", color="#888888"'
+    if t.startswith(("GeometryNodeRepeat", "GeometryNodeSimulation",
+                     "GeometryNodeForeach")):
+        return 'fillcolor="#ffe9cc", color="#d78a2a"'
+    return 'fillcolor="white", color="#666666"'
+
+
+def _render_bypass_reroutes(nodes: list, links: list):
+    reroute_names = {n.get("name") for n in nodes
+                     if n.get("type") == "NodeReroute"}
+    if not reroute_names:
+        return nodes, links
+    kept = [n for n in nodes if n.get("name") not in reroute_names]
+    incoming = {}
+    for link in links:
+        incoming.setdefault(link.get("to_node"), link)
+    out = []
+    for link in links:
+        if (link.get("from_node") in reroute_names
+                or link.get("to_node") in reroute_names):
+            continue
+        out.append(link)
+    for link in links:
+        if (link.get("from_node") not in reroute_names
+                or link.get("to_node") in reroute_names):
+            continue
+        source = link.get("from_node")
+        upstream = None
+        guard = set()
+        while source in reroute_names and source not in guard:
+            guard.add(source)
+            upstream = incoming.get(source)
+            if upstream is None:
+                source = None
+                break
+            source = upstream.get("from_node")
+        if source is None or source in reroute_names or upstream is None:
+            continue
+        out.append({**link, "from_node": source,
+                    "from_socket_name": upstream.get("from_socket_name")})
+    return kept, out
+
+
+def _render_group_side(data: dict, name: str, layout: str, reroutes: str,
+                       lines: list, ids: dict) -> None:
+    nodes = data.get("nodes", [])
+    links = data.get("links", [])
+    if reroutes == "hide":
+        nodes, links = _render_bypass_reroutes(nodes, links)
+    for i, node in enumerate(nodes):
+        t = node.get("type", "")
+        if reroutes == "dot" and t == "NodeReroute":
+            attrs = 'shape=point, width=0.06, label=""'
+            if layout == "real":
+                x, y = node.get("location", [0, 0])
+                attrs += f', pos="{x},{-y}!"'
+            lines.append(f'  n{i} [{attrs}];')
+            ids[node.get("name")] = f"n{i}"
+            continue
+        parts = [node.get("name", "")]
+        if t == "GeometryNodeGroup" and node.get("node_tree_reference"):
+            parts.append("(" + node["node_tree_reference"] + ")")
+        elif t and t != "GeometryNodeGroup":
+            parts.append("[" + t.replace("GeometryNode", "")
+                         .replace("NodeGroup", "") + "]")
+        attrs = _render_node_attrs(node)
+        if layout == "real":
+            x, y = node.get("location", [0, 0])
+            attrs += f', pos="{x},{-y}!"'
+        lines.append(f'  n{i} [label="{_render_lbl(*parts)}", {attrs}];')
+        ids[node.get("name")] = f"n{i}"
+    for link in links:
+        a = ids.get(link.get("from_node"))
+        b = ids.get(link.get("to_node"))
+        if a and b:
+            tip = _render_q(f'{link.get("from_socket_name", "")} -> '
+                            f'{link.get("to_socket_name", "")}')
+            lines.append(f'  {a} -> {b} [tooltip="{tip}"];')
+
+
+def _render_group(json_path: str, layout: str, out_dir: str, png: bool,
+                  reroutes: str, dot_only: bool, repo, subdir: str) -> int:
+    t0 = time.time()
+    groups = _render_side_groups(json_path, repo, subdir)
+    if len(groups) == 1:
+        data = next(iter(groups.values()))
+    else:
+        data = None
+        for gname, gdata in groups.items():
+            if gdata.get("name") == os.path.basename(json_path)[:-5]:
+                data = gdata
+                break
+        if data is None:
+            print(f"error: '{json_path}' does not contain a single group; "
+                  "use --render deps for folders/packages")
+            return 2
+    name = data.get("name") or os.path.basename(json_path)
+    reroute_count = sum(1 for n in data.get("nodes", [])
+                        if n.get("type") == "NodeReroute")
+
+    ids = {}
+    lines = [
+        f'digraph "{_render_q(name)}" {{',
+        "  rankdir=LR;",
+        '  graph [bgcolor="white", pad=0.3];',
+        '  node [shape=box, style="rounded,filled", fontname="Segoe UI", '
+        'fontsize=10];',
+        '  edge [color="#7a8aa0", arrowsize=0.7];',
+    ]
+    _render_group_side(data, name, layout, reroutes, lines, ids)
+    lines.append("}")
+
+    engine, code = _render_engine(layout, dot_only)
+    if engine is None:
+        return code
+    extra = ["-n2"] if layout == "real" else None
+    suffix = "" if reroutes == "box" else "_" + reroutes
+    base = os.path.join(out_dir,
+                        "group_" + _render_slug(name) + "_" + layout + suffix)
+    outs = _render_write_and_run("\n".join(lines), base, engine, extra=extra,
+                                 png=png, dot_only=dot_only)
+    dt = round(time.time() - t0, 2)
+    print(f'"{name}": {len(data.get("nodes", []))} nodes, '
+          f'{len(data.get("links", []))} links, layout={layout}, '
+          f'reroutes={reroutes} ({reroute_count} found) in {dt}s')
+    for path in outs:
+        print(f"  {path}  ({os.path.getsize(path)} bytes)")
+    return 0
+
+
+def _render_node_map(data: dict) -> dict:
+    return {n.get("name"): n for n in data.get("nodes", []) if n.get("name")}
+
+
+def _render_semantic(node: dict, connected: set) -> str:
+    hu = _load_hash_utils()
+    copy = dict(node)
+    copy["inputs"] = [
+        (dict(inp, default_value=None) if inp.get("identifier") in connected
+         else inp)
+        for inp in node.get("inputs", [])
+    ]
+    core = hu.canonicalize_node_tree_data({"nodes": [copy], "links": []})
+    return json.dumps(core, sort_keys=True, separators=(",", ":"))
+
+
+def _render_link_key(link: dict):
+    return (link.get("from_node"), link.get("from_socket_name"),
+            link.get("to_node"), link.get("to_socket_name"))
+
+
+def _render_tree_same(a: dict, b: dict) -> bool:
+    def prep(data):
+        conn = {}
+        for link in data.get("links", []):
+            conn.setdefault(link.get("to_node"), set()).add(
+                link.get("to_socket_id"))
+        sigs = {}
+        for node in data.get("nodes", []):
+            if node.get("name"):
+                sigs[node["name"]] = _render_semantic(
+                    node, conn.get(node["name"], set()))
+        links = sorted(tuple(link.get(k) for k in (
+            "from_node", "from_socket_name", "to_node", "to_socket_name"))
+            for link in data.get("links", []))
+        return sigs, links
+    return prep(a) == prep(b)
+
+
+def _render_diff(old_path: str, new_path: str, layout: str, out_dir: str,
+                 png: bool, reroutes: str, dot_only: bool, repo,
+                 subdir: str) -> int:
+    t0 = time.time()
+    old_groups = _render_side_groups(old_path, repo, subdir)
+    new_groups = _render_side_groups(new_path, repo, subdir)
+
+    def single(groups, path):
+        if len(groups) == 1:
+            return next(iter(groups.values()))
+        base = os.path.basename(path)[:-5]
+        return groups.get(base)
+
+    old = single(old_groups, old_path)
+    new = single(new_groups, new_path)
+    if old is None or new is None:
+        print("error: --render diff needs paths that resolve to a single "
+              "group each (a JSON file or a one-group folder)")
+        return 2
+
+    name = new.get("name") or old.get("name") or os.path.basename(new_path)
+    old_nodes, old_links = old.get("nodes", []), old.get("links", [])
+    new_nodes, new_links = new.get("nodes", []), new.get("links", [])
+    reroute_count = sum(1 for n in new_nodes if n.get("type") == "NodeReroute")
+    if reroutes == "hide":
+        old_nodes, old_links = _render_bypass_reroutes(old_nodes, old_links)
+        new_nodes, new_links = _render_bypass_reroutes(new_nodes, new_links)
+    old = {"nodes": old_nodes, "links": old_links}
+    new = {"nodes": new_nodes, "links": new_links}
+
+    om, nm = _render_node_map(old), _render_node_map(new)
+
+    def conn_map(data):
+        m = {}
+        for link in data.get("links", []):
+            m.setdefault(link.get("to_node"), set()).add(
+                link.get("to_socket_id"))
+        return m
+
+    conn_old, conn_new = conn_map(old), conn_map(new)
+    status = {}
+    for gname in set(om) | set(nm):
+        if gname not in om:
+            status[gname] = "added"
+        elif gname not in nm:
+            status[gname] = "removed"
+        elif (_render_semantic(om[gname], conn_old.get(gname, set()))
+              != _render_semantic(nm[gname], conn_new.get(gname, set()))):
+            status[gname] = "changed"
+        else:
+            status[gname] = "same"
+    counts = {k: sum(1 for v in status.values() if v == k)
+              for k in _RENDER_STYLES}
+
+    links_old = {_render_link_key(l) for l in old_links}
+    links_new = {_render_link_key(l) for l in new_links}
+    l_added = links_new - links_old
+    l_removed = links_old - links_new
+
+    label = _render_chip_label(
+        [f"diff: {name}"],
+        [(f"added {counts['added']}", *_RENDER_CHIP["added"]),
+         (f"removed {counts['removed']}", *_RENDER_CHIP["removed"]),
+         (f"changed {counts['changed']}", *_RENDER_CHIP["changed"]),
+         (f"same {counts['same']}", *_RENDER_CHIP["same"]),
+         (f"links added {len(l_added)}", *_RENDER_CHIP["added"]),
+         (f"links removed {len(l_removed)}", *_RENDER_CHIP["removed"])])
+
+    lines = [
+        f'digraph "{_render_q(name)}" {{',
+        "  rankdir=LR;",
+        f'  graph [label={label}, labelloc=t, fontname="Segoe UI", '
+        'fontsize=12];',
+        '  graph [bgcolor="white", pad=0.3];',
+        '  node [shape=box, style="rounded,filled", fontname="Segoe UI", '
+        'fontsize=10];',
+    ]
+    ids = {}
+    for i, node_name in enumerate(sorted(status)):
+        node = nm.get(node_name) or om[node_name]
+        t = node.get("type", "")
+        if reroutes == "dot" and t == "NodeReroute":
+            attrs = 'shape=point, width=0.06, label=""'
+            if layout == "real":
+                loc = node.get("location") or [0, 0]
+                attrs += f', pos="{loc[0]},{-loc[1]}!"'
+            lines.append(f'  n{i} [{attrs}];')
+            ids[node_name] = f"n{i}"
+            continue
+        parts = [node_name]
+        if t == "GeometryNodeGroup" and node.get("node_tree_reference"):
+            parts.append("(" + node["node_tree_reference"] + ")")
+        elif t and t != "GeometryNodeGroup":
+            parts.append("[" + t.replace("GeometryNode", "")
+                         .replace("NodeGroup", "") + "]")
+        attrs, _ec, _es = _RENDER_STYLES[status[node_name]]
+        if layout == "real":
+            loc = node.get("location") or [0, 0]
+            attrs += f', pos="{loc[0]},{-loc[1]}!"'
+        lines.append(f'  n{i} [label="{_render_lbl(*parts)}", {attrs}];')
+        ids[node_name] = f"n{i}"
+    for key in sorted(links_old | links_new):
+        a, b = ids.get(key[0]), ids.get(key[2])
+        if not a or not b:
+            continue
+        if key in l_added:
+            st = "added"
+        elif key in l_removed:
+            st = "removed"
+        else:
+            st = "same"
+        _fill, ecolor, estyle = _RENDER_STYLES[st]
+        tip = _render_q(f"{key[1]} -> {key[3]}")
+        lines.append(f'  {a} -> {b} [color="{ecolor}", style={estyle}, '
+                     f'arrowsize=0.7, tooltip="{tip}"];')
+    lines.append("}")
+
+    engine, code = _render_engine(layout, dot_only)
+    if engine is None:
+        return code
+    extra = ["-n2"] if layout == "real" else None
+    suffix = "" if reroutes == "box" else "_" + reroutes
+    base = os.path.join(out_dir,
+                        "diff_" + _render_slug(name) + "_" + layout + suffix)
+    outs = _render_write_and_run("\n".join(lines), base, engine, extra=extra,
+                                 png=png, dot_only=dot_only)
+    dt = round(time.time() - t0, 2)
+    print(f'diff "{name}": nodes +{counts["added"]} -{counts["removed"]} '
+          f'~{counts["changed"]} ={counts["same"]} · links +{len(l_added)} '
+          f'-{len(l_removed)}, reroutes={reroutes} ({reroute_count} found) '
+          f'in {dt}s')
+    for path in outs:
+        print(f"  {path}  ({os.path.getsize(path)} bytes)")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="gnt_check",
@@ -531,6 +1121,29 @@ def main(argv=None) -> int:
     ap.add_argument("--subdir",
                     help="folder inside the repo with the JSONs (--diff "
                          "with git revisions)")
+    ap.add_argument("--render", choices=["stats", "deps", "group", "diff"],
+                    help="render a Graphviz diagram: whole project and/or "
+                         "neighborhood (deps), single group, or semantic "
+                         "diff (repo/documentation tool; not canonical; "
+                         "needs Graphviz unless --dot-only)")
+    ap.add_argument("--focus", metavar="GROUP",
+                    help="--render deps: keep the neighborhood of GROUP")
+    ap.add_argument("--hops", type=int, default=2,
+                    help="--render deps: neighborhood depth (default 2)")
+    ap.add_argument("--new", metavar="PATH",
+                    help="--render deps/diff: the other side to compare")
+    ap.add_argument("--out", metavar="DIR",
+                    help="--render: output folder (default ./gnt_render)")
+    ap.add_argument("--png", action="store_true",
+                    help="--render: also write a PNG next to the SVG")
+    ap.add_argument("--layout", choices=["dot", "real"], default="dot",
+                    help="--render group/diff: Graphviz layout (real = use "
+                         "the stored node positions via neato)")
+    ap.add_argument("--reroutes", choices=["box", "dot", "hide"],
+                    default="dot",
+                    help="--render group/diff: how to treat reroute nodes")
+    ap.add_argument("--dot-only", action="store_true",
+                    help="--render: write the .dot source and skip Graphviz")
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -550,6 +1163,40 @@ def main(argv=None) -> int:
     if args.diff:
         return run_diff(args.diff[0], args.diff[1], args.repo,
                         args.subdir or "")
+
+    if args.render:
+        try:
+            if args.render == "stats":
+                if not args.target:
+                    ap.error("--render stats requires a target folder")
+                return _render_stats(args.target)
+            out_dir = args.out or _render_default_out(
+                args.target or os.getcwd())
+            print(_RENDER_NOTE)
+            if args.render == "deps":
+                if not args.target:
+                    ap.error("--render deps requires a target folder")
+                return _render_deps(args.target, args.focus, args.hops,
+                                    out_dir, args.png, args.new,
+                                    args.dot_only, args.repo or "",
+                                    args.subdir or "")
+            if args.render == "group":
+                if not args.target:
+                    ap.error("--render group requires a target JSON file")
+                return _render_group(args.target, args.layout, out_dir,
+                                     args.png, args.reroutes, args.dot_only,
+                                     args.repo or "", args.subdir or "")
+            if not args.target or not args.new:
+                ap.error("--render diff requires A (target) and --new B")
+            return _render_diff(args.target, args.new, args.layout, out_dir,
+                                args.png, args.reroutes, args.dot_only,
+                                args.repo or "", args.subdir or "")
+        except RuntimeError as exc:
+            print(f"error: {exc}")
+            return 2
+        except subprocess.CalledProcessError as exc:
+            print(f"error: Graphviz failed ({exc})")
+            return 2
 
     if args.impact:
         return run_impact(args.baseline, args.impact, args.json,
