@@ -419,21 +419,33 @@ def _tag_ui_redraw(context):
 
 
 class GN_OT_SyncStageChange(bpy.types.Operator):
-    bl_idname = "gn.sync_change_stage"
+    bl_idname = "gn.sync_change_mark"
     bl_label = "Mark Change"
     bl_description = "Include this group in the next save to JSON"
     bl_options = {'REGISTER'}
 
     sync_uuid: StringProperty(name="UUID")
-    stage: BoolProperty(name="Mark", default=True)
 
     def execute(self, context):
         if not self.sync_uuid:
             return {'CANCELLED'}
-        if self.stage:
-            sync_manager.stage_change(self.sync_uuid)
-        else:
-            sync_manager.unstage_change(self.sync_uuid)
+        sync_manager.stage_change(self.sync_uuid)
+        _tag_ui_redraw(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncUnstageChange(bpy.types.Operator):
+    bl_idname = "gn.sync_change_unmark"
+    bl_label = "Unmark Change"
+    bl_description = "Exclude this group from the next save to JSON"
+    bl_options = {'REGISTER'}
+
+    sync_uuid: StringProperty(name="UUID")
+
+    def execute(self, context):
+        if not self.sync_uuid:
+            return {'CANCELLED'}
+        sync_manager.unstage_change(self.sync_uuid)
         _tag_ui_redraw(context)
         return {'FINISHED'}
 
@@ -2112,6 +2124,7 @@ classes = (
     GN_OT_SyncImport,
     GN_OT_SyncExport,
     GN_OT_SyncStageChange,
+    GN_OT_SyncUnstageChange,
     GN_OT_SyncStageAll,
     GN_OT_SyncUnstageAll,
     GN_OT_SyncSaveStaged,

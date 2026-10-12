@@ -202,18 +202,21 @@ def _draw_changes_list(layout, context) -> None:
                   else "Save marked to JSON")
     save_row.operator("gn.sync_save_staged", text=save_label, icon='EXPORT')
 
-    for r in rows:
-        row = box.row(align=True)
+    def _draw_change_row(target, r):
+        row = target.row(align=True)
         row.label(text=r["name"],
                   icon=STATUS_ICONS.get(r["status"], 'QUESTION'))
         row.label(text=STATUS_LABELS.get(r["status"], r["status"].value))
         actions = row.row(align=True)
         actions.alignment = 'RIGHT'
         if r["saveable"]:
-            op = actions.operator("gn.sync_change_stage", text="",
-                                  icon='REMOVE' if r["staged"] else 'PLUS')
+            if r["staged"]:
+                op = actions.operator("gn.sync_change_unmark", text="",
+                                      icon='REMOVE')
+            else:
+                op = actions.operator("gn.sync_change_mark", text="",
+                                      icon='PLUS')
             op.sync_uuid = r["uid"]
-            op.stage = not r["staged"]
         if r["discardable"]:
             op = actions.operator("gn.sync_discard_local", text="",
                                   icon='LOOP_BACK')
@@ -221,6 +224,15 @@ def _draw_changes_list(layout, context) -> None:
         if r["pullable"]:
             op = actions.operator("gn.sync_import", text="", icon='IMPORT')
             op.sync_uuid = r["uid"]
+
+    staged_rows = [r for r in rows if r["staged"]]
+    plain_rows = [r for r in rows if not r["staged"]]
+    if staged_rows:
+        box.label(text=f"Marked ({len(staged_rows)})", icon='CHECKMARK')
+        for r in staged_rows:
+            _draw_change_row(box, r)
+    for r in plain_rows:
+        _draw_change_row(box, r)
 
     for d in deps:
         row = box.row(align=True)
