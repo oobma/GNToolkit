@@ -178,9 +178,6 @@ def register():
     from .sync_ui import GN_SyncPrefs
     bpy.types.Scene.gnt_sync_prefs = bpy.props.PointerProperty(type=GN_SyncPrefs)
 
-    from .sync_operators import GN_CommitReview
-    bpy.types.Scene.gnt_commit_review = bpy.props.PointerProperty(type=GN_CommitReview)
-
     from .sync_operators import GN_ImportState
     bpy.types.Scene.gnt_import_state = bpy.props.PointerProperty(type=GN_ImportState)
 
@@ -210,7 +207,6 @@ def unregister():
     stop_git_pump()
 
     del bpy.types.Scene.gnt_sync_prefs
-    del bpy.types.Scene.gnt_commit_review
     del bpy.types.Scene.gnt_import_state
     del bpy.types.Scene.gnt_failed_imports
     del bpy.types.Scene.gnt_audit_state

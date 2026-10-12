@@ -48,7 +48,7 @@ def _get_all_geometry_trees():
 
 
 def _untracked_deps_note() -> str:
-    """Report suffix for commits that leave untracked dependencies behind."""
+    """Report suffix for saves that leave untracked dependencies behind."""
     try:
         count = len(sync_manager.find_untracked_dependencies())
     except Exception:
@@ -56,7 +56,7 @@ def _untracked_deps_note() -> str:
     if not count:
         return ""
     return (f" - warning: {count} untracked dependency group(s) were NOT "
-            "committed (Sync Issues -> Track)")
+            "saved (Sync Issues -> Track)")
 
 
 def _refresh_after_sync_change(context=None):
@@ -133,7 +133,7 @@ def _collect_commit_suggestion():
 class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link"
     bl_label = "Track Group"
-    bl_description = "Start tracking the active group: writes its JSON from the current .blend content (first commit)"
+    bl_description = "Start tracking the active group: writes its JSON from the current .blend content (first save)"
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -324,7 +324,7 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
 class GN_OT_SyncExport(bpy.types.Operator):
     bl_idname = "gn.sync_export"
-    bl_label = "Commit to JSON"
+    bl_label = "Save to JSON"
     bl_description = "Write this group's .blend content into its JSON file (blend wins)"
     bl_options = {'REGISTER'}
 
@@ -352,15 +352,196 @@ class GN_OT_SyncExport(bpy.types.Operator):
             _refresh_after_sync_change(context)
             note = _untracked_deps_note()
             if note:
-                self.report({'WARNING'}, "Commit to JSON completed" + note)
+                self.report({'WARNING'}, "Saved to JSON" + note)
             else:
-                self.report({'INFO'}, "Commit to JSON completed")
+                self.report({'INFO'}, "Saved to JSON")
             return {'FINISHED'}
         else:
             self.report({'ERROR'},
-                        "Commit blocked - the JSON was modified externally. "
+                        "Save blocked - the JSON was modified externally. "
                         "Pull first or resolve the conflict.")
             return {'CANCELLED'}
+
+
+# ---------------------------------------------------------------------------
+# Changes list: staging (VS Code-style mark/unmark/discard/pull)
+# ---------------------------------------------------------------------------
+
+def _change_rows() -> dict:
+    """Build the Changes list: out-of-sync tracked groups (ignored ones
+    excluded) plus untracked dependency groups.
+
+    Reads the cached statuses only (no recompute); prunes the staged set
+    so it never carries groups that left the list.  Returns
+    ``{"rows": [...], "deps": [...], "ignored": n}`` where each row has
+    ``uid/name/status/saveable/pullable/discardable/staged``.
+    """
+    from .sync_metadata import is_ignored
+    statuses = dict(sync_manager._status_cache)
+    for uid, entry in sync_manager.load_report.items():
+        statuses.setdefault(uid, entry.get("status"))
+    saveable = (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT,
+                SyncStatus.JSON_MISSING)
+    pullable = (SyncStatus.JSON_MODIFIED, SyncStatus.CONFLICT,
+                SyncStatus.ORPHAN)
+    discardable = (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT)
+    rows = []
+    ignored = 0
+    for uid, status in statuses.items():
+        if status == SyncStatus.SYNCED:
+            continue
+        if is_ignored(sync_manager.metadata, uid):
+            ignored += 1
+            continue
+        info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+        rows.append({
+            "uid": uid,
+            "name": info.get("blend_name", "?"),
+            "status": status,
+            "saveable": status in saveable,
+            "pullable": status in pullable,
+            "discardable": status in discardable,
+            "staged": sync_manager.is_staged(uid),
+        })
+    rows.sort(key=lambda r: (r["status"].value, r["name"]))
+    sync_manager.prune_staged(r["uid"] for r in rows if r["saveable"])
+    deps = [{"name": d["child_name"], "parent": d["parent_name"]}
+            for d in sync_manager.find_untracked_dependencies()]
+    return {"rows": rows, "deps": deps, "ignored": ignored}
+
+
+def _tag_ui_redraw(context):
+    try:
+        for area in context.screen.areas:
+            area.tag_redraw()
+    except Exception:
+        pass
+
+
+class GN_OT_SyncStageChange(bpy.types.Operator):
+    bl_idname = "gn.sync_change_stage"
+    bl_label = "Mark Change"
+    bl_description = "Include this group in the next save to JSON"
+    bl_options = {'REGISTER'}
+
+    sync_uuid: StringProperty(name="UUID")
+    stage: BoolProperty(name="Mark", default=True)
+
+    def execute(self, context):
+        if not self.sync_uuid:
+            return {'CANCELLED'}
+        if self.stage:
+            sync_manager.stage_change(self.sync_uuid)
+        else:
+            sync_manager.unstage_change(self.sync_uuid)
+        _tag_ui_redraw(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncStageAll(bpy.types.Operator):
+    bl_idname = "gn.sync_stage_all"
+    bl_label = "Mark All Changes"
+    bl_description = "Mark every change for the next save to JSON"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        data = _change_rows()
+        sync_manager.stage_all(r["uid"] for r in data["rows"] if r["saveable"])
+        _tag_ui_redraw(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncUnstageAll(bpy.types.Operator):
+    bl_idname = "gn.sync_unstage_all"
+    bl_label = "Unmark All Changes"
+    bl_description = "Unmark every change"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        sync_manager.unstage_all()
+        _tag_ui_redraw(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncSaveStaged(bpy.types.Operator):
+    bl_idname = "gn.sync_save_staged"
+    bl_label = "Save Marked to JSON"
+    bl_description = ("Write the marked groups' .blend content into their "
+                      "JSON files (blend wins)")
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        staged = sync_manager.staged_uuids()
+        if not staged:
+            self.report({'INFO'}, "Nothing marked - mark changes first")
+            return {'FINISHED'}
+        _collect_commit_suggestion()
+        saved = blocked = errors = 0
+        first_error = ""
+        for uid in sorted(staged):
+            status = sync_manager.check_status(uid)
+            force = status in (SyncStatus.JSON_MODIFIED, SyncStatus.CONFLICT)
+            try:
+                ok = sync_manager.export_to_json(uid, force=force)
+            except PermissionError as exc:
+                errors += 1
+                first_error = first_error or str(exc)
+                continue
+            if ok:
+                sync_manager.unstage_change(uid)
+                saved += 1
+            else:
+                blocked += 1
+        sync_manager.save()
+        _refresh_after_sync_change(context)
+        msg = f"Saved {saved} group(s) to JSON"
+        if blocked:
+            msg += f", {blocked} blocked (JSON modified externally)"
+        if errors:
+            msg += f", {errors} failed (unwritable)"
+        if first_error:
+            msg += f" - {first_error}"
+        note = _untracked_deps_note()
+        if note:
+            msg += note
+        level = 'WARNING' if (blocked or errors) else 'INFO'
+        self.report({level}, msg)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncDiscardLocal(bpy.types.Operator):
+    bl_idname = "gn.sync_discard_local"
+    bl_label = "Discard Local Changes"
+    bl_description = ("Throw away this group's local edits and take the "
+                      "JSON version (the saved one wins)")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    sync_uuid: StringProperty(name="UUID")
+
+    def invoke(self, context, event):
+        info = sync_manager.metadata.get("tracked_groups", {}).get(
+            self.sync_uuid, {})
+        name = info.get("blend_name", "this group")
+        return context.window_manager.invoke_confirm(
+            self, event,
+            title="Discard local changes?",
+            message=(f"Discard local changes of '{name}' and take the JSON "
+                     "version?"),
+            confirm_text="Discard",
+        )
+
+    def execute(self, context):
+        sync_manager.unstage_change(self.sync_uuid)
+        tracker = sync_manager.resolve_conflict(self.sync_uuid, "json")
+        sync_manager.save()
+        if tracker is not None and tracker.error_count:
+            self.report({'ERROR'},
+                        "Could not apply the JSON side - check the console/log "
+                        "(library-linked groups must be made local first)")
+            return {'CANCELLED'}
+        _refresh_after_sync_change(context)
+        self.report({'INFO'}, "Local changes discarded - JSON version applied")
+        return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
@@ -857,7 +1038,7 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link_all"
     bl_label = "Track All"
     bl_description = ("Track every Geometry Nodes group, writing one master JSON from the "
-                      "current .blend — the addon CREATES the JSON here (first commit). "
+                      "current .blend — the addon CREATES the JSON here (first save). "
                       "Use 'Track from Existing JSON' instead when the JSON already exists "
                       "elsewhere and must not be rewritten")
     bl_options = {'REGISTER', 'UNDO'}
@@ -1072,12 +1253,12 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
 
 
 # ---------------------------------------------------------------------------
-# Operator: Commit all groups (batch)
+# Operator: Save all groups (batch)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncExportAll(bpy.types.Operator):
     bl_idname = "gn.sync_export_all"
-    bl_label = "Commit All to JSON"
+    bl_label = "Save All to JSON"
     bl_description = "Write every tracked group's .blend content into its JSON file"
     bl_options = {'REGISTER'}
 
@@ -1098,7 +1279,7 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
         tracked = sync_manager.metadata.get("tracked_groups", {})
         files = len({info.get("json_path", "") for info in tracked.values()
                      if info.get("json_path")})
-        layout.label(text=f"Commit all {len(tracked)} tracked groups?", icon='EXPORT')
+        layout.label(text=f"Save all {len(tracked)} tracked groups to JSON?", icon='EXPORT')
         layout.label(text=f"{files} JSON file(s) will be overwritten — a backup "
                           "copy is kept in backups/")
         layout.label(text="Groups missing from the .blend are skipped", icon='INFO')
@@ -1118,24 +1299,24 @@ class GN_OT_SyncExportAll(bpy.types.Operator):
             _refresh_after_sync_change(context)
             note = _untracked_deps_note()
             self.report({'WARNING' if note else 'INFO'},
-                        f"Committed {result['exported']} groups, "
+                        f"Saved {result['exported']} groups, "
                         f"skipped {result['skipped']}, "
                         f"errors {result['errors']}" + note)
         except Exception as e:
             context.window_manager.progress_end()
-            self.report({'ERROR'}, f"Commit failed: {e}")
+            self.report({'ERROR'}, f"Save failed: {e}")
             return {'CANCELLED'}
 
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator: Commit only modified groups (batch)
+# Operator: Save only modified groups (batch)
 # ---------------------------------------------------------------------------
 
 class GN_OT_SyncExportModified(bpy.types.Operator):
     bl_idname = "gn.sync_export_modified"
-    bl_label = "Commit Modified to JSON"
+    bl_label = "Save Modified to JSON"
     bl_description = "Write only edited or conflicting groups into their JSON files"
     bl_options = {'REGISTER'}
 
@@ -1150,7 +1331,7 @@ class GN_OT_SyncExportModified(bpy.types.Operator):
         layout = self.layout
         summary = sync_manager.get_status_summary()
         affected = summary.get("blend_modified", 0) + summary.get("conflict", 0)
-        layout.label(text=f"Commit {affected} modified group(s)?", icon='EXPORT')
+        layout.label(text=f"Save {affected} modified group(s) to JSON?", icon='EXPORT')
         layout.label(text="Their JSON files will be overwritten — a backup copy "
                           "is kept in backups/")
 
@@ -1169,12 +1350,12 @@ class GN_OT_SyncExportModified(bpy.types.Operator):
             _refresh_after_sync_change(context)
             note = _untracked_deps_note()
             self.report({'WARNING' if note else 'INFO'},
-                        f"Committed {result['exported']} groups, "
+                        f"Saved {result['exported']} groups, "
                         f"skipped {result['skipped']}, "
                         f"errors {result['errors']}" + note)
         except Exception as e:
             context.window_manager.progress_end()
-            self.report({'ERROR'}, f"Commit failed: {e}")
+            self.report({'ERROR'}, f"Save failed: {e}")
             return {'CANCELLED'}
 
         return {'FINISHED'}
@@ -1908,7 +2089,7 @@ class GN_OT_SyncImportGroupTrack(bpy.types.Operator, ExportHelper):
             info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
             self.report({'WARNING'},
                         f"'{self.group_name}' is already tracked to "
-                        f"{info.get('json_path', '?')} - use Commit/Pull instead")
+                        f"{info.get('json_path', '?')} - use Save/Pull instead")
             return {'CANCELLED'}
         sync_manager.link_group(tree, self.filepath)
         sync_manager.save()
@@ -1919,190 +2100,7 @@ class GN_OT_SyncImportGroupTrack(bpy.types.Operator, ExportHelper):
         return {'FINISHED'}
 
 
-# ---------------------------------------------------------------------------
-# Commit with review (F4): per-group Keep JSON / Keep Blend / Skip
-# ---------------------------------------------------------------------------
-
-class GN_CommitReviewChoice(bpy.types.PropertyGroup):
-    """One tracked group waiting for a commit decision."""
-    sync_uuid: StringProperty()
-    blend_name: StringProperty()
-    is_conflict: BoolProperty(default=False)
-    choice: EnumProperty(
-        name="Action",
-        items=(
-            ('KEEP_BLEND', "Keep Blend", "Commit the .blend version into the JSON"),
-            ('KEEP_JSON', "Keep JSON", "Pull the JSON version into the .blend (discards local edits)"),
-            ('SKIP', "Skip", "Leave this group untouched"),
-        ),
-        default='KEEP_BLEND',
-    )
-
-
-class GN_CommitReviewDep(bpy.types.PropertyGroup):
-    """One untracked dependency group offered for tracking at commit time."""
-    group_name: StringProperty()
-    parent_name: StringProperty()
-    track: BoolProperty(name="Track", default=True)
-
-
-class GN_CommitReview(bpy.types.PropertyGroup):
-    """Pending commit decisions (one per locally edited group)."""
-    items: CollectionProperty(type=GN_CommitReviewChoice)
-    deps: CollectionProperty(type=GN_CommitReviewDep)
-
-
-def _populate_commit_review() -> dict:
-    """Fill the scene review collection with the modified/conflicted/diverged
-    groups.
-
-    Excludes ignored groups.  Also lists every untracked dependency group
-    (default: track it).  Returns ``{"modified": n, "conflicts": m,
-    "diverged": k}``.
-    """
-    from .sync_metadata import is_ignored
-    review = bpy.context.scene.gnt_commit_review
-    review.items.clear()
-    review.deps.clear()
-    counts = {"modified": 0, "conflicts": 0, "diverged": 0}
-    statuses = sync_manager.check_all_statuses()
-    for uid, status in statuses.items():
-        if status not in (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT,
-                          SyncStatus.JSON_MODIFIED):
-            continue
-        if is_ignored(sync_manager.metadata, uid):
-            continue
-        info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
-        item = review.items.add()
-        item.sync_uuid = uid
-        item.blend_name = info.get("blend_name", "?")
-        item.is_conflict = status == SyncStatus.CONFLICT
-        if item.is_conflict:
-            # Conflicts default to Skip: the JSON changed externally, so a
-            # force-commit overwrites it - that must be a conscious choice.
-            item.choice = 'SKIP'
-            counts["conflicts"] += 1
-        elif status == SyncStatus.JSON_MODIFIED:
-            # The JSON differs from the tracked baseline (e.g. after
-            # adopting a base): the default is to leave it alone; Keep
-            # Blend commits the .blend version.
-            item.choice = 'SKIP'
-            counts["diverged"] += 1
-        else:
-            item.choice = 'KEEP_BLEND'
-            counts["modified"] += 1
-    for dep in sync_manager.find_untracked_dependencies():
-        item = review.deps.add()
-        item.group_name = dep["child_name"]
-        item.parent_name = dep["parent_name"]
-        item.track = True
-    return counts
-
-
-class GN_OT_SyncCommitReview(bpy.types.Operator):
-    bl_idname = "gn.sync_commit_review"
-    bl_label = "Commit with Review…"
-    bl_description = ("Review each locally edited group before committing: "
-                      "Keep JSON, Keep Blend or Skip")
-    bl_options = {'REGISTER'}
-
-    def invoke(self, context, event):
-        if not sync_manager.metadata.get("tracked_groups"):
-            self.report({'ERROR'}, "No groups tracked. Use 'Track All' or 'Track from Existing JSON' first.")
-            return {'CANCELLED'}
-        _populate_commit_review()
-        review = context.scene.gnt_commit_review
-        if not review.items and not review.deps:
-            self.report({'INFO'}, "No groups to review")
-            return {'CANCELLED'}
-        return context.window_manager.invoke_props_dialog(self, width=480)
-
-    def draw(self, context):
-        layout = self.layout
-        review = context.scene.gnt_commit_review
-        if not review.items and not review.deps:
-            layout.label(text="No groups to review", icon='INFO')
-            return
-        if review.items:
-            layout.label(text="Decide per group — unedited groups are ignored:", icon='QUESTION')
-            layout.separator()
-            for item in review.items:
-                box = layout.box()
-                head = box.row(align=True)
-                head.label(text=item.blend_name,
-                           icon='ERROR' if item.is_conflict else 'LIGHT')
-                box.prop(item, "choice", expand=True)
-        if review.deps:
-            layout.separator()
-            deps_box = layout.box()
-            deps_box.label(text=f"{len(review.deps)} untracked dependency group(s) "
-                                "found — they will be filed and committed too:",
-                           icon='PLUS')
-            for dep in review.deps:
-                row = deps_box.row(align=True)
-                row.prop(dep, "track", text="")
-                row.label(text=f"{dep.group_name}  (used by {dep.parent_name})",
-                          icon='NODETREE')
-
-    def execute(self, context):
-        review = context.scene.gnt_commit_review
-        _collect_commit_suggestion()
-        to_track = [dep.group_name for dep in review.deps if dep.track]
-        untracked_left = len(review.deps) - len(to_track)
-        tracked_new = 0
-        if to_track:
-            tracked_new = sync_manager.track_untracked_dependencies(
-                only_names=to_track)["tracked"]
-        if not review.items:
-            sync_manager.save()
-            review.deps.clear()
-            for area in context.screen.areas:
-                area.tag_redraw()
-            self.report({'INFO'}, f"Tracked {tracked_new} new dependency group(s)")
-            return {'FINISHED'}
-        committed = pulled = skipped = errors = 0
-        for item in review.items:
-            uid = item.sync_uuid
-            if not uid:
-                continue
-            if item.choice == 'SKIP':
-                skipped += 1
-                continue
-            if item.choice == 'KEEP_BLEND':
-                # The user explicitly chose to keep the .blend version,
-                # which may overwrite a JSON that changed externally.
-                ok = sync_manager.export_to_json(uid, force=True)
-            else:
-                tracker = sync_manager.import_from_json(uid, context)
-                ok = not tracker.has_issues
-            if ok:
-                if item.choice == 'KEEP_BLEND':
-                    committed += 1
-                else:
-                    pulled += 1
-            else:
-                errors += 1
-        sync_manager.save()
-        review.items.clear()
-        review.deps.clear()
-        for area in context.screen.areas:
-            area.tag_redraw()
-        msg = f"Committed {committed}, pulled {pulled}, skipped {skipped}"
-        if tracked_new:
-            msg += f", tracked {tracked_new} new dependency group(s)"
-        if errors:
-            msg += f", {errors} failed"
-        if untracked_left:
-            msg += (f" - {untracked_left} untracked dependency group(s) "
-                    "left out of the commit")
-        self.report({'WARNING' if (errors or untracked_left) else 'INFO'}, msg)
-        return {'FINISHED'}
-
-
 classes = (
-    GN_CommitReviewDep,
-    GN_CommitReviewChoice,
-    GN_CommitReview,
     GN_ImportItem,
     GN_ImportState,
     GN_FailedImport,
@@ -2113,6 +2111,11 @@ classes = (
     GN_OT_SyncUnlinkAll,
     GN_OT_SyncImport,
     GN_OT_SyncExport,
+    GN_OT_SyncStageChange,
+    GN_OT_SyncStageAll,
+    GN_OT_SyncUnstageAll,
+    GN_OT_SyncSaveStaged,
+    GN_OT_SyncDiscardLocal,
     GN_OT_SyncIgnore,
     GN_OT_SyncUnignore,
     GN_OT_SyncCheck,
@@ -2128,7 +2131,6 @@ classes = (
     GN_OT_SyncImportGroupFile,
     GN_OT_SyncImportGroupTrack,
     GN_OT_SyncImportGroupClose,
-    GN_OT_SyncCommitReview,
     GN_OT_GitCommit,
     GN_OT_GitSync,
     GN_OT_RevealRepo,

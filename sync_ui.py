@@ -128,8 +128,97 @@ def _notify_external_changes(count: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Changes list (VS Code-style staging for the next save to JSON)
+# ---------------------------------------------------------------------------
+
+def _draw_changes_list(layout, context) -> None:
+    """Draw the collapsible Changes box.
+
+    One row per out-of-sync tracked group with mark/unmark/discard/pull
+    actions, plus one row per untracked dependency group with its Track
+    button.  The mark state is session-scoped (see
+    ``sync_manager.stage_change``); nothing is marked by default.
+    """
+    from .sync_operators import _change_rows
+
+    prefs = context.scene.gnt_sync_prefs
+    data = _change_rows()
+    rows = data["rows"]
+    deps = data["deps"]
+    ignored = data["ignored"]
+    staged_count = sum(1 for r in rows if r["staged"])
+
+    layout.separator()
+    box = layout.box()
+    head = box.row(align=True)
+    head.prop(prefs, "expand_changes", text="", emboss=False,
+              icon='DISCLOSURE_TRI_DOWN' if prefs.expand_changes
+              else 'DISCLOSURE_TRI_RIGHT')
+    head.label(text=f"Changes ({len(rows) + len(deps)})", icon='INFO')
+    if staged_count:
+        head.label(text=f"{staged_count} marked", icon='CHECKMARK')
+    if not prefs.expand_changes:
+        return
+
+    if not rows and not deps:
+        if not sync_manager._status_cache and not sync_manager.load_report:
+            box.label(text="No status yet — click Refresh Status", icon='INFO')
+        else:
+            box.label(text="No changes — everything is saved", icon='CHECKMARK')
+        return
+
+    control = box.row(align=True)
+    control.label(text="Mark the changes and save them to JSON:")
+    tools = control.row(align=True)
+    tools.alignment = 'RIGHT'
+    tools.operator("gn.sync_stage_all", text="", icon='PLUS')
+    tools.operator("gn.sync_unstage_all", text="", icon='MINUS')
+
+    save_row = box.row()
+    save_row.enabled = staged_count > 0
+    save_label = (f"Save {staged_count} marked to JSON" if staged_count
+                  else "Save marked to JSON")
+    save_row.operator("gn.sync_save_staged", text=save_label, icon='EXPORT')
+
+    for r in rows:
+        row = box.row(align=True)
+        row.label(text=r["name"],
+                  icon=STATUS_ICONS.get(r["status"], 'QUESTION'))
+        row.label(text=STATUS_LABELS.get(r["status"], r["status"].value))
+        actions = row.row(align=True)
+        actions.alignment = 'RIGHT'
+        if r["saveable"]:
+            op = actions.operator("gn.sync_change_stage", text="",
+                                  icon='MINUS' if r["staged"] else 'PLUS')
+            op.sync_uuid = r["uid"]
+            op.stage = not r["staged"]
+        if r["discardable"]:
+            op = actions.operator("gn.sync_discard_local", text="",
+                                  icon='LOOP_BACK')
+            op.sync_uuid = r["uid"]
+        if r["pullable"]:
+            op = actions.operator("gn.sync_import", text="", icon='IMPORT')
+            op.sync_uuid = r["uid"]
+
+    for d in deps:
+        row = box.row(align=True)
+        row.label(text=f"New dependency: {d['name']} (used by {d['parent']})",
+                  icon='NODETREE')
+        op = row.operator("gn.sync_track_deps", text="Track", icon='LINKED')
+        op.group_name = d["name"]
+
+    if ignored:
+        box.label(text=f"{ignored} ignored group(s) hidden — manage them in "
+                       "Sync Issues", icon='HIDE_ON')
+
+
+# ---------------------------------------------------------------------------
 # Panel 1: Batch Operations
 # ---------------------------------------------------------------------------
+
+
+
+
 
 class GN_PT_SyncPanel(bpy.types.Panel):
     bl_label = "Sync"
@@ -178,14 +267,13 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         layout.label(text="Sync Actions:", icon='ACTION')
 
         batch_row = layout.row(align=True)
-        batch_row.operator("gn.sync_export_modified", text="Commit Modified", icon='EXPORT')
+        batch_row.operator("gn.sync_export_modified", text="Save Modified to JSON", icon='EXPORT')
         batch_row.operator("gn.sync_import_modified", text="Pull from JSON", icon='IMPORT')
 
         batch_row2 = layout.row(align=True)
-        batch_row2.operator("gn.sync_export_all", text="Commit All", icon='EXPORT')
+        batch_row2.operator("gn.sync_export_all", text="Save All to JSON", icon='EXPORT')
 
-        review_row = layout.row(align=True)
-        review_row.operator("gn.sync_commit_review", text="Commit with Review…", icon='ACTION')
+        _draw_changes_list(layout, context)
 
         check_row = layout.row(align=True)
         if sync_manager.check_busy():
@@ -319,7 +407,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             n_missing = summary.get("json_missing", 0)
 
             if n_blend:
-                summary_row.label(text=f"  To commit: {n_blend}", icon='LIGHT')
+                summary_row.label(text=f"  To save: {n_blend}", icon='LIGHT')
             if n_json:
                 summary_row.label(text=f"  To pull: {n_json}", icon='FILE_REFRESH')
             if n_conflict:
@@ -480,7 +568,7 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
                 track_op = row.operator("gn.sync_track_deps", text="Track",
                                         icon='LINKED')
                 track_op.group_name = dep["child_name"]
-            deps_box.label(text="Commit them before (or with) their parents", icon='INFO')
+            deps_box.label(text="Save them before (or with) their parents", icon='INFO')
 
         layout.separator()
 
@@ -537,14 +625,14 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             if ignored:
                 actions.operator("gn.sync_unignore", text="Un-ignore", icon='RESTRICT_VIEW_OFF').sync_uuid = uid
             elif status == SyncStatus.BLEND_MODIFIED:
-                actions.operator("gn.sync_export", text="Commit", icon='EXPORT').sync_uuid = uid
+                actions.operator("gn.sync_export", text="Save to JSON", icon='EXPORT').sync_uuid = uid
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
             elif status == SyncStatus.JSON_MODIFIED:
                 actions.operator("gn.sync_import", text="Pull", icon='IMPORT').sync_uuid = uid
-                actions.operator("gn.sync_export", text="Commit", icon='EXPORT').sync_uuid = uid
+                actions.operator("gn.sync_export", text="Save to JSON", icon='EXPORT').sync_uuid = uid
                 actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
                 box.label(text="The JSON differs from the tracked baseline - "
-                               "Pull applies the JSON, Commit keeps the .blend "
+                               "Pull applies the JSON, Save keeps the .blend "
                                "version", icon='INFO')
             elif status == SyncStatus.CONFLICT:
                 actions.operator("gn.sync_resolve_json", text="Keep JSON", icon='FILE_REFRESH').sync_uuid = uid
@@ -951,7 +1039,7 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             commit_op = actions.operator("gn.git_commit", text="Git Commit…",
                                          icon='EXPORT')
             commit_op.repo = root
-            sync_op = actions.operator("gn.git_sync", text="Git Sync",
+            sync_op = actions.operator("gn.git_sync", text="Sync Changes",
                                        icon='FILE_REFRESH')
             sync_op.repo = root
             reveal_op = actions.operator("gn.git_reveal_repo", text="",
@@ -1184,6 +1272,12 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
     expand_issues: bpy.props.BoolProperty(
         name="Show Issue List",
         description="List each out-of-sync group with its actions",
+        default=True,
+    )
+    expand_changes: bpy.props.BoolProperty(
+        name="Show Changes",
+        description="List every out-of-sync group with mark/unmark/discard/"
+                    "pull actions (the staging list for the next save)",
         default=True,
     )
     expand_git_repo_log: bpy.props.BoolProperty(

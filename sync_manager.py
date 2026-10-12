@@ -287,6 +287,7 @@ class SyncManager:
         self._check_remaining: list = []
         self._check_total: int = 0
         self.commit_suggestion: str = ""
+        self._staged: set = set()
 
     # --- Load / save -------------------------------------------------------
 
@@ -299,6 +300,7 @@ class SyncManager:
         self._dirty = False
         self._pending_save = False
         self._ext_verified = {}
+        self._staged.clear()
         self._check_remaining = []
         self._check_total = 0
         self._ensure_hash_version()
@@ -394,6 +396,35 @@ class SyncManager:
         self.metadata["hash_version"] = HASH_VERSION
         self._dirty = True
         self.save()
+
+    # --- Change staging (the VS Code-style "Changes" list) -----------------
+    #
+    # Session-scoped set of tracked groups marked for the next save to
+    # JSON.  Nothing is staged by default (nothing marked, like VS Code);
+    # the set is pruned against the current change rows on every panel
+    # build and reset when a file is loaded.
+
+    def stage_change(self, sync_uuid: str) -> None:
+        if sync_uuid:
+            self._staged.add(sync_uuid)
+
+    def unstage_change(self, sync_uuid: str) -> None:
+        self._staged.discard(sync_uuid)
+
+    def is_staged(self, sync_uuid: str) -> bool:
+        return sync_uuid in self._staged
+
+    def stage_all(self, sync_uuids) -> None:
+        self._staged.update(uid for uid in sync_uuids if uid)
+
+    def unstage_all(self) -> None:
+        self._staged.clear()
+
+    def staged_uuids(self) -> set:
+        return set(self._staged)
+
+    def prune_staged(self, valid_uuids) -> None:
+        self._staged.intersection_update(valid_uuids)
 
     # --- Status detection --------------------------------------------------
 
