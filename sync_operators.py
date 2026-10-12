@@ -620,6 +620,73 @@ class GN_OT_GraphView(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GN_OT_GraphPoster(bpy.types.Operator):
+    bl_idname = "gn.graph_poster"
+    bl_label = "Graph Poster"
+    bl_description = ("Export the board as a vector SVG poster (no Graphviz "
+                      "needed; opens in any browser)")
+    bl_options = {'REGISTER'}
+
+    mode: EnumProperty(
+        name="Scope",
+        items=(('NEIGHBORHOOD', "Around a group",
+                "The selected/active group and its dependencies/dependents"),
+               ('PROJECT', "Whole project", "Every tracked group")),
+        default='NEIGHBORHOOD',
+    )
+    hops: bpy.props.IntProperty(name="Hops", default=2, min=1, max=6)
+    include_externals: BoolProperty(
+        name="Include untracked references", default=True)
+    focus_name: StringProperty(name="Focus group", default="")
+    filepath: StringProperty(name="SVG file", subtype='FILE_PATH',
+                             default="//GNT_graph.svg")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "mode")
+        if self.mode == 'NEIGHBORHOOD':
+            col.prop(self, "hops")
+        col.prop(self, "include_externals")
+        col.prop(self, "filepath")
+
+    def execute(self, context):
+        from .graph_utils import render_svg
+        from .graph_view import collect_board_model
+        if not sync_manager.metadata.get("tracked_groups"):
+            self.report({'ERROR'}, "No groups tracked.")
+            return {'CANCELLED'}
+        focus = self.focus_name
+        if self.mode == 'NEIGHBORHOOD' and not focus:
+            active = _get_active_tree(context)
+            if active is not None:
+                focus = active.name
+            if not focus:
+                self.report({'ERROR'},
+                            "Select a tracked group in a Node Editor (or "
+                            "switch to the whole project scope).")
+                return {'CANCELLED'}
+        model = collect_board_model(self.mode, focus, self.hops,
+                                    self.include_externals)
+        title = f"GNToolkit graph - {len(model['names'])} groups"
+        if model["focus"]:
+            title += f" - around {model['focus']} (+-{self.hops} hops)"
+        svg = render_svg(model["names"], model["edges"],
+                         model["status_keys"], focus=model["focus"],
+                         externals=model["externals"], title=title)
+        path = bpy.path.abspath(self.filepath)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(svg)
+        except OSError as exc:
+            self.report({'ERROR'}, f"Could not write {path}: {exc}")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Poster written: {path}")
+        return {'FINISHED'}
+
+
 class GN_OT_GraphClear(bpy.types.Operator):
     bl_idname = "gn.graph_clear"
     bl_label = "Clear Graph"
@@ -2220,6 +2287,7 @@ classes = (
     GN_OT_SyncRetryFailed,
     GN_OT_SyncFailuresClear,
     GN_OT_GraphView,
+    GN_OT_GraphPoster,
     GN_OT_GraphClear,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,

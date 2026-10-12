@@ -312,6 +312,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         graph_row = layout.row(align=True)
         graph_row.operator("gn.graph_view", text="Graph View…",
                            icon='NODETREE')
+        graph_row.operator("gn.graph_poster", text="", icon='EXPORT')
         graph_row.operator("gn.graph_clear", text="", icon='X')
 
         check_row = layout.row(align=True)

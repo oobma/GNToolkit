@@ -33,6 +33,16 @@ def clear_graph_trees() -> int:
     return removed
 
 
+def _fitted_width(label: str) -> float:
+    """Node width that fits *label* without truncation (Node Arrange-style).
+
+    Node Arrange measures the real text with ``blf``; here a generous
+    per-character estimate keeps the code headless-safe and deterministic.
+    The clamps match the SVG poster's so both share the exact same widths.
+    """
+    return max(170.0, min(340.0, 30.0 + 7.4 * len(label)))
+
+
 def _port_tree(k: int):
     k = max(0, min(int(k), MAX_PORTS))
     name = f"{PORT_TREE_PREFIX} {k}"
@@ -80,14 +90,13 @@ def live_graph():
     return names, edges, name_status, externals
 
 
-def build_graph_tree(mode: str = "PROJECT", focus: str = "",
-                     hops: int = 2, include_externals: bool = True) -> dict:
-    """(Re)build the disposable graph tree; returns a report dict.
+def collect_board_model(mode: str = "PROJECT", focus: str = "",
+                        hops: int = 2, include_externals: bool = True) -> dict:
+    """Plain model for a board/poster: names, edges, status keys, extras.
 
-    ``mode``: PROJECT (all tracked groups) or NEIGHBORHOOD (the focus and
-    everything within *hops* hops, both directions).
+    Shared by the node-editor board and the SVG poster; externals are the
+    referenced-but-untracked names (kept only when *include_externals*).
     """
-    clear_graph_trees()
     names, edges, name_status, externals = live_graph()
     keep = set(names)
     if mode == "NEIGHBORHOOD" and focus:
@@ -97,26 +106,62 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
     extra_externals = sorted({b for _a, b in kept_edges if b in externals})
     if include_externals:
         kept_names += extra_externals
-    layout = layered_layout(kept_names, kept_edges)
+    else:
+        kept_edges = [(a, b) for a, b in kept_edges if b not in externals]
+    status_keys = {}
+    for n in kept_names:
+        status = name_status.get(n)
+        status_keys[n] = status.value if status is not None else "untracked"
+    return {
+        "names": kept_names,
+        "edges": kept_edges,
+        "status_keys": status_keys,
+        "externals": extra_externals,
+        "focus": focus if mode == "NEIGHBORHOOD" else "",
+    }
 
-    graph = bpy.data.node_groups.new(GRAPH_TREE_NAME, "GeometryNodeTree")
-    graph.use_fake_user = False
+
+def build_graph_tree(mode: str = "PROJECT", focus: str = "",
+                     hops: int = 2, include_externals: bool = True) -> dict:
+    """(Re)build the disposable graph tree; returns a report dict.
+
+    ``mode``: PROJECT (all tracked groups) or NEIGHBORHOOD (the focus and
+    everything within *hops* hops, both directions).
+    """
+    clear_graph_trees()
+    model = collect_board_model(mode, focus, hops, include_externals)
+    kept_names = model["names"]
+    kept_edges = model["edges"]
+    status_keys = model["status_keys"]
+    focus = model["focus"]
+    extra_externals = model["externals"]
 
     indegree = {n: 0 for n in kept_names}
     for _a, b in kept_edges:
         if b in indegree:
             indegree[b] += 1
+    ext_set = set(extra_externals)
+    labels = {}
+    for name in kept_names:
+        label = f"{name} (untracked)" if name in ext_set else name
+        labels[name] = ("* " + label) if name == focus else label
+    widths = {n: _fitted_width(labels[n]) for n in kept_names}
+    layout = layered_layout(kept_names, kept_edges, widths=widths)
+
+    graph = bpy.data.node_groups.new(GRAPH_TREE_NAME, "GeometryNodeTree")
+    graph.use_fake_user = False
 
     nodes = {}
     for i, name in enumerate(kept_names):
         node = graph.nodes.new("GeometryNodeGroup")
         node.name = f"n{i:04d}"
-        node.label = ("* " + name) if name == focus else name
+        node.label = labels[name]
         node.node_tree = _port_tree(indegree.get(name, 0))
         x, y = layout.get(name, (0.0, 0.0))
         node.location = (x, y)
-        status = name_status.get(name)
-        key = status.value if status is not None else "untracked"
+        node.hide = True
+        node.width = widths[name]
+        key = status_keys.get(name, "untracked")
         node.use_custom_color = True
         node.color = STATUS_COLORS.get(key, STATUS_COLORS["untracked"])
         nodes[name] = node
@@ -141,13 +186,15 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
 
     # Legend: one small node per status at the right edge of the board.
     max_x = max((n.location[0] for n in nodes.values()), default=0.0)
-    legend_x = max_x + 2 * 360.0
+    legend_x = max_x + 460.0
     for i, key in enumerate(LEGEND_ORDER):
         node = graph.nodes.new("GeometryNodeGroup")
         node.name = f"legend_{key}"
         node.label = STATUS_LABELS[key]
         node.node_tree = _port_tree(0)
-        node.location = (legend_x, -i * 140.0)
+        node.location = (legend_x, -i * 64.0)
+        node.hide = True
+        node.width = _fitted_width(node.label)
         node.use_custom_color = True
         node.color = STATUS_COLORS[key]
 
