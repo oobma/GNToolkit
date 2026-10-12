@@ -16,9 +16,32 @@ All notable changes to this project are documented in this file.
   "Graph Poster…" exports the same board to a standalone **SVG poster**
   (no Graphviz, opens in any browser) with the legend and per-status
   counts.  Groups are drawn as compact bars sized to fit their name; the
-  columns are packed by real node widths, nodes are aligned and swapped
-  to keep the cables short and the crossings low, and links flow
-  left-to-right.
+  columns are packed by real node widths and centre-justified, nodes are
+  aligned and swapped to keep the cables short and the crossings low,
+  and links flow left-to-right.  Every cable that would jump over an
+  intermediate column gets its own **routing points** (one per column,
+  participating in the ordering and the alignment): the board chains
+  them through tiny Reroute nodes and the poster draws them as smooth
+  polylines, so long dependencies travel down the columns instead of
+  sweeping across the drawing.  The levels come from a **network-simplex
+  ranking** of the dependency graph (minimum total span — the same dot
+  algorithm Node Arrange uses), so far fewer cables are long to begin
+  with, and the vertical fit is an order-preserving isotonic regression,
+  which cannot inflate columns.  On a 51-group neighbourhood this takes
+  the mid-lane layout from 32 long cables / 66 routing nodes to 11 / 14
+  with the same crossings; the whole layout stays deterministic and
+  headless-testable.  Collapsed bars are not all one size: Blender keeps
+  a compact socket slot per socket beyond the third (1-3 sockets -> 28
+  px, +10 px each: a twelve-input hub draws ~118 px).  The board now
+  reserves each bar's **real collapsed height** and packs the columns
+  with it, so groups with many sockets no longer overlap their
+  neighbours.  Unused sockets stay hidden by default (the state Ctrl+H
+  toggles): only the sockets that carry a link are drawn, keeping the
+  compact bars clean.  Routing dots are anchored at their layout
+  waypoint and every routing row reserves the worst-case dot footprint:
+  a Reroute may draw its dot up to 50 px below its location depending
+  on its height property, so the rows are sized for that — routing dots
+  can never land on top of a bar.
 - **`gnt_check --render` (repository tool).** The JSON-side checker can
   now draw Graphviz diagrams from the same data: the whole project graph
   (with added/removed/changed coloring against another folder or git
