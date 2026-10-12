@@ -618,17 +618,23 @@ def render_svg(names, edges, status_keys, focus: str = "",
         x, y = layout.get(n, (0.0, 0.0))
         boxes[n] = (x - widths[n] / 2.0, -y, widths[n], 46.0)  # y grows down
 
+    counts = {}
+    for k in status_keys.values():
+        counts[k] = counts.get(k, 0) + 1
+    legend_rows = sum(1 for key in STATUS_COLORS if counts.get(key, 0))
+
     margin = 40.0
     title_h = 56.0
     legend_w = 230.0
     min_x = min((b[0] for b in boxes.values()), default=0.0)
     max_x = max((b[0] + b[2] for b in boxes.values()), default=0.0)
-    n_rows = max((len([1 for b in boxes.values() if b[0] == x]) for x in
-                  {b[0] for b in boxes.values()}), default=1)
+    min_y = min((b[1] for b in boxes.values()), default=0.0)
+    max_y = max((b[1] + b[3] for b in boxes.values()), default=0.0)
     width = (max_x - min_x) + legend_w + 2 * margin
-    height = title_h + margin + n_rows * 180.0 + margin
     dx = margin - min_x
-    dy = title_h + margin
+    dy = title_h + margin - min_y
+    legend_bottom = dy + 10 + 24 + max(0, legend_rows - 1) * 26 + 18
+    height = max(max_y + dy, legend_bottom) + margin
 
     def box_of(n):
         x, y, w, h = boxes[n]
@@ -697,9 +703,6 @@ def render_svg(names, edges, status_keys, focus: str = "",
             f'fill="#222">{svg_escape(shown)}</text></g>')
 
     # Legend with counts.
-    counts = {}
-    for k in status_keys.values():
-        counts[k] = counts.get(k, 0) + 1
     lx = width - margin - legend_w + 10
     ly = dy + 10
     parts.append(f'<text x="{lx:.0f}" y="{ly:.0f}" font-size="13" '
