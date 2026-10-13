@@ -23,7 +23,9 @@ import bpy
 _log = logging.getLogger("GNToolkit.sync")
 
 
-from .constants import ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD, READ_TIMEOUT_SECONDS
+from .constants import (ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS,
+                        PACKAGE_EXPORT_METHOD, READ_TIMEOUT_SECONDS,
+                        is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
@@ -992,7 +994,7 @@ class SyncManager:
         target_tree = bpy.data.node_groups.get(group_name)
         saved = []
         for ng in bpy.data.node_groups:
-            if ng is target_tree or ng.type != 'GEOMETRY':
+            if ng is target_tree or not is_trackable_tree_type(ng.type):
                 continue
             for node in ng.nodes:
                 if getattr(node, 'node_tree', None) is not target_tree:
@@ -1050,7 +1052,8 @@ class SyncManager:
         """
         bad: list[str] = []
         if trees is None:
-            trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+            trees = [t for t in bpy.data.node_groups
+                     if is_trackable_tree_type(t.type)]
         for ng in trees:
             for link in ng.links:
                 if SyncManager._link_is_dangling(link, ng):
@@ -1072,13 +1075,14 @@ class SyncManager:
 
         *parents* optionally limits the scan to known referencing trees
         (the batch passes the reverse-dependency graph, avoiding an
-        O(N^2) scan); when None every geometry tree is scanned.
+        O(N^2) scan); when None every trackable tree is scanned.
         """
         target = bpy.data.node_groups.get(target_name)
         if target is None:
             return
         if parents is None:
-            trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+            trees = [t for t in bpy.data.node_groups
+                     if is_trackable_tree_type(t.type)]
         else:
             trees = [bpy.data.node_groups.get(p) for p in parents]
         for ptree in trees:
@@ -1107,7 +1111,8 @@ class SyncManager:
         """
         removed = 0
         if trees is None:
-            trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+            trees = [t for t in bpy.data.node_groups
+                     if is_trackable_tree_type(t.type)]
         for ng in trees:
             for link in list(ng.links):
                 if not SyncManager._link_is_dangling(link, ng):
@@ -1137,7 +1142,7 @@ class SyncManager:
                 targets[tree] = name
         saved: dict[str, list[dict]] = {name: [] for name in candidate_names}
         for ng in bpy.data.node_groups:
-            if ng.type != 'GEOMETRY' or ng in targets:
+            if not is_trackable_tree_type(ng.type) or ng in targets:
                 continue
             for node in ng.nodes:
                 ref = getattr(node, 'node_tree', None)
@@ -1946,8 +1951,8 @@ class SyncManager:
     # --- Batch operations ---------------------------------------------------
 
     def link_all_groups(self, json_path: str, context=None) -> dict:
-        """Link all Geometry Node groups in the current .blend to a single
-        master JSON file.
+        """Link all trackable node groups (Geometry Nodes and Shader) in
+        the current .blend to a single master JSON file.
 
         Serializes every group, creates per-group tracking entries with
         per-group hashes, and auto-links all dependencies.
@@ -1959,9 +1964,9 @@ class SyncManager:
         Returns a dict with counts:
             {"linked": int, "skipped": int, "errors": int}
         """
-        # Collect all geometry node groups
+        # Collect all trackable node groups
         all_groups = {ng.name: ng for ng in bpy.data.node_groups
-                      if ng.type == 'GEOMETRY'}
+                      if is_trackable_tree_type(ng.type)}
         linked_skipped = sum(1 for ng in all_groups.values()
                              if group_library_path(ng))
         if linked_skipped:

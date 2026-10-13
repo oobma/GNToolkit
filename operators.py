@@ -18,7 +18,8 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, BoolProperty
 
 from .codec import clean_value, unclean_value, reset_coercion_count, coercion_count
-from .constants import ADDON_VERSION, PACKAGE_EXPORT_METHOD
+from .constants import (ADDON_VERSION, PACKAGE_EXPORT_METHOD,
+                        is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
 from .importer import _import_node_tree_gen, merge_derived_groups
@@ -174,7 +175,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         base_dir = os.path.dirname(self.filepath)
-        trees = [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
+        trees = [t for t in bpy.data.node_groups
+                 if is_trackable_tree_type(t.type)]
 
         fragments = [frag.strip().lower()
                      for frag in (self.exclude_libraries or "").split(";")
@@ -309,7 +311,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
 class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_active_json"
     bl_label = "Export Active Group"
-    bl_description = "Save the active Geometry Node group plus its dependencies to a JSON package file"
+    bl_description = "Save the active node group plus its dependencies to a JSON package file"
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 

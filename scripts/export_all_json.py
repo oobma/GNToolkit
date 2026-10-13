@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-r"""Export every Geometry Nodes group of the open .blend to a GNToolkit
-folder export (one JSON file per group, plus Modifiers/).
+r"""Export every trackable node group (Geometry Nodes and Shader) of the
+open .blend to a GNToolkit folder export (one JSON file per group, plus
+Modifiers/).
 
 Run from Blender's Text Editor (Scripting workspace) with the .blend open,
 or headless:
@@ -9,7 +10,7 @@ or headless:
 
 Without --out it writes next to the .blend (or to ./gnt_export when
 unsaved).  --minify produces compact JSON.  --make-local turns every
-library-linked tree that participates in the export (geometry groups,
+library-linked tree that participates in the export (trackable groups,
 their transitive group-node references and geometry-nodes modifiers)
 into a local copy BEFORE exporting, so the folder export is fully
 self-contained and trackable (library-linked trees cannot be pulled
@@ -36,6 +37,8 @@ import re
 import sys
 
 ADDON_MODULES = ("GNToolkit", "bl_ext.user_default.gn_toolkit")
+# Mirrors constants.TRACKABLE_TREE_TYPES (script stays self-contained).
+TRACKABLE_TREE_TYPES = ("GEOMETRY", "SHADER")
 DEFAULT_OUT = os.path.join(os.getcwd(), "gnt_export")
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -70,8 +73,8 @@ def _make_linked_local(exclude_fragments=()):
     """Turn the library-linked trees that participate in the export into
     local copies.
 
-    Covers: every linked GEOMETRY group, the transitive closure reached
-    through group nodes from any geometry group, and any tree used by a
+    Covers: every linked trackable group, the transitive closure reached
+    through group nodes from any trackable group, and any tree used by a
     Geometry Nodes modifier.  Copy-first / remap-after / remove-last, so
     cross-references between linked trees survive.  Linked trees whose
     library path contains one of *exclude_fragments* are left alone
@@ -89,7 +92,8 @@ def _make_linked_local(exclude_fragments=()):
         path = (lib.filepath if lib else "").lower()
         return any(frag in path for frag in exclude_fragments)
 
-    roots = {ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY'}
+    roots = {ng for ng in bpy.data.node_groups
+             if ng.type in TRACKABLE_TREE_TYPES}
     closure = set(roots)
     changed = True
     while changed:

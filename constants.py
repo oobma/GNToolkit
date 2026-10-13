@@ -12,6 +12,17 @@ ADDON_VERSION = "0.3.3"
 # only; importers never read it.
 PACKAGE_EXPORT_METHOD = "GN_TOOLKIT"
 
+# Node-tree types the add-on versions (multi-editor scope A, shader
+# first).  ``NodeTree.type`` strings: GEOMETRY is the primary target and
+# SHADER the first additional editor; the compositor and embedded trees
+# (materials/worlds) are out of scope so far.
+TRACKABLE_TREE_TYPES: tuple[str, ...] = ("GEOMETRY", "SHADER")
+
+
+def is_trackable_tree_type(tree_type) -> bool:
+    """True when a ``NodeTree.type`` string is versioned by the add-on."""
+    return tree_type in TRACKABLE_TREE_TYPES
+
 # Node types whose socket identifiers are volatile (recycled by Blender at runtime).
 _VOLATILE_TYPES: frozenset[str] = frozenset({
     "GeometryNodeRepeatInput", "GeometryNodeRepeatOutput",

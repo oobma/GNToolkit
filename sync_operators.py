@@ -13,7 +13,7 @@ import os
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .constants import ADDON_VERSION
+from .constants import ADDON_VERSION, is_trackable_tree_type
 from .serializer import serialize_node_tree
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
@@ -27,11 +27,12 @@ from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_
 # ---------------------------------------------------------------------------
 
 def _get_active_tree(context):
-    """Return the active Geometry Nodes tree from the context, or None."""
+    """Return the active supported node tree from the context, or None."""
     space = getattr(context, 'space_data', None)
     if space is not None:
         tree = getattr(space, 'node_tree', None)
-        if tree is not None and hasattr(tree, 'type') and tree.type == 'GEOMETRY':
+        if (tree is not None and hasattr(tree, 'type')
+                and is_trackable_tree_type(tree.type)):
             return tree
     # Fallback: check the active object's modifier
     obj = context.active_object
@@ -40,11 +41,6 @@ def _get_active_tree(context):
             if mod.type == 'NODES' and mod.node_group:
                 return mod.node_group
     return None
-
-
-def _get_all_geometry_trees():
-    """Return all Geometry Node trees in the current .blend."""
-    return [t for t in bpy.data.node_groups if t.type == 'GEOMETRY']
 
 
 def _untracked_deps_note() -> str:
@@ -146,7 +142,7 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
     def invoke(self, context, event):
         tree = _get_active_tree(context)
         if tree is None:
-            self.report({'ERROR'}, "No active Geometry Node group found")
+            self.report({'ERROR'}, "No active node group found")
             return {'CANCELLED'}
         self.tree_name = tree.name
         self.filepath = tree.name + ".json"
@@ -1230,16 +1226,17 @@ class GN_OT_SyncTrackDeps(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 def _mass_counts_link_all() -> dict:
-    gn_groups = [ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY']
-    linked = sum(1 for ng in gn_groups if group_library_path(ng))
+    groups = [ng for ng in bpy.data.node_groups
+              if is_trackable_tree_type(ng.type)]
+    linked = sum(1 for ng in groups if group_library_path(ng))
     tracked = len(sync_manager.metadata.get("tracked_groups", {}))
-    return {"total": len(gn_groups), "linked": linked, "tracked": tracked}
+    return {"total": len(groups), "linked": linked, "tracked": tracked}
 
 
 class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link_all"
     bl_label = "Track All"
-    bl_description = ("Track every Geometry Nodes group, writing one master JSON from the "
+    bl_description = ("Track every node group (Geometry Nodes and Shader), writing one master JSON from the "
                       "current .blend — the addon CREATES the JSON here (first save). "
                       "Use 'Track from Existing JSON' instead when the JSON already exists "
                       "elsewhere and must not be rewritten")
@@ -1264,7 +1261,7 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
         layout.label(text=f"Track {counts['total'] - counts['linked']} group(s)?",
                      icon='FILE_TICK')
         col = layout.column(align=True)
-        col.label(text=f"Geometry groups in the .blend: {counts['total']}")
+        col.label(text=f"Groups in the .blend: {counts['total']}")
         if counts["linked"]:
             col.label(text=f"Library-linked, skipped: {counts['linked']}",
                       icon='LINK_BLEND')
@@ -1287,9 +1284,11 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
         if self.filepath and not self.filepath.lower().endswith(".json"):
             self.filepath += ".json"
 
-        gn_groups = [ng for ng in bpy.data.node_groups if ng.type == 'GEOMETRY']
+        gn_groups = [ng for ng in bpy.data.node_groups
+                     if is_trackable_tree_type(ng.type)]
         if not gn_groups:
-            self.report({'ERROR'}, "No Geometry Node groups found in this .blend")
+            self.report({'ERROR'},
+                        "No trackable node groups found in this .blend")
             return {'CANCELLED'}
 
         context.window_manager.progress_begin(0, len(gn_groups))
