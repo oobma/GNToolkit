@@ -23,6 +23,16 @@ def is_trackable_tree_type(tree_type) -> bool:
     """True when a ``NodeTree.type`` string is versioned by the add-on."""
     return tree_type in TRACKABLE_TREE_TYPES
 
+
+def is_group_node_bl_idname(bl_idname) -> bool:
+    """True for group nodes of any tree kind.
+
+    GeometryNodeGroup / ShaderNodeGroup / CompositorNodeGroup all follow
+    the ``<Kind>NodeGroup`` naming; Group Input/Output nodes do not match
+    (they end with GroupInput/GroupOutput).
+    """
+    return bool(bl_idname) and str(bl_idname).endswith("NodeGroup")
+
 # Node types whose socket identifiers are volatile (recycled by Blender at runtime).
 _VOLATILE_TYPES: frozenset[str] = frozenset({
     "GeometryNodeRepeatInput", "GeometryNodeRepeatOutput",

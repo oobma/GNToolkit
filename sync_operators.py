@@ -13,7 +13,8 @@ import os
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .constants import ADDON_VERSION, is_trackable_tree_type
+from .constants import (ADDON_VERSION, is_group_node_bl_idname,
+                        is_trackable_tree_type)
 from .serializer import serialize_node_tree
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
@@ -1932,7 +1933,7 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
                 canon = canonicalize_node_tree_data(raw)
                 canon.pop("derived_node_groups", None)
                 for nd in canon.get("nodes", []):
-                    if (nd.get("type") == "GeometryNodeGroup"
+                    if (is_group_node_bl_idname(nd.get("type"))
                             and nd.get("node_tree_reference") in external_set):
                         nd.pop("inputs", None)
                         nd.pop("outputs", None)

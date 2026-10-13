@@ -25,6 +25,7 @@ from .constants import (
     EXPLICITLY_HANDLED_PROPS,
     INTERFACE_SOCKET_TYPE_REMAP,
     NON_RECREATABLE_FALLBACKS,
+    is_group_node_bl_idname,
     parse_interface_socket_variant,
 )
 from .error_tracker import ImportErrorTracker
@@ -1569,7 +1570,7 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
         from_sock_pre = None
         if from_node.type == 'GROUP_INPUT':
             from_id = interface_map.get(from_id, from_id)
-        elif from_node.bl_idname == 'GeometryNodeGroup' and getattr(from_node, "node_tree", None) and group_interface_maps is not None:
+        elif is_group_node_bl_idname(from_node.bl_idname) and getattr(from_node, "node_tree", None) and group_interface_maps is not None:
             ref_name = from_node.node_tree.name
             if ref_name in group_interface_maps:
                 from_id = group_interface_maps[ref_name].get(from_id, from_id)
@@ -1589,7 +1590,7 @@ def _wire_links_gen(ng, data: dict, node_map: dict, interface_map: dict,
         to_sock_pre = None
         if to_node.type == 'GROUP_OUTPUT':
             to_id = interface_map.get(to_id, to_id)
-        elif to_node.bl_idname == 'GeometryNodeGroup' and getattr(to_node, "node_tree", None) and group_interface_maps is not None:
+        elif is_group_node_bl_idname(to_node.bl_idname) and getattr(to_node, "node_tree", None) and group_interface_maps is not None:
             ref_name = to_node.node_tree.name
             if ref_name in group_interface_maps:
                 to_id = group_interface_maps[ref_name].get(to_id, to_id)
@@ -1719,7 +1720,7 @@ def _populate_enum_items_from_internal(ng, interface_item, interface_identifier:
 
         # Connection to a Group node — look at the referenced tree's
         # interface for Menu sockets with enum_items
-        if target_node.bl_idname == "GeometryNodeGroup" and hasattr(target_node, 'node_tree') and target_node.node_tree:
+        if is_group_node_bl_idname(target_node.bl_idname) and hasattr(target_node, 'node_tree') and target_node.node_tree:
             ref_tree = target_node.node_tree
             if hasattr(ref_tree, 'interface'):
                 # Find the Group node's input socket that received the link
@@ -1931,8 +1932,9 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
     node-level defaults from the JSON data, ensuring that per-instance
     overrides are preserved.
 
-    This is a targeted pass that ONLY processes GeometryNodeGroup nodes,
-    and ONLY sets default_value (no other properties).
+    This is a targeted pass that ONLY processes group nodes (Geometry or
+    Shader, by bl_idname), and ONLY sets default_value (no other
+    properties).
     """
     if group_interface_maps is None:
         group_interface_maps = {}
@@ -1943,7 +1945,7 @@ def _reapply_group_node_defaults(data: dict, node_map: dict,
         node = node_map[node_name]
 
         # Only process Group nodes
-        if node.bl_idname != "GeometryNodeGroup":
+        if not is_group_node_bl_idname(node.bl_idname):
             continue
         # Skip nodes without a referenced tree
         if not getattr(node, 'node_tree', None):
@@ -2033,7 +2035,7 @@ def _reapply_interface_socket_hide(data: dict, node_map: dict,
             continue
         node = node_map[node_name]
         blid = node.bl_idname
-        if blid == "GeometryNodeGroup":
+        if is_group_node_bl_idname(blid):
             ref_map = group_interface_maps.get(
                 getattr(getattr(node, 'node_tree', None), 'name', ''), {})
         elif blid in ("NodeGroupInput", "NodeGroupOutput"):
@@ -2213,7 +2215,7 @@ def json_group_closure(groups: dict, start: str) -> tuple[list[str], list[str]]:
             external.append(name)
             return
         for node in gdata.get("nodes", []):
-            if node.get("type") != "GeometryNodeGroup":
+            if not is_group_node_bl_idname(node.get("type")):
                 continue
             ref = node.get("node_tree_reference")
             if ref and ref != name:
@@ -2325,7 +2327,7 @@ def _import_node_tree_gen(
 
     # Resolve dependencies
     for node_data in data["nodes"]:
-        if node_data["type"] == "GeometryNodeGroup":
+        if is_group_node_bl_idname(node_data["type"]):
             ref_name = node_data.get("node_tree_reference")
             if ref_name and ref_name in json_cache and not bpy.data.node_groups.get(ref_name):
                 import_node_tree_recursive(
@@ -2471,7 +2473,7 @@ def _import_node_tree_gen(
         _apply_custom_properties(new_node, node_data.get("custom_properties"),
                                  f"Node '{new_node.name}'", tracker)
 
-        if node_type == "GeometryNodeGroup":
+        if is_group_node_bl_idname(node_type):
             ref_name = node_data.get("node_tree_reference")
             if ref_name:
                 ref_tree = bpy.data.node_groups.get(ref_name)

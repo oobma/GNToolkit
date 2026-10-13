@@ -624,10 +624,15 @@ def _render_engine(layout: str, dot_only: bool):
     return engine, 0
 
 
+def _is_group_node(node_type) -> bool:
+    """True for group nodes of any tree kind (Geometry/Shader/...)."""
+    return bool(node_type) and str(node_type).endswith("NodeGroup")
+
+
 def _render_deps_of(data: dict) -> list:
     refs = []
     for node in data.get("nodes", []):
-        if node.get("type") == "GeometryNodeGroup":
+        if _is_group_node(node.get("type")):
             ref = node.get("node_tree_reference")
             if ref:
                 refs.append(ref)
@@ -770,7 +775,7 @@ def _render_deps(folder: str, focus, hops: int, out_dir: str, png: bool,
 
 def _render_node_attrs(node: dict) -> str:
     t = node.get("type", "")
-    if t == "GeometryNodeGroup":
+    if _is_group_node(t):
         return 'fillcolor="#dbe8ff", color="#4a6fb5"'
     if t == "NodeGroupInput":
         return 'fillcolor="#ddf3dd", color="#4f9b4f"'
@@ -835,9 +840,9 @@ def _render_group_side(data: dict, name: str, layout: str, reroutes: str,
             ids[node.get("name")] = f"n{i}"
             continue
         parts = [node.get("name", "")]
-        if t == "GeometryNodeGroup" and node.get("node_tree_reference"):
+        if _is_group_node(t) and node.get("node_tree_reference"):
             parts.append("(" + node["node_tree_reference"] + ")")
-        elif t and t != "GeometryNodeGroup":
+        elif t and not _is_group_node(t):
             parts.append("[" + t.replace("GeometryNode", "")
                          .replace("NodeGroup", "") + "]")
         attrs = _render_node_attrs(node)
@@ -1034,9 +1039,9 @@ def _render_diff(old_path: str, new_path: str, layout: str, out_dir: str,
             ids[node_name] = f"n{i}"
             continue
         parts = [node_name]
-        if t == "GeometryNodeGroup" and node.get("node_tree_reference"):
+        if _is_group_node(t) and node.get("node_tree_reference"):
             parts.append("(" + node["node_tree_reference"] + ")")
-        elif t and t != "GeometryNodeGroup":
+        elif t and not _is_group_node(t):
             parts.append("[" + t.replace("GeometryNode", "")
                          .replace("NodeGroup", "") + "]")
         attrs, _ec, _es = _RENDER_STYLES[status[node_name]]

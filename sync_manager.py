@@ -25,7 +25,7 @@ _log = logging.getLogger("GNToolkit.sync")
 
 from .constants import (ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS,
                         PACKAGE_EXPORT_METHOD, READ_TIMEOUT_SECONDS,
-                        is_trackable_tree_type)
+                        is_group_node_bl_idname, is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
@@ -873,7 +873,7 @@ class SyncManager:
         # Build dependency UUID list (scan without serializing)
         dep_uuids = []
         for node in tree.nodes:
-            if node.bl_idname == "GeometryNodeGroup" and getattr(node, "node_tree", None):
+            if is_group_node_bl_idname(node.bl_idname) and getattr(node, "node_tree", None):
                 dep_name = node.node_tree.name
                 if dep_name == tree.name:
                     continue
@@ -913,7 +913,7 @@ class SyncManager:
                 return
             visited.add(t.name)
             for node in t.nodes:
-                if node.bl_idname == "GeometryNodeGroup" and getattr(node, "node_tree", None):
+                if is_group_node_bl_idname(node.bl_idname) and getattr(node, "node_tree", None):
                     dep_tree = node.node_tree
                     if dep_tree.name == t.name:
                         continue
@@ -1089,7 +1089,7 @@ class SyncManager:
             if ptree is None or ptree == target:
                 continue
             for node in ptree.nodes:
-                if node.bl_idname != 'GeometryNodeGroup':
+                if not is_group_node_bl_idname(node.bl_idname):
                     continue
                 if getattr(node, 'node_tree', None) != target:
                     continue

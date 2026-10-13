@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import bpy
 
-from .constants import _VOLATILE_TYPES, ZONE_INPUTS, SOCKET_TYPE_MAP
+from .constants import (_VOLATILE_TYPES, ZONE_INPUTS, SOCKET_TYPE_MAP,
+                        is_group_node_bl_idname)
 from .error_tracker import ImportErrorTracker
 
 
@@ -155,7 +156,7 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
 
     # Group nodes with positional disambiguation requested: resolve by
     # name+type first (their interface identifiers are rebuilt/recycled).
-    if node.bl_idname == "GeometryNodeGroup" and not name_only and name_index is not None:
+    if is_group_node_bl_idname(node.bl_idname) and not name_only and name_index is not None:
         cands = [x for x in sockets if x.name == sname
                  and (expected_type is None or x.type == expected_type)]
         s = _name_pick(cands)
@@ -215,6 +216,6 @@ def get_tree_dependencies(tree, deps=None):
         return deps
     deps[tree.name] = tree
     for node in tree.nodes:
-        if node.bl_idname == "GeometryNodeGroup" and getattr(node, "node_tree", None):
+        if is_group_node_bl_idname(node.bl_idname) and getattr(node, "node_tree", None):
             get_tree_dependencies(node.node_tree, deps)
     return deps

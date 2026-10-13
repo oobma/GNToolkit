@@ -19,7 +19,7 @@ from bpy.props import StringProperty, BoolProperty
 
 from .codec import clean_value, unclean_value, reset_coercion_count, coercion_count
 from .constants import (ADDON_VERSION, PACKAGE_EXPORT_METHOD,
-                        is_trackable_tree_type)
+                        is_group_node_bl_idname, is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
 from .importer import _import_node_tree_gen, merge_derived_groups
@@ -442,7 +442,7 @@ def dependency_ordered_names(json_cache: dict) -> list:
     for name, data in json_cache.items():
         children = set()
         for node_data in data.get("nodes", []):
-            if node_data.get("type") == "GeometryNodeGroup":
+            if is_group_node_bl_idname(node_data.get("type")):
                 ref = node_data.get("node_tree_reference")
                 if ref and ref in json_cache:
                     children.add(ref)

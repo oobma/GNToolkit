@@ -17,6 +17,7 @@ from .constants import (
     INTERFACE_SKIP_PROPS,
     OPTIONAL_SOCKET_PROPS,
     STRUCT_DUMP_TYPES as _STRUCT_DUMP_TYPES,
+    is_group_node_bl_idname,
     parse_interface_socket_variant,
 )
 
@@ -356,7 +357,7 @@ def serialize_node(node, skip_output_defaults: bool = False):
         data["zone_paired_node"] = node.paired_output.name
     elif hasattr(node, 'paired_input') and node.paired_input:
         data["zone_paired_node"] = node.paired_input.name
-    if node.bl_idname == "GeometryNodeGroup":
+    if is_group_node_bl_idname(node.bl_idname):
         data["node_tree_reference"] = node.node_tree.name if node.node_tree else None
 
     return data
@@ -480,7 +481,7 @@ def _serialize_node_tree_core(tree):
                     # with enum_items
                     if not items_found and item.identifier in input_connections:
                         connected_node = input_connections[item.identifier]
-                        if connected_node.bl_idname == "GeometryNodeGroup" and hasattr(connected_node, 'node_tree') and connected_node.node_tree:
+                        if is_group_node_bl_idname(connected_node.bl_idname) and hasattr(connected_node, 'node_tree') and connected_node.node_tree:
                             ref_tree = connected_node.node_tree
                             if hasattr(ref_tree, 'interface'):
                                 for ref_item in ref_tree.interface.items_tree:
