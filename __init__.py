@@ -7,7 +7,7 @@ serialized to deterministic JSON (the DNA — source of truth) while the
 .blend stays a working cache (RNA), with per-group sync statuses,
 dependency-aware import and a Git collaboration loop. The JSON side is
 pure Python, so the same status checks run headless (gnt_check) without
-opening Blender. Geometry Nodes is the first supported tree type.
+opening Blender. Geometry Nodes and Shader node groups are supported.
 """
 
 import bpy
@@ -27,7 +27,7 @@ from .sync_manager import sync_manager, SyncStatus
 bl_info = {
     "name": "GNToolkit",
     "author": "oobma",
-    "version": (0, 3, 3),
+    "version": (0, 4, 0),
     "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GN Tools",
     "description": "Version control with semantics for Blender node trees.",
