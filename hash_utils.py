@@ -15,6 +15,7 @@ from collections import OrderedDict
 from copy import deepcopy
 
 from .constants import (
+    CROSS_VERSION_DEFAULTS,
     HASH_EXCLUDE_NODE_PROPS,
     HASH_EXCLUDE_TREE_PROPS,
     HASH_EXCLUDE_SOCKET_PROPS,
@@ -176,6 +177,24 @@ def _canonicalize_interface_socket_entry(it: dict) -> None:
             props["default_value"] = dv[:dims]
 
 
+def _fold_version_defaults(props: dict, scope: str) -> dict:
+    """Drop properties whose value equals the version-gated default.
+
+    A property that exists in only some Blender versions (or whose
+    default differs per version) must hash the same when it is absent
+    (older version) as when it carries the default (newer version).
+    Non-default values stay: they are real content.  Table and rationale:
+    constants.CROSS_VERSION_DEFAULTS.
+    """
+    out = {}
+    for key, value in props.items():
+        if (scope, key) in CROSS_VERSION_DEFAULTS \
+                and CROSS_VERSION_DEFAULTS[(scope, key)] == value:
+            continue
+        out[key] = value
+    return out
+
+
 def _normalize_floats(value):
     """Return *value* with -0.0 normalised to 0.0.
 
@@ -242,7 +261,9 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                     if k not in HASH_EXCLUDE_INTERFACE_PROPS
                     and not (k == "default_value" and _is_datablock_ref(v))
                 }
-                it["properties"] = dict(sorted(it["properties"].items()))
+                it["properties"] = dict(sorted(
+                    _fold_version_defaults(it["properties"],
+                                           "interface").items()))
             if "enum_items" in it and isinstance(it["enum_items"], list):
                 cleaned = []
                 for e in it["enum_items"]:
@@ -266,7 +287,9 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                         if k not in HASH_EXCLUDE_INTERFACE_PROPS
                         and not (k == "default_value" and _is_datablock_ref(v))
                     }
-                    it["properties"] = dict(sorted(it["properties"].items()))
+                    it["properties"] = dict(sorted(
+                        _fold_version_defaults(it["properties"],
+                                               "interface").items()))
                 cleaned.append(it)
             return sorted(cleaned, key=lambda x: x.get("name", ""))
         out["inputs"] = _clean_socket_list(data.get("inputs", []))
@@ -292,7 +315,8 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                                 if k not in HASH_EXCLUDE_NODE_PROPS
                                 and not k.startswith("bl_")
                                 and k != "vector_dimensions"}
-            nd["properties"] = dict(sorted(nd["properties"].items()))
+            nd["properties"] = dict(sorted(
+                _fold_version_defaults(nd["properties"], "node").items()))
         # Custom properties: user content (versioned like anything else);
         # the add-on's own gnt_* keys are bookkeeping.  A missing key and
         # an empty dict must hash the same (JSON from older releases).
@@ -391,11 +415,14 @@ def canonicalize_node_tree_data(data: dict) -> dict:
         ),
     )
 
-    # Tree properties: exclude volatile ones
+    # Tree properties: exclude volatile ones (HASH_EXCLUDE_TREE_PROPS
+    # covers the class-level bl_* UI text, whose tooltip/label strings
+    # differ between Blender versions and are not content).
     tree_props = {}
     for k, v in data.get("tree_properties", {}).items():
         if k not in HASH_EXCLUDE_TREE_PROPS:
             tree_props[k] = v
+    tree_props = _fold_version_defaults(tree_props, "tree")
     out["tree_properties"] = dict(sorted(tree_props.items()))
 
     # Custom properties: user content (see the node-level handling above).

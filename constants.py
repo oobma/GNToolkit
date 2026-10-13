@@ -476,7 +476,46 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
     'annotation',
     'use_extra_user',
     'use_fake_user',
+    # Class-level UI text of the tree TYPE: the tooltip/label/icon
+    # strings differ between Blender versions (the ShaderNodeTree
+    # bl_description changed in 5.x, measured 2026-10-13) and are not
+    # content; bl_idname is redundant with tree_type, which carries the
+    # identity.  (bl_use_group_interface, despite the prefix, is a real
+    # setting: it stays hashed, folding only at its default via
+    # CROSS_VERSION_DEFAULTS.)
+    'bl_description',
+    'bl_label',
+    'bl_icon',
+    'bl_idname',
 })
+
+# "Absent ≡ default" normalizations for properties that exist in only
+# some Blender versions (or whose default is version-specific), so the
+# same group hashes identically whether it was serialized by 4.2 or by
+# 5.x.  Only the version's DEFAULT is folded: a non-default value stays a
+# difference (it is real content).  Keys are (scope, property); the
+# scopes match the canonicalizer sections.  Rationale per entry
+# (probed on 5.2, measured on the 24-group shader corpus, 2026-10-13):
+#   interface.is_panel_toggle / interface.structure_type: 5.x-only
+#     interface properties (absent in 4.2 exports), defaults
+#     False / 'AUTO'.
+#   node.warning_propagation: 5.x-only node property, default 'ALL'.
+#   node.base / node.convention: Normal Map properties added in 5.x,
+#     defaults 'DISPLACED' / 'OPENGL'.
+#   tree.bl_use_group_interface: 5.x-only tree property, default True.
+#   tree.default_group_node_width: 5.x-only tree property, default 140.
+#   tree.grease_pencil: annotation pointer removed in 5.x (None in 4.2
+#     exports); None equals absent.
+CROSS_VERSION_DEFAULTS: dict = {
+    ("interface", "is_panel_toggle"): False,
+    ("interface", "structure_type"): "AUTO",
+    ("node", "warning_propagation"): "ALL",
+    ("node", "base"): "DISPLACED",
+    ("node", "convention"): "OPENGL",
+    ("tree", "bl_use_group_interface"): True,
+    ("tree", "default_group_node_width"): 140,
+    ("tree", "grease_pencil"): None,
+}
 
 # Version of the canonical hash algorithm. Bump it when the hash
 # normalization changes: stored baselines from older algorithms become
@@ -488,7 +527,10 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # Blender segments node-tree datablocks.
 # 18: ImageUser playback settings (frame offset/duration/start, cyclic,
 # auto refresh) of texture nodes are versioned content.
-HASH_VERSION: int = 18
+# 19: version-gated properties fold to absent when they carry their
+# default (CROSS_VERSION_DEFAULTS), so 4.2 and 5.x sessions hash the
+# same group identically.
+HASH_VERSION: int = 19
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"
