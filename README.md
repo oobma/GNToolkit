@@ -511,7 +511,7 @@ port required:
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
   and 5.2 produce identical fingerprints (the rule shipped as
-  HASH_VERSION 5; the algorithm is versioned and currently at 17) and
+  HASH_VERSION 5; the algorithm is versioned and currently at 18) and
   projects track across versions without noise.
 
 ## Installation

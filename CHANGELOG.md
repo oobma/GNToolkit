@@ -99,6 +99,13 @@ All notable changes to this project are documented in this file.
   retracted on the next export (one-time "Changed" on the parent).
   Library-linked groups stay out of scope, as before. `HASH_VERSION` 16
   folds both new contents in.
+- **Image sequence settings are versioned.** The playback settings of a
+  texture node's image user (frame offset, duration and start, cyclic
+  playback, auto-refresh, tile) now round-trip and participate in the
+  canonical hash. `HASH_VERSION` 18 folds them in: groups using image
+  textures show a one-time "Changed" after updating and re-sync with a
+  normal save (same documented pattern as bakes). `frame_current` stays
+  runtime and is never stored.
 
 ### Changed
 
@@ -126,6 +133,18 @@ All notable changes to this project are documented in this file.
   GitHub one). **Migrating:** replace a manual install once — install
   the extension package and remove the old `scripts/addons/GNToolkit`
   folder; the two cannot coexist.
+
+### Fixed
+
+- **Node references survive import again when a mode switch resets
+  them.** Enum properties are now applied before the remaining ones, so
+  the `mode` switch of Script and IES Texture nodes no longer clears
+  their `script` / `filepath` values during import.
+- **Interface socket ranges survive import.** Writing a socket's default
+  value clamps an out-of-range max up to min (Blender leaves the
+  `-FLT_MAX` "unset" sentinel as `0`); the serialized `min_value` /
+  `max_value` are now re-asserted after the default value is written, in
+  both the creation and the post-wiring passes.
 
 ## [0.3.3] - 2026-10-10
 
