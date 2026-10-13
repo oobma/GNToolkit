@@ -2335,6 +2335,12 @@ def _import_node_tree_gen(
 
     # Get or create the node tree
     ng = bpy.data.node_groups.get(name)
+    wanted_type = data.get("tree_type", "GeometryNodeTree")
+    if ng is not None and getattr(ng, "bl_idname", wanted_type) != wanted_type:
+        tracker.record(
+            f"Tree '{name}': type mismatch (.blend has {ng.bl_idname}, "
+            f"package has {wanted_type}) - import skipped")
+        return
     mod_snapshots = None
     bake_snapshots = None
     old_iface_items = None
@@ -2354,7 +2360,7 @@ def _import_node_tree_gen(
             ng.inputs.clear()
             ng.outputs.clear()
     else:
-        ng = bpy.data.node_groups.new(name, 'GeometryNodeTree')
+        ng = bpy.data.node_groups.new(name, wanted_type)
 
     # Apply tree-level properties
     for prop_name, prop_val in data.get("tree_properties", {}).items():

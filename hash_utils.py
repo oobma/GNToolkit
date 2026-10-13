@@ -205,6 +205,12 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     # Tree-level fields --------------------------------------------------
     out["name"] = data.get("name", "")
 
+    # Tree type: part of the content identity (Blender segments node-tree
+    # datablocks by type; a ShaderNodeTree group and a GeometryNodeTree
+    # group with identical nodes are different logic).  Absent = the
+    # historical default (GeometryNodeTree).
+    out["tree_type"] = data.get("tree_type", "GeometryNodeTree")
+
     # Connected sockets: the importer skips restoring default_value on
     # sockets that are linked (the link overrides them at runtime), so
     # those defaults are not roundtrip-stable and must not be hashed.

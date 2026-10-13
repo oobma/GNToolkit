@@ -390,7 +390,14 @@ def _serialize_node_tree_core(tree):
     the local untracked dependency trees; derived copies are serialized
     with this core (the map is flat, one level).
     """
-    data = {"name": tree.name, "inputs": [], "outputs": [], "nodes": [], "links": []}
+    data = {"name": tree.name}
+    # Tree type (class name): written ONLY when it is not the default
+    # GeometryNodeTree, so existing Geometry Nodes exports stay
+    # byte-identical (absent = GeometryNodeTree).
+    tree_blid = getattr(tree, "bl_idname", "GeometryNodeTree")
+    if tree_blid != "GeometryNodeTree":
+        data["tree_type"] = tree_blid
+    data.update({"inputs": [], "outputs": [], "nodes": [], "links": []})
 
     group_input_node = next((n for n in tree.nodes if n.bl_idname == 'NodeGroupInput'), None)
     input_connections = {}
