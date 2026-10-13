@@ -3,7 +3,7 @@
 gn_toolkit.sync_operators — Blender operators for DNA/RNA sync actions.
 
 Provides operators for linking, unlinking, importing, exporting, ignoring,
-resolving, and checking the sync state of Geometry Node groups.
+resolving, and checking the sync state of tracked node groups.
 """
 
 from __future__ import annotations

@@ -152,8 +152,9 @@ def apply_modifier_tasks(mod_data_list: list, interface_maps: dict | None) -> in
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_batch_json"
     bl_label = "Export JSON Package"
-    bl_description = ("Export all Geometry Nodes groups and NODES modifiers to JSON — a single "
-                      "package file, or one file per group in folders with 'Use Folder Structure'")
+    bl_description = ("Export all node groups (Geometry Nodes and Shader) and NODES "
+                      "modifiers to JSON — a single package file, or one file per group "
+                      "in folders with 'Use Folder Structure'")
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
@@ -471,7 +472,8 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
     bl_label = "Import JSON Package"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = ("Recreate all Geometry Nodes groups (and modifiers) from a JSON package — "
+    bl_description = ("Recreate all node groups (Geometry Nodes and Shader) and modifiers "
+                      "from a JSON package — "
                       "or pick any file inside a folder export ('Export package' with folder "
                       "structure) to recreate its NodeGroups/Modifiers folders; "
                       "'Update existing groups' rebuilds existing ones in place")
