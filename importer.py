@@ -608,6 +608,11 @@ def _apply_interface_item_properties(new_item, i_data: dict, item_type: str,
                     level="DEBUG",
                 )
 
+    # Writing default_value clamps an out-of-range max up to min (observed
+    # 5.1/5.2: min=0 with the max=-FLT_MAX "unset" sentinel becomes max=0),
+    # so the serialized range props are re-asserted after the write.
+    _repair_interface_range(new_item, props, tracker)
+
 
 # ---------------------------------------------------------------------------
 # Step 1 helper: Zone output items
@@ -727,6 +732,8 @@ def _restore_struct_prop(node, prop_name: str, data: dict, tracker) -> None:
         elif struct_name == "CurveMapping":
             _apply_scalar_props(target, data, skip=("curves",))
             _restore_curve_mapping_curves(target, data.get("curves", []))
+        elif struct_name == "ImageUser":
+            _apply_scalar_props(target, data, skip=("frame_current",))
         else:
             # Unknown struct: restore plain scalars, best effort.
             _apply_scalar_props(target, data)
@@ -757,6 +764,28 @@ def _apply_custom_properties(target, props, ctx: str, tracker) -> None:
         except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
             tracker.record(f"{ctx}: could not set custom property '{key}': {exc}",
                            level="DEBUG")
+
+
+def _repair_interface_range(item, props: dict, tracker) -> None:
+    """Re-assert serialized min_value/max_value after a default_value write.
+
+    Writing default_value clamps an out-of-range max up to min (observed
+    on 5.1/5.2: min=0 with the max=-FLT_MAX "unset" sentinel becomes
+    max=0), so the serialized range props are re-asserted after any
+    default_value write; the default itself survives the re-assert
+    (probed on float/int/vector sockets).
+    """
+    for p_name in ("min_value", "max_value"):
+        want = props.get(p_name)
+        if want is None or not hasattr(item, p_name):
+            continue
+        try:
+            if getattr(item, p_name) != want:
+                setattr(item, p_name, want)
+        except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+            tracker.record(
+                f"Interface item '{getattr(item, 'name', '?')}': could not "
+                f"repair {p_name} after default_value ({exc})", level="DEBUG")
 
 
 def _apply_scalar_props(target, data: dict, skip: tuple = ()) -> None:
@@ -1909,6 +1938,9 @@ def _post_sync_interface(ng, data: dict, interface_map: dict,
                         item.optional = optional
                     except Exception:
                         pass
+                # The default_value write above re-clamps an out-of-range
+                # max, so the serialized range is re-asserted here too.
+                _repair_interface_range(item, props, tracker)
 
         except Exception:
             tracker.record(
@@ -2436,7 +2468,18 @@ def _import_node_tree_gen(
         if "label" in node_data:
             new_node.label = node_data["label"]
 
-        for prop_name, prop_val in node_data.get("properties", {}).items():
+        node_props = node_data.get("properties", {})
+        # Enum writes can reset state that depends on them (ShaderNodeScript
+        # and ShaderNodeTexIES 'mode' clears script/filepath), so enum
+        # properties are applied FIRST and the remaining properties after
+        # them; the order within each group stays the serialized RNA order.
+        rna_props = {p.identifier: p for p in new_node.bl_rna.properties}
+        ordered_props = sorted(
+            node_props.items(),
+            key=lambda kv: 0 if (kv[0] in rna_props
+                                 and rna_props[kv[0]].type == 'ENUM') else 1,
+        )
+        for prop_name, prop_val in ordered_props:
             if isinstance(prop_val, dict) and "__struct__" in prop_val:
                 _restore_struct_prop(new_node, prop_name, prop_val, tracker)
                 continue

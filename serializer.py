@@ -211,8 +211,11 @@ _NON_SCALAR_SOCKET_TYPES = frozenset({
 })
 
 # Struct properties skipped in the embedded-struct dump (see
-# serialize_struct_value): RNA plumbing and UI-only selection.
-_STRUCT_SKIP_PROPS = frozenset({"rna_type", "select"})
+# serialize_struct_value): RNA plumbing, UI-only selection, and
+# session-derived state (ImageUser.frame_current is the image system's
+# playback cursor, recomputed at evaluation time; rationale in
+# constants.STRUCT_DUMP_TYPES['ImageUser']).
+_STRUCT_SKIP_PROPS = frozenset({"rna_type", "select", "frame_current"})
 
 # Struct dump allowlist: constants.STRUCT_DUMP_TYPES (declarative table with
 # rationale, M1), imported above as _STRUCT_DUMP_TYPES.  It keeps the dump

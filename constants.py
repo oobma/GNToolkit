@@ -181,6 +181,10 @@ STRUCT_DUMP_TYPES: dict[str, str] = {
     "CurveMapping": "Readonly embedded struct; tone-curve points are "
                     "semantic.",
     "CurveProfile": "Readonly embedded struct; profile points are semantic.",
+    "ImageUser": "Readonly embedded struct of texture nodes; the sequence "
+                 "playback settings (frame offset/duration/start, cyclic, "
+                 "auto refresh, tile) are semantic; frame_current is "
+                 "runtime and skipped by the serializer.",
 }
 
 # Mapping from short socket type names to full Blender socket class names.
@@ -482,7 +486,9 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
 # 17: the tree type (``tree_type``, absent = GeometryNodeTree) is part
 # of the canonical content — identity is segmented by tree type like
 # Blender segments node-tree datablocks.
-HASH_VERSION: int = 17
+# 18: ImageUser playback settings (frame offset/duration/start, cyclic,
+# auto refresh) of texture nodes are versioned content.
+HASH_VERSION: int = 18
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"
