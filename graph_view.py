@@ -41,6 +41,74 @@ def _bar_height(sockets: int) -> float:
     inputs draws ~118 px tall and the layout must reserve that.
     """
     return BAR_HEIGHT + max(0, int(sockets) - 3) * SOCKET_ROW
+
+
+def focus_from_board(tree) -> str:
+    """The starred group of a board tree (its neighbourhood focus)."""
+    for node in tree.nodes:
+        if (node.label or "").startswith("* "):
+            return node.label[2:]
+    return ""
+
+
+def _raw_name(label: str) -> str:
+    """Undo the board's label decorations ("* ", " (untracked)")."""
+    name = label
+    if name.startswith("* "):
+        name = name[2:]
+    if name.endswith(" (untracked)"):
+        name = name[:-len(" (untracked)")]
+    return name
+
+
+def board_positions() -> tuple:
+    """Positions and routing of the on-screen board, as displayed.
+
+    Returns ``(positions, routes)`` read from the current ``GNT Graph``
+    tree — so an externally arranged board (Node Arrange, hand moves) can
+    be exported exactly as it looks.  ``positions`` maps raw group name →
+    (x_center, y_top); ``routes`` maps (consumer, dependency) → waypoint
+    list for cables that travel through Reroute nodes.  Empty dicts when
+    there is no board.
+    """
+    tree = bpy.data.node_groups.get(GRAPH_TREE_NAME)
+    if tree is None:
+        return {}, {}
+    positions = {}
+    for node in tree.nodes:
+        if node.bl_idname == "NodeReroute" or node.type == 'FRAME':
+            continue
+        if node.name.startswith("legend_"):
+            continue
+        label = node.label or ""
+        if not label:
+            continue
+        positions[_raw_name(label)] = (node.location[0] + node.width / 2.0,
+                                       node.location[1])
+    routes = {}
+    for link in tree.links:
+        dst = link.to_node
+        if dst.bl_idname == "NodeReroute" or dst.type == 'FRAME':
+            continue
+        if not (dst.label or ""):
+            continue
+        chain = []
+        cur = link.from_node
+        steps = 0
+        while (cur is not None and cur.bl_idname == "NodeReroute"
+               and steps < 200):
+            chain.append((cur.location[0] + REROUTE_W / 2.0,
+                          cur.location[1] - REROUTE_H / 2.0))
+            back = next((l for l in tree.links if l.to_node == cur), None)
+            cur = back.from_node if back else None
+            steps += 1
+        if not chain or cur is None or cur.type == 'FRAME':
+            continue
+        if not (cur.label or ""):
+            continue
+        chain.reverse()
+        routes[(_raw_name(cur.label), _raw_name(dst.label))] = chain
+    return positions, routes
 LEGEND_ORDER = ("synced", "blend_modified", "json_modified", "conflict",
                 "orphan", "json_missing", "untracked")
 

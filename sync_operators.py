@@ -590,7 +590,9 @@ class GN_OT_GraphView(bpy.types.Operator):
         col.prop(self, "include_externals")
 
     def execute(self, context):
-        from .graph_view import build_graph_tree, show_in_editor
+        from .graph_view import (GRAPH_TREE_NAME, PORT_TREE_PREFIX,
+                                 build_graph_tree, focus_from_board,
+                                 show_in_editor)
         if not sync_manager.metadata.get("tracked_groups"):
             self.report({'ERROR'}, "No groups tracked.")
             return {'CANCELLED'}
@@ -598,7 +600,11 @@ class GN_OT_GraphView(bpy.types.Operator):
         if self.mode == 'NEIGHBORHOOD' and not focus:
             active = _get_active_tree(context)
             if active is not None:
-                focus = active.name
+                if (active.name == GRAPH_TREE_NAME
+                        or active.name.startswith(PORT_TREE_PREFIX)):
+                    focus = focus_from_board(active)
+                else:
+                    focus = active.name
             if not focus:
                 self.report({'ERROR'},
                             "Select a tracked group in a Node Editor (or "
@@ -643,6 +649,15 @@ class GN_OT_GraphPoster(bpy.types.Operator):
     focus_name: StringProperty(name="Focus group", default="")
     filepath: StringProperty(name="SVG file", subtype='FILE_PATH',
                              default="//GNT_graph.svg")
+    source: EnumProperty(
+        name="Layout",
+        items=(('COMPACT', "Compact auto lay-out",
+                "Recompute the compact layered layout"),
+               ('BOARD', "As arranged on the board",
+                "Use the node editor board's current positions, e.g. after "
+                "arranging it with Node Arrange")),
+        default='COMPACT',
+    )
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self, width=420)
@@ -653,11 +668,13 @@ class GN_OT_GraphPoster(bpy.types.Operator):
         if self.mode == 'NEIGHBORHOOD':
             col.prop(self, "hops")
         col.prop(self, "include_externals")
+        col.prop(self, "source")
         col.prop(self, "filepath")
 
     def execute(self, context):
         from .graph_utils import render_svg
-        from .graph_view import collect_board_model
+        from .graph_view import (GRAPH_TREE_NAME, PORT_TREE_PREFIX,
+                                 collect_board_model, focus_from_board)
         if not sync_manager.metadata.get("tracked_groups"):
             self.report({'ERROR'}, "No groups tracked.")
             return {'CANCELLED'}
@@ -665,7 +682,11 @@ class GN_OT_GraphPoster(bpy.types.Operator):
         if self.mode == 'NEIGHBORHOOD' and not focus:
             active = _get_active_tree(context)
             if active is not None:
-                focus = active.name
+                if (active.name == GRAPH_TREE_NAME
+                        or active.name.startswith(PORT_TREE_PREFIX)):
+                    focus = focus_from_board(active)
+                else:
+                    focus = active.name
             if not focus:
                 self.report({'ERROR'},
                             "Select a tracked group in a Node Editor (or "
@@ -673,12 +694,32 @@ class GN_OT_GraphPoster(bpy.types.Operator):
                 return {'CANCELLED'}
         model = collect_board_model(self.mode, focus, self.hops,
                                     self.include_externals)
+        positions = routes = None
+        if self.source == 'BOARD':
+            from .graph_view import board_positions
+            positions, routes = board_positions()
+            if not positions:
+                self.report({'ERROR'},
+                            "No board on screen — build the graph view "
+                            "first, or use the compact auto lay-out.")
+                return {'CANCELLED'}
+            missing = sorted(n for n in model["names"]
+                             if n not in positions)
+            if missing:
+                self.report({'ERROR'},
+                            "The board shows a different scope (missing: "
+                            + ", ".join(missing[:3]) + ("…" if
+                                                        len(missing) > 3
+                                                        else "") + "); "
+                            "rebuild it for this scope first.")
+                return {'CANCELLED'}
         title = f"GNToolkit graph - {len(model['names'])} groups"
         if model["focus"]:
             title += f" - around {model['focus']} (+-{self.hops} hops)"
         svg = render_svg(model["names"], model["edges"],
                          model["status_keys"], focus=model["focus"],
-                         externals=model["externals"], title=title)
+                         externals=model["externals"], title=title,
+                         positions=positions, routes=routes)
         path = bpy.path.abspath(self.filepath)
         try:
             with open(path, "w", encoding="utf-8") as f:

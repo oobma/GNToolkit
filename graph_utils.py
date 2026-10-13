@@ -592,14 +592,33 @@ def _hex_color(rgb) -> str:
         max(0, min(255, int(round(c * 255)))) for c in rgb)
 
 
+def _text_on(fill_hex: str) -> str:
+    """Readable label colour for a box fill (light text over dark fills).
+
+    The node editor draws labels light on its dark theme; the poster has a
+    white canvas, so the label must follow the fill: dark statuses (synced
+    blue, changed-in-JSON blue) get light text, the rest keeps #222.
+    """
+    s = fill_hex.lstrip("#")
+    r = int(s[0:2], 16) / 255.0
+    g = int(s[2:4], 16) / 255.0
+    b = int(s[4:6], 16) / 255.0
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "#f0f0f0" if lum < 0.4 else "#222"
+
+
 def render_svg(names, edges, status_keys, focus: str = "",
-               externals=(), title: str = "") -> str:
+               externals=(), title: str = "", positions=None,
+               routes=None) -> str:
     """Deterministic SVG poster for the board data (pure text, no libs).
 
     *status_keys* maps name → status key (see ``STATUS_COLORS``); names in
     *externals* are drawn dashed.  The layout is the same layered grid the
-    node-editor board uses; dependencies sit at the left.  No timestamp is
-    embedded, so the same input always renders the same bytes.
+    node-editor board uses; dependencies sit at the left.  *positions*
+    (name → (x_center, y_top)) overrides the computed layout so an
+    externally arranged board can be exported as it is displayed; *routes*
+    then supplies the waypoints per edge.  No timestamp is embedded, so
+    the same input always renders the same bytes.
     """
     names = sorted(set(names))
     ext = set(externals)
@@ -609,9 +628,13 @@ def render_svg(names, edges, status_keys, focus: str = "",
         return min(340.0, max(170.0, 7.4 * len(label) + 30.0))
 
     widths = {n: box_width(n) for n in names}
-    routes: dict = {}
-    layout = layered_layout(names, edges, widths=widths, y_step=64.0,
-                            routes_out=routes)
+    if positions is None:
+        routes = {} if routes is None else routes
+        layout = layered_layout(names, edges, widths=widths, y_step=64.0,
+                                routes_out=routes)
+    else:
+        layout = dict(positions)
+        routes = {} if routes is None else routes
 
     boxes = {}
     for n in names:
@@ -700,7 +723,7 @@ def render_svg(names, edges, status_keys, focus: str = "",
         shown = label if len(label) <= max_chars else label[:max_chars - 1] + "…"
         parts.append(
             f'<text x="{x + 8:.1f}" y="{y + h / 2 + 4:.1f}" font-size="12" '
-            f'fill="#222">{svg_escape(shown)}</text></g>')
+            f'fill="{_text_on(fill)}">{svg_escape(shown)}</text></g>')
 
     # Legend with counts.
     lx = width - margin - legend_w + 10
