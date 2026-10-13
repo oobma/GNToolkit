@@ -654,8 +654,8 @@ class GN_OT_GraphPoster(bpy.types.Operator):
         items=(('COMPACT', "Compact auto lay-out",
                 "Recompute the compact layered layout"),
                ('BOARD', "As arranged on the board",
-                "Use the node editor board's current positions, e.g. after "
-                "arranging it with Node Arrange")),
+                "Use the node editor board's current positions, e.g. "
+                "after an external node arrangement")),
         default='COMPACT',
     )
 

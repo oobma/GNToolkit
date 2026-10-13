@@ -24,8 +24,8 @@ All notable changes to this project are documented in this file.
   them through tiny Reroute nodes and the poster draws them as smooth
   polylines, so long dependencies travel down the columns instead of
   sweeping across the drawing.  The levels come from a **network-simplex
-  ranking** of the dependency graph (minimum total span — the same dot
-  algorithm Node Arrange uses), so far fewer cables are long to begin
+  ranking** of the dependency graph (minimum total span, the classic
+  choice in layered graph drawers), so far fewer cables are long to begin
   with, and the vertical fit is an order-preserving isotonic regression,
   which cannot inflate columns.  On a 51-group neighbourhood this takes
   the mid-lane layout from 32 long cables / 66 routing nodes to 11 / 14
@@ -45,8 +45,8 @@ All notable changes to this project are documented in this file.
   bounding box, labels switch between light and dark ink to stay
   readable on every status fill, and the Graph Poster dialog offers the
   **"As arranged on the board"** layout source: the SVG then reproduces
-  the node editor's current arrangement (e.g. after arranging it with
-  Node Arrange) instead of the compact auto layout.
+  the node editor's current arrangement (e.g. after an external node
+  arrangement) instead of the compact auto layout.
 - **`gnt_check --render` (repository tool).** The JSON-side checker can
   now draw Graphviz diagrams from the same data: the whole project graph
   (with added/removed/changed coloring against another folder or git
@@ -302,8 +302,8 @@ All notable changes to this project are documented in this file.
   (`-z` pairs) are parsed correctly instead of listing a mangled path.
 - **Multi-input connection order is now part of the canonical hash.** The
   order of the links into a multi-input socket (e.g. Join Geometry) is
-  functional — it defines the index ranges of each domain, and tools like
-  Node Arrange deliberately change it. Serialization and rebuild already
+  functional — it defines the index ranges of each domain, and external
+  node tools may deliberately change it. Serialization and rebuild already
   preserved it; the hash compared the links as a sorted set, so a reorder
   was invisible to status checks. Baselines are re-stamped automatically
   (`HASH_VERSION` 9).

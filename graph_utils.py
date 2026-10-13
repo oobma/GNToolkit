@@ -368,8 +368,8 @@ def layered_layout(names, edges, x_step: float = 420.0,
     (stable sorts, no randomness) to reduce edge crossings, and with
     uniform heights the columns are then pulled vertically toward their
     neighbours (priority method: connected nodes drift to the same height,
-    order and spacing preserved — the effect that makes graphviz/Node
-    Arrange drawings readable) with the most compact order-preserving fit,
+    order and spacing preserved — the effect that makes classic layered
+    drawings readable) with the most compact order-preserving fit,
     so conflicting targets cannot inflate a column.  ``widths`` packs each column as close as its widest node
     allows (``x_gap`` between columns) instead of a fixed grid — that is
     what keeps the link lengths short.  The x of every node is the

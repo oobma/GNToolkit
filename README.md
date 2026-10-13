@@ -270,7 +270,7 @@ repository — never part of the extension zip.
   the same columns — handy for documentation and sharing. The Layout
   option can export the compact auto layout, or **"As arranged on the
   board"** to reproduce whatever arrangement the node editor shows
-  (e.g. after arranging it with Node Arrange).
+  (e.g. after an external node arrangement).
 - **Conflict resolution**: keep the .blend or the JSON version with a
   single click.
 - **JSON files visibility**: the Sync panel always shows where each

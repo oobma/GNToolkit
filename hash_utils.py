@@ -353,7 +353,7 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     #
     # Order matters for links that share a TARGET (multi-input sockets,
     # e.g. Join Geometry: the connection order defines the index ranges
-    # of each domain and tools like Node Arrange deliberately change it),
+    # of each domain and external node tools may deliberately change it),
     # so each link carries its position among its target's links.  Links
     # to different targets stay order-independent.
     links = []

@@ -65,11 +65,11 @@ def board_positions() -> tuple:
     """Positions and routing of the on-screen board, as displayed.
 
     Returns ``(positions, routes)`` read from the current ``GNT Graph``
-    tree — so an externally arranged board (Node Arrange, hand moves) can
-    be exported exactly as it looks.  ``positions`` maps raw group name →
-    (x_center, y_top); ``routes`` maps (consumer, dependency) → waypoint
-    list for cables that travel through Reroute nodes.  Empty dicts when
-    there is no board.
+    tree — so a board arranged externally (an external arranger, hand
+    moves) can be exported exactly as it looks.  ``positions`` maps raw
+    group name → (x_center, y_top); ``routes`` maps (consumer, dependency)
+    → waypoint list for cables that travel through Reroute nodes.  Empty
+    dicts when there is no board.
     """
     tree = bpy.data.node_groups.get(GRAPH_TREE_NAME)
     if tree is None:
@@ -124,11 +124,11 @@ def clear_graph_trees() -> int:
 
 
 def _fitted_width(label: str) -> float:
-    """Node width that fits *label* without truncation (Node Arrange-style).
+    """Node width that fits *label* without truncation (compact style).
 
-    Node Arrange measures the real text with ``blf``; here a generous
-    per-character estimate keeps the code headless-safe and deterministic.
-    The clamps match the SVG poster's so both share the exact same widths.
+    A real font measurement would be exact; here a generous per-character
+    estimate keeps the code headless-safe and deterministic.  The clamps
+    match the SVG poster's so both share the exact same widths.
     """
     return max(170.0, min(340.0, 30.0 + 7.4 * len(label)))
 
