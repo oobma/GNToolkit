@@ -41,7 +41,12 @@ All notable changes to this project are documented in this file.
   waypoint and every routing row reserves the worst-case dot footprint:
   a Reroute may draw its dot up to 50 px below its location depending
   on its height property, so the rows are sized for that — routing dots
-  can never land on top of a bar.
+  can never land on top of a bar.  The poster canvas follows the real
+  bounding box, labels switch between light and dark ink to stay
+  readable on every status fill, and the Graph Poster dialog offers the
+  **"As arranged on the board"** layout source: the SVG then reproduces
+  the node editor's current arrangement (e.g. after arranging it with
+  Node Arrange) instead of the compact auto layout.
 - **`gnt_check --render` (repository tool).** The JSON-side checker can
   now draw Graphviz diagrams from the same data: the whole project graph
   (with added/removed/changed coloring against another folder or git

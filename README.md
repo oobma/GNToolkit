@@ -267,7 +267,10 @@ repository — never part of the extension zip.
 - **Graph poster**: the same board exports to a standalone **SVG poster**
   (no Graphviz needed; opens in any browser) with the status legend and
   per-status counts; routed cables are drawn as smooth polylines through
-  the same columns — handy for documentation and sharing.
+  the same columns — handy for documentation and sharing. The Layout
+  option can export the compact auto layout, or **"As arranged on the
+  board"** to reproduce whatever arrangement the node editor shows
+  (e.g. after arranging it with Node Arrange).
 - **Conflict resolution**: keep the .blend or the JSON version with a
   single click.
 - **JSON files visibility**: the Sync panel always shows where each
