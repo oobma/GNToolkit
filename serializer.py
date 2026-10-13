@@ -26,6 +26,24 @@ from .constants import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
+def tree_has_animation(tree) -> bool:
+    """True when the tree carries animation content (action/drivers/NLA).
+
+    Animation is a declared boundary of the add-on (values animated by
+    keyframes or drivers are NOT versioned); this detection only raises
+    the informational flag and the UI/checker warning.
+    """
+    ad = getattr(tree, "animation_data", None)
+    if ad is None:
+        return False
+    if ad.action is not None:
+        return True
+    if len(ad.drivers) > 0:
+        return True
+    return any(bool(tr.strips) for tr in ad.nla_tracks)
+
+
 def _serialize_enum_items(collection) -> list[dict]:
     """Serialize a Blender enum_items collection into a list of dicts.
 
@@ -398,6 +416,11 @@ def _serialize_node_tree_core(tree):
     tree_blid = getattr(tree, "bl_idname", "GeometryNodeTree")
     if tree_blid != "GeometryNodeTree":
         data["tree_type"] = tree_blid
+    # Animation boundary (D3b): informational flag (the canonical hash
+    # only builds known keys, so it never moves the hash) that drives the
+    # UI and gnt_check warnings.
+    if tree_has_animation(tree):
+        data["has_animation"] = True
     data.update({"inputs": [], "outputs": [], "nodes": [], "links": []})
 
     group_input_node = next((n for n in tree.nodes if n.bl_idname == 'NodeGroupInput'), None)

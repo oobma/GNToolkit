@@ -186,6 +186,7 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
 
     t0 = time.time()
     clean, changed, missing, unparseable = [], [], [], []
+    animated = []
     seen = set()
     for fp in files:
         data = _read_json(fp)
@@ -196,6 +197,8 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
             groups = data.get("node_groups", {})
             for name, gdata in groups.items():
                 seen.add(name)
+                if isinstance(gdata, dict) and gdata.get("has_animation") is True:
+                    animated.append(name)
                 h = hu.canonical_hash_from_json_data(gdata)
                 if name in baseline:
                     expected, _exp_fp = baseline[name]
@@ -210,6 +213,8 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
                 unparseable.append(fp)
                 continue
             seen.add(name)
+            if data.get("has_animation") is True:
+                animated.append(name)
             h = hu.canonical_hash_from_json_data(data)
             if name in baseline:
                 expected, _exp_fp = baseline[name]
@@ -229,6 +234,7 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
         "files": len(files), "groups": len(seen), "clean": clean,
         "changed": changed, "missing": missing,
         "unparseable": unparseable, "dt_seconds": dt,
+        "animated": sorted(set(animated)),
     }
     return report, bool(changed) or bool(missing), bool(unparseable and strict)
 
@@ -1233,6 +1239,9 @@ def main(argv=None) -> int:
             print(f"[MISSING]  {m['name']}  ({m['file']})")
         for u in report["unparseable"]:
             print(f"[UNREADABLE] {u}")
+        for n in report.get("animated", []):
+            print(f"[WARNING]  {n}  has animation (keyframes/drivers) that "
+                  "is not versioned")
         print(f"--- {report['groups']} groups, {len(report['clean'])} clean, "
               f"{len(report['changed'])} changed, {len(report['missing'])} missing, "
               f"{len(report['unparseable'])} unreadable in {report['dt_seconds']}s")

@@ -15,7 +15,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import (ADDON_VERSION, is_group_node_bl_idname,
                         is_trackable_tree_type)
-from .serializer import serialize_node_tree
+from .serializer import serialize_node_tree, tree_has_animation
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
     group_library_path, resolve_json_path,
@@ -391,6 +391,7 @@ def _change_rows() -> dict:
             ignored += 1
             continue
         info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+        tree = bpy.data.node_groups.get(info.get("blend_name", ""))
         rows.append({
             "uid": uid,
             "name": info.get("blend_name", "?"),
@@ -399,6 +400,7 @@ def _change_rows() -> dict:
             "pullable": status in pullable,
             "discardable": status in discardable,
             "staged": sync_manager.is_staged(uid),
+            "animated": bool(tree is not None and tree_has_animation(tree)),
         })
     rows.sort(key=lambda r: (r["status"].value, r["name"]))
     sync_manager.prune_staged(r["uid"] for r in rows if r["saveable"])
@@ -1907,6 +1909,7 @@ def _compute_import_plan(groups: dict, group_name: str) -> dict | None:
     from .hash_utils import canonicalize_node_tree_data
     from .importer import json_group_closure
     from .serializer import serialize_node_tree
+
 
     if group_name not in groups:
         return None

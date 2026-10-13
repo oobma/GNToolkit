@@ -25,6 +25,7 @@ from .geometry_validator import (
 from .sync_manager import sync_manager, SyncStatus, group_library_path
 from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
 from .sync_operators import _get_active_tree
+from .serializer import tree_has_animation
 
 
 STATUS_ICONS = {
@@ -202,11 +203,19 @@ def _draw_changes_list(layout, context) -> None:
                   else "Save marked to JSON")
     save_row.operator("gn.sync_save_staged", text=save_label, icon='EXPORT')
 
+    n_animated = sum(1 for r in rows if r.get("animated"))
+    if n_animated:
+        box.label(text=f"{n_animated} group(s) have animation that is not "
+                       "versioned",
+                  icon=_layout_icon('STATUS_WARNING', 'WARNING'))
+
     def _draw_change_row(target, r):
         row = target.row(align=True)
         row.label(text=r["name"],
                   icon=STATUS_ICONS.get(r["status"], 'QUESTION'))
         row.label(text=STATUS_LABELS.get(r["status"], r["status"].value))
+        if r.get("animated"):
+            row.label(text="", icon=_layout_icon('STATUS_WARNING', 'WARNING'))
         actions = row.row(align=True)
         actions.alignment = 'RIGHT'
         if r["saveable"]:
@@ -280,6 +289,11 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                 active_row.label(text=f"Active: {tree_name} → {json_base}", icon='NODETREE')
                 copy_op = active_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
                 copy_op.json_path = json_path
+                active_tree = bpy.data.node_groups.get(tree_name)
+                if active_tree is not None and tree_has_animation(active_tree):
+                    layout.label(text="Animation (keyframes/drivers) is not "
+                                      "versioned",
+                                 icon=_layout_icon('STATUS_WARNING', 'WARNING'))
                 layout.separator()
 
         row = layout.row(align=True)
