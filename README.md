@@ -511,17 +511,17 @@ port required:
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
   and 5.2 produce identical fingerprints (the rule shipped as
-  HASH_VERSION 5; the algorithm is versioned and currently at 18) and
+  HASH_VERSION 5; the algorithm is versioned and currently at 19) and
   projects track across versions without noise.
 - Version boundaries are explicit: representational differences between
   Blender versions (socket classes and subtypes, version-gated
-  properties) are normalized, while a node model Blender itself changed
-  is a real difference and is reported — e.g. the Principled BSDF gained
-  sockets in 5.2. Groups without such model changes track noise-free
-  between 5.1 and 5.2; alternating 4.2 with 5.x is functional (the
-  shader class sweep and the RNA oracle run green on 4.2, 5.1 and 5.2)
-  but the 5.x-only interface properties are not hash-normalized for
-  4.2 yet, so expect changes when switching between 4.2 and 5.x.
+  properties, class-level tree text) are normalized, so the same group
+  hashes identically when tracked from 4.2 and from 5.x. A node model
+  Blender itself changed is a real difference and is reported — e.g.
+  the Principled BSDF gained sockets in 5.2; groups without such model
+  changes track noise-free between 5.1 and 5.2, and a project tracked
+  from 4.2 is recognized as synced when opened in 5.x (note: Blender
+  itself cannot open 5.x-saved .blend files in 4.2).
 
 ## Installation
 

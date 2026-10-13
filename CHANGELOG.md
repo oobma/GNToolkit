@@ -136,6 +136,15 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Cross-version tracking is normalized.** Properties that exist in
+  only some Blender versions (or whose default text differs per version)
+  now fold to absent when they carry their default and class-level
+  `bl_*` tree text (tooltips/labels) is excluded from the hash, so the
+  same group hashes identically when tracked from 4.2 and from 5.x: a
+  project tracked from 4.2 is reported as synced when opened in 5.x
+  (and vice versa after one import). Non-default values stay real
+  differences. `HASH_VERSION` 19; stored baselines are re-stamped by
+  the existing migration as usual.
 - **Node references survive import again when a mode switch resets
   them.** Enum properties are now applied before the remaining ones, so
   the `mode` switch of Script and IES Texture nodes no longer clears
