@@ -6,8 +6,8 @@ Node groups are serialized into deterministic JSON files — the DNA, or
 source of truth — while the .blend stays your working cache (RNA).
 GNToolkit watches both sides: canonical change detection, per-group sync
 statuses, dependency-aware import and a save/pull/conflict loop that
-plugs into Git, all from inside Blender. Geometry Nodes is the first
-supported tree type.
+plugs into Git, all from inside Blender. Geometry Nodes and Shader node
+groups are supported (compositor and embedded trees are not tracked yet).
 
 The status layer also runs **headless** through `gnt_check.py`
 (`gnt_check.py` and `scripts/` are GitHub repository tools — they are not
@@ -66,8 +66,9 @@ the question that comes after: *is the project versioned, and in sync?*
 
 ## Who it's for
 
-- Solo artists and developers with a Geometry Nodes-heavy project who
-  want undo, history and reviewable diffs for their node setups.
+- Solo artists and developers with a Geometry Nodes- or shader-heavy
+  project who want undo, history and reviewable diffs for their node
+  setups.
 - Teams that share node-group projects through a git repository —
   JSON diffs are reviewable, the .blend is never merged.
 - Anyone building a reusable library of node groups that needs to be
@@ -280,6 +281,12 @@ repository — never part of the extension zip.
   icon when a file is missing.
 - **Concurrency-safe**: lock files prevent two Blender sessions from
   corrupting the same JSON.
+- **Tree kinds and declared limits**: Geometry Nodes and Shader node
+  groups are versioned. Compositor trees and the trees embedded in
+  materials, worlds and scenes are not tracked yet; Texture node trees
+  never. **Animation** (keyframes/drivers/NLA) is not saved into JSON:
+  animated groups are flagged in the Sync panel and by `gnt_check.py`
+  instead of passing as silently synced.
 
 ### Collaboration with Git
 
@@ -297,9 +304,9 @@ repository — never part of the extension zip.
 
 ### Import & share
 
-- **JSON package snapshots**: export/import of all Geometry Nodes groups
-  and NODES modifier setups to/from a single JSON package, with in-place
-  update of existing groups on import.
+- **JSON package snapshots**: export/import of all tracked node groups
+  (Geometry Nodes and Shader) and NODES modifier setups to/from a single
+  JSON package, with in-place update of existing groups on import.
 - **Export active group** with its full dependency chain.
 - **Folder workflow**: the per-group folder export (`NodeGroups/` +
   `Modifiers/`) round-trips end to end — track every file of a folder in
@@ -330,8 +337,9 @@ repository — never part of the extension zip.
 ### Version your project in 3 steps
 
 1. **Start tracking** (like `git init` + first save):
-   - **Track All** — every Geometry Nodes group is tracked against one
-     master JSON **written from the current .blend** (first save).
+   - **Track All** — every trackable node group (Geometry Nodes and
+     Shader) is tracked against one master JSON **written from the
+     current .blend** (first save).
      Each group gets a UUID stored on the node tree. The JSON is
      updated surgically: entries that have no counterpart in the .blend
      (e.g. groups removed locally) are preserved.
@@ -441,9 +449,10 @@ transport for them:
 ### JSON package snapshots (no tracking)
 
 1. In the Node Editor sidebar → **GN Tools**, use:
-   - **Export Package** — writes every Geometry Nodes group and modifier
-     setup to a single JSON package, or one file per group when **Use
-     Folder Structure** is enabled (`NodeGroups/` + `Modifiers/` folders).
+   - **Export Package** — writes every trackable node group (Geometry
+     Nodes and Shader) and modifier setup to a single JSON package, or
+     one file per group when **Use Folder Structure** is enabled
+     (`NodeGroups/` + `Modifiers/` folders).
    - **Export Active Group** — exports the active group plus its
      dependencies.
    - **Import Package/Folder** — reconstructs all groups (and modifiers)
@@ -502,7 +511,7 @@ port required:
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
   and 5.2 produce identical fingerprints (the rule shipped as
-  HASH_VERSION 5; the algorithm is versioned and currently at 16) and
+  HASH_VERSION 5; the algorithm is versioned and currently at 17) and
   projects track across versions without noise.
 
 ## Installation
@@ -556,7 +565,9 @@ Exports are **unified packages**:
 ```
 
 Each node group entry contains its interface, nodes (with socket defaults),
-links and tree properties — enough to fully reconstruct the group.
+links and tree properties — enough to fully reconstruct the group. A group
+entry also carries a `tree_type` marker when it is not a Geometry Nodes
+tree (absent means Geometry Nodes, so existing exports are unchanged).
 
 A package is **node logic, not scene data**. It stores node groups and
 their NODES modifier setups — which object uses them, where in the stack,
@@ -580,6 +591,9 @@ through the package.
 | `sync_metadata.py` | Sidecar file and UUID tracking |
 | `sync_operators.py` | Sync operators (track, save, pull, resolve, ...) |
 | `sync_ui.py` | Sidebar panels |
+| `graph_utils.py` | Pure graph model, layered layout and SVG poster rendering |
+| `graph_view.py` | Board builder: the disposable graph node tree in the editor |
+| `semantic_diff.py` | Human-readable semantic diff between two JSON versions |
 | `geometry_validator.py` | Generic geometry issue detection |
 | `operators.py` | JSON package export/import operators and main panel |
 

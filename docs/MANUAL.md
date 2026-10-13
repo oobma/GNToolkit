@@ -420,8 +420,9 @@ file and modifiers in `Modifiers/*.json`.
 
 ## Additional workflow 7 — Headless export (no UI)
 
-Export every Geometry Nodes group of a .blend to a folder export (one
-JSON file per group, plus `Modifiers/`) without opening Blender's UI:
+Export every trackable node group (Geometry Nodes and Shader) of a
+.blend to a folder export (one JSON file per group, plus `Modifiers/`)
+without opening Blender's UI:
 
 ```bash
 blender --background --factory-startup project.blend --python scripts\export_all_json.py -- --out D:\NodeGroups

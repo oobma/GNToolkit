@@ -6,6 +6,26 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Shader node groups are tracked too (multi-editor, scope A).** Geometry
+  Nodes and Shader node groups now share the whole loop: the same
+  track/save/pull/conflict model, folder exports, master JSON files and
+  selective import cover both editors, and nested shader groups resolve
+  dependency-first like geometry ones. A group entry carries a `tree_type`
+  marker **only when it is not a Geometry Nodes tree** (absent means
+  Geometry Nodes, so Geometry Nodes packages stay byte-identical); the
+  importer creates each entry with its own tree kind and refuses a type
+  mismatch over a same-named tree of another kind instead of corrupting
+  it. `HASH_VERSION` 17 folds the marker in; stored baselines are
+  re-stamped by the existing migration, so updating produces no churn.
+  Compositor trees and the trees embedded in materials, worlds and
+  scenes are **not tracked yet**, and Texture node trees never will be
+  (legacy format).
+- **The animation boundary is declared.** Keyframes, drivers and NLA on
+  node trees are still not versioned — and now that is explicit instead
+  of silent: trees with animation data export an informational
+  `has_animation` flag that never moves the canonical hash, the Sync
+  panel warns next to the active group and on its Changes rows, and
+  `gnt_check.py` prints a `[WARNING]` for those groups (never a failure).
 - **Graph view (add-on).** A "Graph View…" action in the Sync panel
   draws the dependency graph — the whole project or the neighbourhood of
   the selected group (±`hops`) — as a **disposable node tree** in the

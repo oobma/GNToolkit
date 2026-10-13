@@ -1,8 +1,8 @@
 # GNToolkit — Collaborating with Git
 
-GNToolkit tracks node groups as deterministic JSON files, which makes
-every Git client a collaboration backend for Geometry Nodes. Two ways
-to work:
+GNToolkit tracks node groups (Geometry Nodes and Shader) as deterministic
+JSON files, which makes every Git client a collaboration backend for
+them. Two ways to work:
 
 1. **Manual flow** — any Git client (CLI, GitHub Desktop, VS Code, …);
    the addon only writes/reads the JSON files. Zero addon features
