@@ -12,11 +12,13 @@ import bpy
 
 from .codec import clean_value
 from .constants import (
+    MATERIAL_SETTINGS_PROPS,
     NODE_PROPS_TO_SKIP,
     TREE_PROPS_TO_SKIP,
     INTERFACE_SKIP_PROPS,
     OPTIONAL_SOCKET_PROPS,
     STRUCT_DUMP_TYPES as _STRUCT_DUMP_TYPES,
+    WORLD_SETTINGS_PROPS,
     is_group_node_bl_idname,
     parse_interface_socket_variant,
 )
@@ -713,3 +715,59 @@ def serialize_node_tree(tree, derived=None):
             for name, dep in sorted(derived.items())
         }
     return data
+
+
+def serialize_owner_settings(owner, kind: str) -> dict:
+    """Curated datablock settings of an embedded-tree owner (allowlist).
+
+    Only the properties in ``constants.MATERIAL_SETTINGS_PROPS`` /
+    ``WORLD_SETTINGS_PROPS`` are versioned (plus the owner's custom
+    properties, minus the add-on's own gnt_* bookkeeping).  Everything
+    else of the datablock (node_tree, users, preview, asset data, ...)
+    is identity/UI/runtime state, not content.
+    """
+    names = (MATERIAL_SETTINGS_PROPS if kind == "material"
+             else WORLD_SETTINGS_PROPS)
+    props = {}
+    for pid in names:
+        try:
+            val = getattr(owner, pid)
+        except Exception:
+            continue
+        props[pid] = clean_value(val)
+    custom = {}
+    try:
+        for key in owner.keys():
+            if isinstance(key, str) and not key.startswith("gnt_"):
+                custom[key] = clean_value(owner[key])
+    except Exception:
+        pass
+    out = {"properties": props}
+    if custom:
+        out["custom_properties"] = custom
+    return out
+
+
+def serialize_embedded_entry(owner, kind: str, derived=None) -> dict:
+    """Serialize an owner's node tree as one package entry.
+
+    The entry is the tree dump plus an ``owner_settings`` section; its
+    ``name`` is the OWNER name (the identity of an embedded tree — the
+    tree datablock's own name is cosmetic and can be renamed by Blender
+    when it collides with a group).  ``derived`` follows
+    ``serialize_node_tree``; a tracked embedded entry embeds its local
+    untracked group dependencies like a tracked group does.
+    """
+    tree = owner.node_tree
+    if derived is None:
+        derived = collect_derived_untracked(tree)
+    data = serialize_node_tree(tree, derived=derived)
+    data["name"] = owner.name
+    data["owner_settings"] = serialize_owner_settings(owner, kind)
+    return data
+
+
+def canonical_hash_from_embedded(owner, kind: str) -> str:
+    """Canonical hash of an embedded entry (tree + owner settings)."""
+    from .hash_utils import canonical_hash_from_json_data
+    return canonical_hash_from_json_data(serialize_embedded_entry(owner, kind))

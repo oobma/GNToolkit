@@ -2329,6 +2329,7 @@ def _import_node_tree_gen(
     tracker: ImportErrorTracker | None = None,
     holder: dict | None = None,
     _visiting: set | None = None,
+    target_tree=None,
 ):
     """Reconstruct a node tree from its JSON representation (generator).
 
@@ -2336,6 +2337,11 @@ def _import_node_tree_gen(
     progress tuples at phase boundaries and every ~25 nodes so a modal
     driver can repaint the UI between chunks.  The created tree is stored
     in ``holder["tree"]``.
+
+    ``target_tree`` rebuilds that exact datablock instead of looking the
+    tree up by ``data["name"]`` (embedded trees: the owner's node_tree,
+    whose datablock name may differ from the owner name or collide with a
+    group's name).
     """
     if tracker is None:
         tracker = ImportErrorTracker()
@@ -2368,7 +2374,10 @@ def _import_node_tree_gen(
                 )
 
     # Get or create the node tree
-    ng = bpy.data.node_groups.get(name)
+    if target_tree is not None:
+        ng = target_tree
+    else:
+        ng = bpy.data.node_groups.get(name)
     wanted_type = data.get("tree_type", "GeometryNodeTree")
     if ng is not None and getattr(ng, "bl_idname", wanted_type) != wanted_type:
         tracker.record(
@@ -2416,10 +2425,13 @@ def _import_node_tree_gen(
     # Blender does NOT persist zero-user node groups across save/reload;
     # an imported group must survive the save, so give it a fake user.
     # (The canonical hash excludes use_fake_user, so sync is unaffected.)
-    try:
-        ng.use_fake_user = True
-    except Exception:
-        pass
+    # Embedded trees (target_tree: owned by a material/world) are kept
+    # alive by their owner and do not need it.
+    if target_tree is None:
+        try:
+            ng.use_fake_user = True
+        except Exception:
+            pass
 
     # --- Interface ---
     interface_map = {}
@@ -2721,3 +2733,99 @@ def _import_node_tree_gen(
     _log.debug(f"[OK] Reconstruction of node '{name}' completed.")
     yield (1.0, "done")
     holder["tree"] = ng
+
+
+# ---------------------------------------------------------------------------
+# Embedded trees (owner-aware tracking: materials, worlds)
+# ---------------------------------------------------------------------------
+
+_EMBEDDED_COLLECTIONS = {
+    "material": "materials",
+    "world": "worlds",
+}
+
+
+def ensure_embedded_owner(kind: str, name: str, tracker) -> object | None:
+    """Return (creating if needed) the owner datablock of an embedded tree.
+
+    A missing material/world is created so a clone from a package can
+    start from nothing; the tracker gets a WARN because only the node
+    tree and the curated owner settings travel in JSON — the rest of the
+    datablock state (users, asset data, preview, ...) does not.
+    """
+    coll_name = _EMBEDDED_COLLECTIONS.get(kind)
+    if coll_name is None:
+        tracker.record(f"Unknown embedded-tree kind '{kind}'")
+        return None
+    coll = getattr(bpy.data, coll_name)
+    owner = coll.get(name)
+    if owner is not None:
+        return owner
+    try:
+        owner = coll.new(name)
+    except Exception as exc:
+        tracker.record(f"Could not create {kind} '{name}': {exc}")
+        return None
+    tracker.record(
+        f"{kind.capitalize()} '{name}' did not exist — created (only its "
+        f"node tree and the versioned settings are restored)", level="WARN")
+    return owner
+
+
+def apply_owner_settings(owner, kind: str, settings, tracker) -> None:
+    """Restore the curated datablock settings and custom props of an owner."""
+    if not isinstance(settings, dict):
+        return
+    props = settings.get("properties")
+    if isinstance(props, dict):
+        for pid, val in props.items():
+            if not hasattr(owner, pid):
+                tracker.record(
+                    f"{kind.capitalize()} '{owner.name}': setting '{pid}' "
+                    f"does not exist in this Blender version — skipped",
+                    level="DEBUG")
+                continue
+            try:
+                ctx = f"{kind.capitalize()} '{owner.name}' property '{pid}'"
+                setattr(owner, pid, unclean_value(val, context=ctx))
+            except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
+                tracker.record(
+                    f"{kind.capitalize()} '{owner.name}': could not set "
+                    f"property '{pid}': {exc}", level="DEBUG")
+    _apply_custom_properties(owner, settings.get("custom_properties"),
+                             f"{kind.capitalize()} '{owner.name}'", tracker)
+
+
+def import_embedded_entry(entry: dict, kind: str, json_cache: dict,
+                          context=None, tracker=None):
+    """Rebuild one embedded tree (and its owner) from a package entry.
+
+    The owner is created when missing (WARN); the tree is rebuilt in
+    place (``target_tree``) so datablock-name collisions with groups are
+    irrelevant; the curated owner settings are applied after the tree.
+    Returns the owner, or None when it cannot be resolved.
+    """
+    if tracker is None:
+        tracker = ImportErrorTracker()
+    name = entry.get("name") or ""
+    owner = ensure_embedded_owner(kind, name, tracker)
+    if owner is None:
+        return None
+    if not getattr(owner, "use_nodes", False):
+        try:
+            owner.use_nodes = True
+        except Exception:
+            pass
+    tree = getattr(owner, "node_tree", None)
+    if tree is None:
+        tracker.record(
+            f"{kind.capitalize()} '{name}': no node tree after enabling "
+            f"nodes — skipped")
+        return None
+    holder = {}
+    for _frac, _msg in _import_node_tree_gen(
+            entry, json_cache, {}, context, tracker, holder,
+            target_tree=tree):
+        pass
+    apply_owner_settings(owner, kind, entry.get("owner_settings"), tracker)
+    return owner

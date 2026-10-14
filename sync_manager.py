@@ -23,9 +23,10 @@ import bpy
 _log = logging.getLogger("GNToolkit.sync")
 
 
-from .constants import (ADDON_VERSION, HASH_VERSION, LOCK_TIMEOUT_SECONDS,
-                        PACKAGE_EXPORT_METHOD, READ_TIMEOUT_SECONDS,
-                        is_group_node_bl_idname, is_trackable_tree_type)
+from .constants import (ADDON_VERSION, EMBEDDED_KINDS, HASH_VERSION,
+                        LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD,
+                        READ_TIMEOUT_SECONDS, is_group_node_bl_idname,
+                        is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
@@ -33,13 +34,17 @@ from .hash_utils import (
     canonical_hash_from_json_path,
     canonical_hash_from_json_data,
     canonical_hash_from_json_group,
+    canonical_hash_from_json_embedded,
     canonicalize_node_tree_data,
     get_json_mtime,
 )
-from .importer import import_node_tree_recursive, merge_derived_groups
-from .serializer import serialize_node_tree
+from .importer import (import_node_tree_recursive, import_embedded_entry,
+                       merge_derived_groups)
+from .serializer import (serialize_node_tree, serialize_embedded_entry,
+                         canonical_hash_from_embedded)
 from .socket_utils import get_tree_dependencies
 from .sync_metadata import (
+    SYNC_UUID_PROP,
     generate_uuid,
     load_sync_metadata,
     save_sync_metadata,
@@ -66,6 +71,116 @@ from .geometry_validator import (
     format_issue_summary,
     ValidationIssue,
 )
+
+
+# ---------------------------------------------------------------------------
+# Entry kinds (tracked node groups vs embedded trees: materials, worlds)
+# ---------------------------------------------------------------------------
+#
+# A tracked "entry" identifies either a standalone node-group datablock
+# (historical kind; the metadata key is absent for backward compatibility)
+# or an embedded tree owned by a material/world.  Embedded entries share
+# the whole status/save/pull machinery; identity, JSON section and
+# datablock resolution differ, and those live in the helpers below.
+
+_EMBEDDED_COLLECTIONS = {
+    "material": "materials",
+    "world": "worlds",
+}
+
+
+def entry_kind(info) -> str:
+    """Kind of a tracked entry: 'group' (default) / 'material' / 'world'."""
+    return (info or {}).get("kind", "group")
+
+
+def entry_section(info) -> str:
+    """JSON section that holds the entry."""
+    kind = entry_kind(info)
+    if kind == "group":
+        return "node_groups"
+    return EMBEDDED_KINDS.get(kind, "node_groups")
+
+
+def resolve_owner(kind: str, name: str, sync_uuid: str | None = None):
+    """Owner datablock of an embedded entry (material/world), or None.
+
+    Resolves by name first, then by the sync uuid custom property (the
+    owner survives tree rebuilds; linked-library datablocks are skipped
+    because custom properties cannot be stored on them).
+    """
+    coll_name = _EMBEDDED_COLLECTIONS.get(kind)
+    if coll_name is None:
+        return None
+    coll = getattr(bpy.data, coll_name)
+    owner = coll.get(name)
+    if owner is None:
+        if not sync_uuid:
+            return None
+        for candidate in coll:
+            if candidate.get(SYNC_UUID_PROP) == sync_uuid:
+                return candidate
+        return None
+    stored = owner.get(SYNC_UUID_PROP)
+    if sync_uuid and stored and stored != sync_uuid:
+        return None
+    return owner
+
+
+def resolve_entry_tree(uid: str, info):
+    """The node tree of a tracked entry (standalone group or embedded)."""
+    kind = entry_kind(info)
+    name = (info or {}).get("blend_name", "")
+    if kind == "group":
+        return find_tree_by_uuid(name, uid)
+    owner = resolve_owner(kind, name, uid)
+    if owner is None or not getattr(owner, "use_nodes", False):
+        return None
+    return getattr(owner, "node_tree", None)
+
+
+def entry_blend_hash(uid: str, info) -> str | None:
+    """Canonical hash of the .blend side of an entry (None if orphan)."""
+    kind = entry_kind(info)
+    name = (info or {}).get("blend_name", "")
+    if kind == "group":
+        tree = find_tree_by_uuid(name, uid)
+        return canonical_hash_from_tree(tree) if tree is not None else None
+    owner = resolve_owner(kind, name, uid)
+    if (owner is None or not getattr(owner, "use_nodes", False)
+            or getattr(owner, "node_tree", None) is None):
+        return None
+    return canonical_hash_from_embedded(owner, kind)
+
+
+def entry_json_hash(json_path: str, info) -> str | None:
+    """Canonical hash of the JSON side of an entry (None if absent)."""
+    kind = entry_kind(info)
+    name = (info or {}).get("blend_name", "")
+    if kind == "group":
+        return canonical_hash_from_json_group(json_path, name)
+    return canonical_hash_from_json_embedded(json_path, kind, name)
+
+
+def package_entry(data, info):
+    """Entry for *info* inside a loaded JSON file (None when absent)."""
+    if not isinstance(data, dict):
+        return None
+    name = (info or {}).get("blend_name", "")
+    if data.get("type") == "GN_UNIFIED_PACKAGE":
+        entries = data.get(entry_section(info))
+        if isinstance(entries, dict):
+            return entries.get(name)
+        return None
+    if "nodes" in data:
+        if entry_kind(info) == "group" or data.get("name") == name:
+            return data
+    return None
+
+
+def package_put(data: dict, info, entry: dict) -> None:
+    """Write an entry into a package dict, creating its section."""
+    data.setdefault(entry_section(info), {})[info.get("blend_name", "")] = entry
 
 
 class SyncStatus(Enum):
@@ -446,9 +561,7 @@ class SyncManager:
         if info is None:
             return SyncStatus.UNTRACKED
 
-        blend_name = info.get("blend_name", "")
-        tree = find_tree_by_uuid(blend_name, sync_uuid)
-        if tree is None:
+        if resolve_entry_tree(sync_uuid, info) is None:
             return SyncStatus.ORPHAN
 
         json_path = resolve_json_path(info.get("json_path", ""), self._blend_dir())
@@ -462,21 +575,21 @@ class SyncManager:
         last_mtime = info.get("last_json_mtime", 0.0)
 
         if current_mtime is not None and current_mtime <= last_mtime:
-            blend_hash_current = canonical_hash_from_tree(tree)
+            blend_hash_current = entry_blend_hash(sync_uuid, info)
             last_blend_hash = info.get("last_blend_hash", "")
             if blend_hash_current == last_blend_hash:
                 return SyncStatus.SYNCED
             else:
                 return SyncStatus.BLEND_MODIFIED
 
-        # Layer 2: compute per-group JSON hash
-        json_hash_current = canonical_hash_from_json_group(json_path, blend_name)
-        # Fallback: if per-group hash fails (e.g. standalone file), try whole-file
+        # Layer 2: compute per-entry JSON hash
+        json_hash_current = entry_json_hash(json_path, info)
+        # Fallback: if per-entry hash fails (e.g. standalone file), try whole-file
         if json_hash_current is None:
             json_hash_current = canonical_hash_from_json_path(json_path)
 
         # Layer 3: compute .blend hash
-        blend_hash_current = canonical_hash_from_tree(tree)
+        blend_hash_current = entry_blend_hash(sync_uuid, info)
         last_blend_hash = info.get("last_blend_hash", "")
         last_json_hash = info.get("last_json_hash", "")
 
@@ -526,13 +639,18 @@ class SyncManager:
                 if data is not None:
                     mtime = os.path.getmtime(json_path)
                     json_data_cache[jp] = (data, mtime)
-                    # Pre-compute per-group hashes from in-memory data
+                    # Pre-compute per-entry hashes from in-memory data
+                    # (keyed "section:name": groups + embedded sections).
                     if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                        groups = data.get("node_groups", {})
-                        group_hashes = {}
-                        for gname, gdata in groups.items():
-                            group_hashes[gname] = canonical_hash_from_json_data(gdata)
-                        json_hash_cache[jp] = group_hashes
+                        entry_hashes = {}
+                        for section in (("node_groups",)
+                                        + tuple(EMBEDDED_KINDS.values())):
+                            entries = data.get(section)
+                            if isinstance(entries, dict):
+                                for ename, edata in entries.items():
+                                    entry_hashes["%s:%s" % (section, ename)] = \
+                                        canonical_hash_from_json_data(edata)
+                        json_hash_cache[jp] = entry_hashes
 
         # Second pass: compute status for each tracked group
         result = {}
@@ -543,8 +661,7 @@ class SyncManager:
                 continue
 
             blend_name = info.get("blend_name", "")
-            tree = find_tree_by_uuid(blend_name, uid)
-            if tree is None:
+            if resolve_entry_tree(uid, info) is None:
                 result[uid] = SyncStatus.ORPHAN
                 continue
 
@@ -559,7 +676,7 @@ class SyncManager:
 
             # Fast path: mtime unchanged
             if current_mtime <= last_mtime:
-                blend_hash_current = canonical_hash_from_tree(tree)
+                blend_hash_current = entry_blend_hash(uid, info)
                 last_blend_hash = info.get("last_blend_hash", "")
                 if blend_hash_current == last_blend_hash:
                     result[uid] = SyncStatus.SYNCED
@@ -567,18 +684,21 @@ class SyncManager:
                     result[uid] = SyncStatus.BLEND_MODIFIED
                 continue
 
-            # Full check: JSON changed, use cached per-group hashes
-            group_hashes = json_hash_cache.get(jp, {})
-            json_hash_current = group_hashes.get(blend_name)
+            # Full check: JSON changed, use cached per-entry hashes
+            entry_hashes = json_hash_cache.get(jp, {})
+            json_hash_current = entry_hashes.get(
+                "%s:%s" % (entry_section(info), blend_name))
             if json_hash_current is None:
                 # Fallback for standalone files
-                if isinstance(data, dict) and "nodes" in data:
-                    json_hash_current = canonical_hash_from_json_data(data)
+                standalone = (package_entry(data, info)
+                              if isinstance(data, dict) else None)
+                if standalone is not None:
+                    json_hash_current = canonical_hash_from_json_data(standalone)
                 else:
                     result[uid] = SyncStatus.JSON_MISSING
                     continue
 
-            blend_hash_current = canonical_hash_from_tree(tree)
+            blend_hash_current = entry_blend_hash(uid, info)
             last_blend_hash = info.get("last_blend_hash", "")
             last_json_hash = info.get("last_json_hash", "")
 
@@ -693,17 +813,23 @@ class SyncManager:
                 data = read_json_tolerant(json_path)
                 hashes = {}
                 if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                    for gname, gdata in data.get("node_groups", {}).items():
-                        hashes[gname] = canonical_hash_from_json_data(gdata)
+                    for section in (("node_groups",)
+                                    + tuple(EMBEDDED_KINDS.values())):
+                        entries = data.get(section)
+                        if isinstance(entries, dict):
+                            for ename, edata in entries.items():
+                                hashes["%s:%s" % (section, ename)] = \
+                                    canonical_hash_from_json_data(edata)
                 self._json_check_files[json_path] = (data, hashes)
             else:
                 data, hashes = entry
 
             blend_name = info.get("blend_name", "")
-            json_hash = hashes.get(blend_name)
+            json_hash = hashes.get("%s:%s" % (entry_section(info), blend_name))
             if json_hash is None:
-                if isinstance(data, dict) and "nodes" in data:
-                    json_hash = canonical_hash_from_json_data(data)
+                single = package_entry(data, info) if isinstance(data, dict) else None
+                if single is not None:
+                    json_hash = canonical_hash_from_json_data(single)
                 else:
                     self.load_report[uid] = {
                         "status": SyncStatus.JSON_MISSING,
@@ -775,23 +901,14 @@ class SyncManager:
                 continue
 
             data = read_json_tolerant(json_path)
-            package_groups = None
-            if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                package_groups = data.get("node_groups", {})
-            standalone = isinstance(data, dict) and "nodes" in data
-            standalone_hash = (canonical_hash_from_json_data(data)
-                               if standalone else None)
 
             for uid, info in groups:
                 if uid in self.load_report:
                     continue
                 blend_name = info.get("blend_name", "")
-                if package_groups is not None:
-                    gdata = package_groups.get(blend_name)
-                    json_hash = (canonical_hash_from_json_data(gdata)
-                                 if gdata is not None else None)
-                else:
-                    json_hash = standalone_hash
+                gdata = package_entry(data, info)
+                json_hash = (canonical_hash_from_json_data(gdata)
+                             if gdata is not None else None)
                 if json_hash is None:
                     self.load_report[uid] = {
                         "status": SyncStatus.JSON_MISSING,
@@ -948,16 +1065,90 @@ class SyncManager:
         scan_deps(tree)
         return new_uuids
 
+    def link_embedded(self, owner, kind: str, json_path: str) -> str | None:
+        """Link a material/world node tree to a JSON package.
+
+        Mirrors ``link_group`` for embedded trees: writes the entry
+        (tree + curated owner settings) into the package preserving other
+        entries, registers the metadata entry with its kind, and records
+        the dependency group uuids.  Returns the sync uuid, or None when
+        the owner cannot be tracked (linked-library datablock, no nodes).
+        """
+        if kind not in EMBEDDED_KINDS:
+            return None
+        if getattr(owner, "library", None) is not None:
+            return None
+        if (not getattr(owner, "use_nodes", False)
+                or getattr(owner, "node_tree", None) is None):
+            return None
+        self._clear_load_report()
+        sync_uuid = generate_uuid()
+        owner[SYNC_UUID_PROP] = sync_uuid
+        # Zero-user datablocks do not persist across save/reload (same
+        # reason imported groups get a fake user); a tracked owner must
+        # survive the save.
+        try:
+            owner.use_fake_user = True
+        except Exception:
+            pass
+
+        abs_path = json_path
+        if not os.path.isabs(abs_path):
+            abs_path = os.path.join(self._blend_dir(), abs_path)
+
+        master_data = read_json_tolerant(abs_path) if os.path.isfile(abs_path) else None
+        if master_data is None:
+            master_data = {
+                "version": ADDON_VERSION,
+                "type": "GN_UNIFIED_PACKAGE",
+                "export_method": PACKAGE_EXPORT_METHOD,
+                "node_groups": {},
+            }
+        master_data = _ensure_package_shape(master_data)
+
+        info = {"kind": kind, "blend_name": owner.name}
+        package_put(master_data, info, serialize_embedded_entry(owner, kind))
+        write_json_file(abs_path, master_data)
+
+        blend_hash = canonical_hash_from_embedded(owner, kind)
+        json_hash = canonical_hash_from_json_embedded(abs_path, kind, owner.name)
+        if json_hash is None:
+            json_hash = canonical_hash_from_json_path(abs_path)
+        json_mtime = os.path.getmtime(abs_path)
+
+        dep_uuids = []
+        for node in owner.node_tree.nodes:
+            if is_group_node_bl_idname(node.bl_idname) and getattr(node, "node_tree", None):
+                dep_uid = get_uuid_from_tree(node.node_tree)
+                if dep_uid and dep_uid != sync_uuid:
+                    dep_uuids.append(dep_uid)
+
+        stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
+        add_tracked_group(
+            self.metadata, sync_uuid, owner.name, stored_path,
+            blend_hash, json_hash, json_mtime,
+            depends_on=dep_uuids, layout="package", kind=kind,
+        )
+        self._auto_link_dependencies(owner.node_tree, abs_path, stored_path,
+                                     sync_uuid)
+        self._dirty = True
+        return sync_uuid
+
     def unlink_group(self, sync_uuid: str) -> None:
         info = get_tracked_group(self.metadata, sync_uuid)
         if info is None:
             return
         self._clear_load_report()
         remove_tracked_group(self.metadata, sync_uuid)
-        blend_name = info.get("blend_name", "")
-        tree = bpy.data.node_groups.get(blend_name)
-        if tree is not None and "gnt_sync_id" in tree:
-            del tree["gnt_sync_id"]
+        kind = entry_kind(info)
+        if kind == "group":
+            tree = bpy.data.node_groups.get(info.get("blend_name", ""))
+            if tree is not None and SYNC_UUID_PROP in tree:
+                del tree[SYNC_UUID_PROP]
+        else:
+            owner = resolve_owner(kind, info.get("blend_name", ""), sync_uuid)
+            if owner is not None and SYNC_UUID_PROP in owner:
+                del owner[SYNC_UUID_PROP]
         self._dirty = True
 
     def unlink_all_groups(self) -> int:
@@ -1340,6 +1531,10 @@ class SyncManager:
 
         blend_name = info.get("blend_name", "")
 
+        if entry_kind(info) != "group":
+            return self._import_embedded_from_json(
+                sync_uuid, info, json_path, json_data)
+
         target_tree = find_tree_by_uuid(blend_name, sync_uuid)
         if target_tree is not None and group_library_path(target_tree):
             tracker = ImportErrorTracker()
@@ -1483,18 +1678,19 @@ class SyncManager:
         if json_data is None:
             return
 
-        # Extract group data from JSON
+        # Pre-compute per-entry JSON hashes (groups + embedded sections;
+        # keyed "section:name").
+        entry_hashes = {}
         if isinstance(json_data, dict) and json_data.get("type") == "GN_UNIFIED_PACKAGE":
-            json_groups = json_data.get("node_groups", {})
+            for section in (("node_groups",) + tuple(EMBEDDED_KINDS.values())):
+                entries = json_data.get(section)
+                if isinstance(entries, dict):
+                    for ename, edata in entries.items():
+                        entry_hashes["%s:%s" % (section, ename)] = \
+                            canonical_hash_from_json_data(edata)
         elif isinstance(json_data, dict) and "nodes" in json_data:
-            json_groups = {json_data.get("name", ""): json_data}
-        else:
-            json_groups = {}
-
-        # Pre-compute JSON hashes from in-memory data
-        json_hashes = {}
-        for gname, gdata in json_groups.items():
-            json_hashes[gname] = canonical_hash_from_json_data(gdata)
+            entry_hashes["node_groups:%s" % json_data.get("name", "")] = \
+                canonical_hash_from_json_data(json_data)
 
         for uid, info in self.metadata.get("tracked_groups", {}).items():
             if uid == exclude_uuid:
@@ -1503,23 +1699,29 @@ class SyncManager:
             abs_stored = resolve_json_path(stored_path, self._blend_dir())
             if abs_stored == json_path:
                 blend_name = info.get("blend_name", "")
-                tree = find_tree_by_uuid(blend_name, uid)
-                if tree is not None:
-                    # JSON hash from pre-computed cache
-                    dep_json_hash = json_hashes.get(blend_name, "")
+                if resolve_entry_tree(uid, info) is None:
+                    continue
+                dep_json_hash = entry_hashes.get(
+                    "%s:%s" % (entry_section(info), blend_name))
+                if dep_json_hash is None:
+                    single = package_entry(json_data, info)
+                    if single is not None:
+                        dep_json_hash = canonical_hash_from_json_data(single)
+                if dep_json_hash is None:
+                    dep_json_hash = ""
 
-                    # Blend hash: only re-compute if this tree was serialized
-                    if blend_name in serialized_names:
-                        dep_blend_hash = canonical_hash_from_tree(tree)
-                    else:
-                        dep_blend_hash = info.get("last_blend_hash", "")
+                # Blend hash: only re-compute if this entry was serialized
+                if blend_name in serialized_names:
+                    dep_blend_hash = entry_blend_hash(uid, info)
+                else:
+                    dep_blend_hash = info.get("last_blend_hash", "")
 
-                    update_tracked_group(
-                        self.metadata, uid,
-                        last_blend_hash=dep_blend_hash,
-                        last_json_hash=dep_json_hash,
-                        last_json_mtime=new_mtime,
-                    )
+                update_tracked_group(
+                    self.metadata, uid,
+                    last_blend_hash=dep_blend_hash,
+                    last_json_hash=dep_json_hash,
+                    last_json_mtime=new_mtime,
+                )
 
     def _auto_link_imported_groups(self, json_path_abs: str, json_cache: dict,
                                     json_path_stored: str,
@@ -1750,6 +1952,73 @@ class SyncManager:
         self._untracked_deps_cache = None
         return {"tracked": len(new_uuids), "errors": errors, "entries": entries}
 
+    def _import_embedded_from_json(self, sync_uuid: str, info: dict,
+                                   json_path: str, json_data) -> ImportErrorTracker:
+        """Pull one embedded entry (material/world) from its package.
+
+        The entry is rebuilt in place (owner created when missing) and
+        the referenced group dependencies are imported when absent; the
+        group connected-component pull (rebuilding existing divergent
+        parents) still runs through the groups' own entries.
+        """
+        tracker = ImportErrorTracker()
+        kind = entry_kind(info)
+        name = info.get("blend_name", "")
+
+        owner = resolve_owner(kind, name, sync_uuid)
+        if owner is not None and getattr(owner, "library", None) is not None:
+            tracker.record(
+                f"'{name}' is linked from a library — make it local to pull")
+            return tracker
+
+        entry = package_entry(json_data, info)
+        if entry is None:
+            tracker.record(f"No '{kind}' entry '{name}' found in {json_path}")
+            return tracker
+
+        groups = {}
+        if isinstance(json_data, dict):
+            section = json_data.get("node_groups")
+            if isinstance(section, dict):
+                groups = merge_derived_groups(section)
+
+        owner = import_embedded_entry(entry, kind, groups, None, tracker)
+        if owner is None:
+            return tracker
+
+        # Re-stamp the identity on a freshly created/recreated owner so
+        # later renames still resolve through the uuid fallback.
+        if owner.get(SYNC_UUID_PROP) != sync_uuid:
+            try:
+                owner[SYNC_UUID_PROP] = sync_uuid
+            except Exception:
+                pass
+        try:
+            owner.use_fake_user = True
+        except Exception:
+            pass
+
+        entry_hash = canonical_hash_from_json_data(entry)
+        blend_hash = canonical_hash_from_embedded(owner, kind)
+        divergent = blend_hash != entry_hash
+        if divergent:
+            tracker.record(
+                f"'{name}': rebuilt but still differs from the JSON "
+                f"(divergent content kept)", level="WARN")
+        # Divergent rebuilds keep a divergent baseline (blend hash on both
+        # sides, mtime 0) so the difference stays visible as "Changed in
+        # JSON" — same contract the group pull uses.
+        update_tracked_group(
+            self.metadata, sync_uuid,
+            last_blend_hash=blend_hash,
+            last_json_hash=blend_hash if divergent else entry_hash,
+            last_json_mtime=0.0 if divergent else os.path.getmtime(json_path),
+            last_sync_time=time.time(),
+        )
+        self._status_cache.pop(sync_uuid, None)
+        self._dirty = True
+        return tracker
+
     def export_to_json(self, sync_uuid: str, force: bool = False) -> bool:
         """Export .blend group to JSON.
 
@@ -1773,10 +2042,9 @@ class SyncManager:
         if not json_path:
             return False
 
-        # Per-group safety check: only block if THIS group's hash changed
+        # Per-entry safety check: only block if THIS entry's hash changed
         if not force and os.path.isfile(json_path):
-            blend_name = info.get("blend_name", "")
-            current_json_hash = canonical_hash_from_json_group(json_path, blend_name)
+            current_json_hash = entry_json_hash(json_path, info)
             if current_json_hash is None:
                 current_json_hash = canonical_hash_from_json_path(json_path)
             last_known_hash = info.get("last_json_hash", "")
@@ -1784,8 +2052,13 @@ class SyncManager:
                 return False
 
         blend_name = info.get("blend_name", "")
-        tree = find_tree_by_uuid(blend_name, sync_uuid)
+        kind = entry_kind(info)
+        tree = resolve_entry_tree(sync_uuid, info)
         if tree is None:
+            return False
+        owner = (resolve_owner(kind, blend_name, sync_uuid)
+                 if kind != "group" else None)
+        if kind != "group" and owner is None:
             return False
 
         lock = JsonLock(json_path)
@@ -1816,15 +2089,19 @@ class SyncManager:
             # Normalize standalone single-group exports to package shape
             master_data = _ensure_package_shape(master_data)
 
-            # Serialize ONLY the modified group (no dependency chain)
-            master_data["node_groups"][blend_name] = serialize_node_tree(tree)
-            serialized_dict = {blend_name: master_data["node_groups"][blend_name]}
+            # Serialize ONLY the modified entry (no dependency chain)
+            if kind == "group":
+                master_data["node_groups"][blend_name] = serialize_node_tree(tree)
+            else:
+                package_put(master_data, info,
+                            serialize_embedded_entry(owner, kind))
+            serialized_dict = {blend_name: package_entry(master_data, info)}
 
             write_json_file(json_path, master_data)
 
-            # Update primary group hashes
-            new_blend_hash = canonical_hash_from_tree(tree)
-            new_json_hash = canonical_hash_from_json_group(json_path, tree.name)
+            # Update primary entry hashes
+            new_blend_hash = entry_blend_hash(sync_uuid, info)
+            new_json_hash = entry_json_hash(json_path, info)
             if new_json_hash is None:
                 new_json_hash = canonical_hash_from_json_path(json_path)
             new_mtime = os.path.getmtime(json_path)
@@ -1833,7 +2110,7 @@ class SyncManager:
                 last_blend_hash=new_blend_hash,
                 last_json_hash=new_json_hash,
                 last_json_mtime=new_mtime,
-                blend_name=tree.name,
+                blend_name=(tree.name if kind == "group" else blend_name),
             )
 
             # Cascade: update per-group hashes for all groups in this JSON
@@ -2189,32 +2466,33 @@ class SyncManager:
                 errors += len(uids)
                 continue
 
-            # Collect all tracked groups for this JSON (serialize each ONCE)
-            groups_to_export: dict[str, object] = {}
-            any_tree_found = False
+            # Collect all tracked entries for this JSON (serialize each ONCE)
+            entries_to_export: list[tuple[dict, object, object]] = []
             abs_path = json_path
 
             for uid in uids:
                 info = get_tracked_group(self.metadata, uid)
                 if info is None:
                     continue
+                kind = entry_kind(info)
                 blend_name = info.get("blend_name", "")
-                tree = find_tree_by_uuid(blend_name, uid)
-                if tree is None:
+                tree = resolve_entry_tree(uid, info)
+                owner = (resolve_owner(kind, blend_name, uid)
+                         if kind != "group" else None)
+                if tree is None or (kind != "group" and owner is None):
                     continue
 
-                # Serialize each tracked group directly (no dependency chain)
-                groups_to_export[blend_name] = tree
-                any_tree_found = True
+                # Serialize each tracked entry directly (no dependency chain)
+                entries_to_export.append((info, tree, owner))
 
-            if not any_tree_found:
+            if not entries_to_export:
                 skipped += len(uids)
                 continue
 
-            _log.info("[Export All] serializing %d groups to %s...",
-                      len(groups_to_export), os.path.basename(json_path))
+            _log.info("[Export All] serializing %d entries to %s...",
+                      len(entries_to_export), os.path.basename(json_path))
             if context and hasattr(context, 'workspace') and context.workspace:
-                context.workspace.status_text_set(f"Export All: writing {len(groups_to_export)} groups...")
+                context.workspace.status_text_set(f"Export All: writing {len(entries_to_export)} entries...")
 
             # Acquire lock
             lock = JsonLock(json_path)
@@ -2246,11 +2524,18 @@ class SyncManager:
                 # Normalize standalone single-group exports to package shape
                 master_data = _ensure_package_shape(master_data)
 
-                # Update only the tracked groups in-place
+                # Update only the tracked entries in-place
                 serialized_dict = {}
-                for g_name, g_tree in groups_to_export.items():
-                    master_data["node_groups"][g_name] = serialize_node_tree(g_tree)
-                    serialized_dict[g_name] = master_data["node_groups"][g_name]
+                for info_e, tree_e, owner_e in entries_to_export:
+                    kind_e = entry_kind(info_e)
+                    name_e = info_e.get("blend_name", "")
+                    if kind_e == "group":
+                        master_data["node_groups"][name_e] = serialize_node_tree(tree_e)
+                        serialized_dict[name_e] = master_data["node_groups"][name_e]
+                    else:
+                        package_put(master_data, info_e,
+                                    serialize_embedded_entry(owner_e, kind_e))
+                        serialized_dict[name_e] = package_entry(master_data, info_e)
 
                 write_json_file(json_path, master_data)
 
@@ -2296,12 +2581,11 @@ class SyncManager:
 
         for uid, info in tracked.items():
             blend_name = info.get("blend_name", "")
-            tree = find_tree_by_uuid(blend_name, uid)
-            if tree is None:
+            if resolve_entry_tree(uid, info) is None:
                 skipped += 1
                 continue
 
-            current_blend_hash = canonical_hash_from_tree(tree)
+            current_blend_hash = entry_blend_hash(uid, info)
             stored_blend_hash = info.get("last_blend_hash", "")
 
             if stored_blend_hash and current_blend_hash != stored_blend_hash:
@@ -2344,23 +2628,26 @@ class SyncManager:
                 errors += len(uids)
                 continue
 
-            # Collect trees to serialize
-            groups_to_serialize: dict[str, object] = {}
+            # Collect entries to serialize
+            entries_to_serialize: list[tuple[dict, object, object]] = []
             for uid in uids:
                 info = tracked[uid]
+                kind = entry_kind(info)
                 blend_name = info.get("blend_name", "")
-                tree = find_tree_by_uuid(blend_name, uid)
-                if tree is not None:
-                    groups_to_serialize[blend_name] = tree
+                tree = resolve_entry_tree(uid, info)
+                owner = (resolve_owner(kind, blend_name, uid)
+                         if kind != "group" else None)
+                if tree is not None and (kind == "group" or owner is not None):
+                    entries_to_serialize.append((info, tree, owner))
 
-            if not groups_to_serialize:
+            if not entries_to_serialize:
                 errors += len(uids)
                 continue
 
-            _log.info("[Export Modified] serializing %d groups to %s...",
-                      len(groups_to_serialize), os.path.basename(json_path))
+            _log.info("[Export Modified] serializing %d entries to %s...",
+                      len(entries_to_serialize), os.path.basename(json_path))
             if context and hasattr(context, 'workspace') and context.workspace:
-                context.workspace.status_text_set(f"Export Modified: writing {len(groups_to_serialize)} groups...")
+                context.workspace.status_text_set(f"Export Modified: writing {len(entries_to_serialize)} entries...")
 
             # Acquire lock
             lock = JsonLock(json_path)
@@ -2378,11 +2665,18 @@ class SyncManager:
                 # Normalize standalone single-group exports to package shape
                 master_data = _ensure_package_shape(master_data)
 
-                # Serialize and update only the modified groups
+                # Serialize and update only the modified entries
                 serialized_dict = {}
-                for g_name, g_tree in groups_to_serialize.items():
-                    master_data["node_groups"][g_name] = serialize_node_tree(g_tree)
-                    serialized_dict[g_name] = master_data["node_groups"][g_name]
+                for info_e, tree_e, owner_e in entries_to_serialize:
+                    kind_e = entry_kind(info_e)
+                    name_e = info_e.get("blend_name", "")
+                    if kind_e == "group":
+                        master_data["node_groups"][name_e] = serialize_node_tree(tree_e)
+                        serialized_dict[name_e] = master_data["node_groups"][name_e]
+                    else:
+                        package_put(master_data, info_e,
+                                    serialize_embedded_entry(owner_e, kind_e))
+                        serialized_dict[name_e] = package_entry(master_data, info_e)
 
                 write_json_file(json_path, master_data)
 
@@ -2418,7 +2712,7 @@ class SyncManager:
         all_names: dict[str, tuple[str, dict, str]] = {}
         for uid, ig in self.metadata.get("tracked_groups", {}).items():
             jp = ig.get("json_path", "")
-            if jp in modified_json_paths:
+            if jp in modified_json_paths and entry_kind(ig) == "group":
                 all_names[ig.get("blend_name", "")] = (uid, ig, jp)
 
         def _entry_for(name, jp):
@@ -2751,14 +3045,20 @@ class SyncManager:
                 if data is not None:
                     json_data_cache[jp] = data
                     if isinstance(data, dict) and data.get("type") == "GN_UNIFIED_PACKAGE":
-                        group_hashes = {}
-                        for gname, gdata in data.get("node_groups", {}).items():
-                            group_hashes[gname] = canonical_hash_from_json_data(gdata)
-                        json_hash_cache[jp] = group_hashes
+                        entry_hashes = {}
+                        for section in (("node_groups",)
+                                        + tuple(EMBEDDED_KINDS.values())):
+                            entries = data.get(section)
+                            if isinstance(entries, dict):
+                                for ename, edata in entries.items():
+                                    entry_hashes["%s:%s" % (section, ename)] = \
+                                        canonical_hash_from_json_data(edata)
+                        json_hash_cache[jp] = entry_hashes
 
-        # Determine which groups need importing
+        # Determine which entries need importing
         # Include: json_modified, blend_modified, and conflict
         groups_to_import: list[tuple[str, dict, str]] = []
+        embedded_to_import: list[tuple[str, dict, str]] = []
         skipped = 0
         linked_skipped = 0
 
@@ -2767,22 +3067,32 @@ class SyncManager:
             jp = info.get("json_path", "")
             last_json_hash = info.get("last_json_hash", "")
             last_blend_hash = info.get("last_blend_hash", "")
+            kind = entry_kind(info)
 
-            tree = find_tree_by_uuid(blend_name, uid)
-            if tree is not None and group_library_path(tree):
-                linked_skipped += 1
-                skipped += 1
-                continue
+            if kind == "group":
+                tree = find_tree_by_uuid(blend_name, uid)
+                if tree is not None and group_library_path(tree):
+                    linked_skipped += 1
+                    skipped += 1
+                    continue
+            else:
+                owner = resolve_owner(kind, blend_name, uid)
+                if owner is not None and getattr(owner, "library", None) is not None:
+                    linked_skipped += 1
+                    skipped += 1
+                    continue
 
             # Fast: compare stored json hash to current json hash
-            group_hashes = json_hash_cache.get(jp, {})
-            current_json_hash = group_hashes.get(blend_name)
+            entry_hashes = json_hash_cache.get(jp, {})
+            current_json_hash = entry_hashes.get(
+                "%s:%s" % (entry_section(info), blend_name))
 
             if current_json_hash is None:
                 # Try standalone file
                 data = json_data_cache.get(jp)
-                if isinstance(data, dict) and "nodes" in data:
-                    current_json_hash = canonical_hash_from_json_data(data)
+                single = package_entry(data, info) if isinstance(data, dict) else None
+                if single is not None:
+                    current_json_hash = canonical_hash_from_json_data(single)
 
             if current_json_hash is None:
                 # Can't determine — skip
@@ -2793,17 +3103,20 @@ class SyncManager:
 
             # Also check if blend was modified (user wants to overwrite with
             # JSON). Only serialized when the JSON did NOT change: a changed
-            # JSON makes the group a candidate anyway, and serializing every
+            # JSON makes the entry a candidate anyway, and serializing every
             # tree here costs a full pass over the project.
             blend_changed = False
             if (not json_changed) and last_blend_hash:
-                if tree is not None:
-                    current_blend_hash = canonical_hash_from_tree(tree)
+                if resolve_entry_tree(uid, info) is not None:
+                    current_blend_hash = entry_blend_hash(uid, info)
                     blend_changed = current_blend_hash != last_blend_hash
 
             if json_changed or blend_changed:
                 # Needs import (JSON changed or blend changed and user wants to overwrite)
-                groups_to_import.append((uid, info, jp))
+                if kind == "group":
+                    groups_to_import.append((uid, info, jp))
+                else:
+                    embedded_to_import.append((uid, info, jp))
             else:
                 skipped += 1
 
@@ -2812,7 +3125,7 @@ class SyncManager:
         _log.info("[Import Modified] %d of %d groups need importing, %d up-to-date",
                   to_import_count, total, skipped)
 
-        if not groups_to_import:
+        if not groups_to_import and not embedded_to_import:
             return {"imported": 0, "skipped": skipped, "errors": 0, "auto_linked": 0,
                     "still_differ": 0, "linked_skipped": linked_skipped,
                     "failures": []}
@@ -2889,6 +3202,25 @@ class SyncManager:
             if still_divergent:
                 _log.info("[Import Modified] pass %d: %d group(s) still differ from the JSON",
                       pass_no, len(still_divergent))
+
+        # --- Embedded entries (materials/worlds): dedicated rebuild path ---
+        for uid, info, jp in embedded_to_import:
+            ename = info.get("blend_name", "?")
+            data = json_data_cache.get(jp)
+            json_path = resolve_json_path(jp, self._blend_dir())
+            if data is None or not json_path or not os.path.isfile(json_path):
+                errors += 1
+                failures.append((ename, "JSON unreadable"))
+                continue
+            tracker_e = self._import_embedded_from_json(uid, info, json_path, data)
+            if tracker_e.error_count:
+                errors += 1
+                failures.append((ename, "import failed (see report)"))
+            else:
+                imported += 1
+                for _lvl, msg in tracker_e.records:
+                    if "still differ" in msg:
+                        still_divergent.add(ename)
 
         # --- Post-processing: update hashes (honest), auto-link ---
         # Groups whose rebuild still differs from the JSON keep the

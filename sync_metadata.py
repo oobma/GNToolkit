@@ -260,17 +260,22 @@ def add_tracked_group(
     json_mtime: float,
     depends_on: list[str] | None = None,
     layout: str = "",
+    kind: str = "group",
 ) -> None:
-    """Add a new tracked group to the metadata dict (in-place).
+    """Add a new tracked entry to the metadata dict (in-place).
 
     *layout* records where the group's JSON lives: ``"folder"`` (one
     group per file, siblings in the export folder) or ``"package"``
     (several groups sharing a master file).  New dependencies are
     written following it; empty means "infer from the file".
+
+    *kind* is ``"group"`` (standalone node-group datablock; the key is
+    omitted for backward-compatible sidecars), ``"material"`` or
+    ``"world"`` (embedded trees owned by that datablock).
     """
     if "tracked_groups" not in metadata:
         metadata["tracked_groups"] = {}
-    metadata["tracked_groups"][sync_uuid] = {
+    entry = {
         "blend_name": blend_name,
         "json_path": json_path,
         "last_blend_hash": blend_hash,
@@ -280,6 +285,9 @@ def add_tracked_group(
         "depends_on": depends_on or [],
         "layout": layout,
     }
+    if kind and kind != "group":
+        entry["kind"] = kind
+    metadata["tracked_groups"][sync_uuid] = entry
 
 
 def update_tracked_group(metadata: dict, sync_uuid: str, **kwargs) -> None:
@@ -290,7 +298,7 @@ def update_tracked_group(metadata: dict, sync_uuid: str, **kwargs) -> None:
     for key, value in kwargs.items():
         if key in ("blend_name", "json_path", "last_blend_hash",
                     "last_json_hash", "last_json_mtime", "last_sync_time",
-                    "depends_on", "ignored", "layout"):
+                    "depends_on", "ignored", "layout", "kind"):
             info[key] = value
 
 
@@ -327,20 +335,28 @@ def validate_metadata(metadata: dict, blend_dir: str) -> list[str]:
             warnings.append(f"JSON file not found for '{info.get('blend_name', '?')}': {json_path}")
 
         blend_name = info.get("blend_name", "")
-        if blend_name not in bpy.data.node_groups:
-            tree = None
-        else:
-            tree = bpy.data.node_groups[blend_name]
-        if tree is None:
-            warnings.append(f"Node tree '{blend_name}' not found in .blend (orphan)")
-
+        kind = info.get("kind", "group")
         stored_uuid = None
-        if tree is not None:
-            stored_uuid = get_uuid_from_tree(tree)
+        if kind == "group":
+            tree = bpy.data.node_groups.get(blend_name)
+            if tree is None:
+                warnings.append(f"Node tree '{blend_name}' not found in .blend (orphan)")
+            else:
+                stored_uuid = get_uuid_from_tree(tree)
+        else:
+            coll_name = {"material": "materials",
+                         "world": "worlds"}.get(kind)
+            owner = (getattr(bpy.data, coll_name).get(blend_name)
+                     if coll_name else None)
+            if owner is None:
+                warnings.append(
+                    f"{kind.capitalize()} '{blend_name}' not found in .blend (orphan)")
+            else:
+                stored_uuid = owner.get(SYNC_UUID_PROP)
         if stored_uuid and stored_uuid != uid:
             warnings.append(
                 f"UUID mismatch for '{blend_name}': "
-                f"metadata has {uid}, tree has {stored_uuid}"
+                f"metadata has {uid}, datablock has {stored_uuid}"
             )
 
     return warnings

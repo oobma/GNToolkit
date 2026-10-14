@@ -487,6 +487,12 @@ HASH_EXCLUDE_TREE_PROPS: frozenset[str] = frozenset({
     'bl_label',
     'bl_icon',
     'bl_idname',
+    # Per-session flag: Blender reports True for trees created at runtime
+    # (e.g. the tree a material/world gets when nodes are first enabled)
+    # and False once the datablock was saved to a file — hashing it made
+    # every freshly tracked embedded tree report "modified" after the
+    # first save (measured 2026-10-14).
+    'is_runtime_data',
 })
 
 # "Absent ≡ default" normalizations for properties that exist in only
@@ -515,7 +521,52 @@ CROSS_VERSION_DEFAULTS: dict = {
     ("tree", "bl_use_group_interface"): True,
     ("tree", "default_group_node_width"): 140,
     ("tree", "grease_pencil"): None,
+    # Owner settings (materials): shadow_method exists only up to 4.2
+    # (EEVEE Next removed it); default 'OPAQUE' (probed 4.2).
+    ("owner", "shadow_method"): "OPAQUE",
 }
+
+# ---------------------------------------------------------------------------
+# Embedded trees (owner-aware tracking: materials, worlds)
+# ---------------------------------------------------------------------------
+
+# kind -> section name in packages and subfolder name in folder exports.
+EMBEDDED_KINDS: dict[str, str] = {
+    "material": "materials",
+    "world": "worlds",
+}
+
+# Curated owner settings versioned next to the tree (approved 2026-10-14).
+# Allowlist: only these properties are serialized; non-default values are
+# content, and version-only properties fold to absent at their default
+# (see CROSS_VERSION_DEFAULTS, scope "owner").
+MATERIAL_SETTINGS_PROPS: tuple[str, ...] = (
+    # Mixing / transparency
+    "blend_method", "surface_render_method", "shadow_method",
+    "alpha_threshold", "use_transparency_overlap", "use_transparent_shadow",
+    "show_transparent_back",
+    # Culling / shadows
+    "use_backface_culling", "use_backface_culling_shadow",
+    "use_backface_culling_lightprobe_volume",
+    # Refraction / SSS / volume
+    "use_screen_refraction", "use_raytrace_refraction", "refraction_depth",
+    "use_sss_translucency", "use_thickness_from_shadow",
+    "volume_intersection_method",
+    # Displacement / thickness
+    "displacement_method", "max_vertex_displacement", "thickness_mode",
+    # Viewport display
+    "diffuse_color", "metallic", "roughness", "specular_color",
+    "specular_intensity",
+    # Freestyle / render
+    "line_color", "line_priority", "pass_index",
+)
+
+WORLD_SETTINGS_PROPS: tuple[str, ...] = (
+    "color", "lightgroup", "use_eevee_finite_volume",
+    "sun_angle", "sun_threshold", "use_sun_shadow",
+    "sun_shadow_filter_radius", "sun_shadow_maximum_resolution",
+    "sun_shadow_jitter_overblur", "use_sun_shadow_jitter",
+)
 
 # Version of the canonical hash algorithm. Bump it when the hash
 # normalization changes: stored baselines from older algorithms become

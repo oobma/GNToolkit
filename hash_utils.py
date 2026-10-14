@@ -16,6 +16,7 @@ from copy import deepcopy
 
 from .constants import (
     CROSS_VERSION_DEFAULTS,
+    EMBEDDED_KINDS,
     HASH_EXCLUDE_NODE_PROPS,
     HASH_EXCLUDE_TREE_PROPS,
     HASH_EXCLUDE_SOCKET_PROPS,
@@ -431,6 +432,13 @@ def canonicalize_node_tree_data(data: dict) -> dict:
     if tree_custom:
         out["custom_properties"] = dict(sorted(tree_custom.items()))
 
+    # Owner settings (embedded trees: materials/worlds): curated datablock
+    # properties plus the owner's custom properties.  Version-only
+    # properties fold to absent at their default (scope "owner").
+    settings = data.get("owner_settings")
+    if isinstance(settings, dict):
+        out["owner_settings"] = _canonicalize_owner_settings(settings)
+
     # Derived (embedded local untracked dependencies): part of the entry's
     # content — an edit inside a derived subtree must move the hash (that
     # is the point of the embedding).  Each copy is canonicalized like a
@@ -444,6 +452,21 @@ def canonicalize_node_tree_data(data: dict) -> dict:
         }
 
     return _normalize_floats(out)
+
+
+def _canonicalize_owner_settings(settings: dict) -> dict:
+    """Canonical form of an entry's owner_settings section."""
+    props = settings.get("properties")
+    props = props if isinstance(props, dict) else {}
+    props = _fold_version_defaults(props, "owner")
+    out = {"properties": dict(sorted(
+        (str(k), _normalize_floats(v)) for k, v in props.items()))}
+    custom = {k: _normalize_floats(v)
+              for k, v in (settings.get("custom_properties") or {}).items()
+              if not str(k).startswith("gnt_")}
+    if custom:
+        out["custom_properties"] = dict(sorted(custom.items()))
+    return out
 
 
 def canonical_hash_from_tree(tree, derived=None) -> str:
@@ -592,6 +615,40 @@ def canonical_hash_from_json_group(filepath: str, group_name: str) -> str | None
     Returns None if the file or group is not found.
     """
     return _cached_json_hash(filepath, group_name)
+
+
+def canonical_hash_from_json_embedded(filepath: str, kind: str,
+                                      name: str) -> str | None:
+    """Canonical hash of one embedded-tree entry (materials/worlds).
+
+    Reads the entry from its kind section of a package, or the whole
+    file when it is a standalone per-owner folder export whose ``name``
+    matches the owner.  Returns None when the file or entry is not
+    found.
+    """
+    section = EMBEDDED_KINDS.get(kind)
+    if section is None:
+        return None
+    key = _json_file_key(filepath)
+    if key is None:
+        return None
+    cache_key = key + ("%s:%s" % (kind, name),)
+    if cache_key in _JSON_HASH_CACHE:
+        _JSON_HASH_CACHE.move_to_end(cache_key)
+        return _JSON_HASH_CACHE[cache_key]
+    data = load_json_cached(filepath)
+    value = None
+    if isinstance(data, dict):
+        entries = data.get(section)
+        if isinstance(entries, dict) and name in entries:
+            value = canonical_hash_from_json_data(entries[name])
+        elif "nodes" in data and data.get("name") == name:
+            value = canonical_hash_from_json_data(data)
+    _JSON_HASH_CACHE[cache_key] = value
+    _JSON_HASH_CACHE.move_to_end(cache_key)
+    while len(_JSON_HASH_CACHE) > _JSON_HASH_CACHE_MAX:
+        _JSON_HASH_CACHE.popitem(last=False)
+    return value
 
 
 def list_groups_in_json(filepath: str) -> list[str]:
