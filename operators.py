@@ -600,6 +600,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     _groups_skipped = 0
     _embedded_imported = 0
     _embedded_skipped = 0
+    _embedded_total = 0
     _start_time: float = 0.0
 
     def draw(self, context):
@@ -644,6 +645,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         # (e.g. the default Cube matching a stored modifier's object name).
         self._mod_data_list = mod_data_list if self.apply_modifiers else []
         self._embedded_entries = list(embedded_entries)
+        self._embedded_total = len(self._embedded_entries)
         self._current_gen = None
         self._current_name = ""
         self._pending_restore = None
@@ -701,31 +703,42 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         apply_modifier_tasks(self._mod_data_list, self.group_interface_maps)
 
     def _process_embedded(self, context):
-        """Recreate the package's material/world entries (after groups)."""
-        entries = self._embedded_entries
-        self._embedded_entries = []
-        if not entries:
+        """Recreate ONE pending material/world entry per modal tick.
+
+        Processing all owners in one call froze the UI at 99% for a whole
+        minute on the real 5.1-splash clone (47 owners, ~1.5 s each): the
+        modal must yield between owners so the status text and the
+        progress bar keep moving.
+        """
+        if not self._embedded_entries:
             return
-        from .importer import import_embedded_entry
+        item = self._embedded_entries.pop(0)
+        kind = item["kind"]
+        name = item["name"]
+        total = max(self._embedded_total, 1)
+        done = total - len(self._embedded_entries)
         context.workspace.status_text_set(
-            f"Importing embedded trees ({len(entries)})...")
-        for item in entries:
-            kind = item["kind"]
-            name = item["name"]
-            coll = (bpy.data.materials if kind == "material"
-                    else bpy.data.worlds)
-            owner = coll.get(name)
-            if (owner is not None and getattr(owner, "use_nodes", False)
-                    and getattr(owner, "node_tree", None) is not None
-                    and not self.overwrite_existing):
-                self._embedded_skipped += 1
-                continue
-            imported_owner = import_embedded_entry(
-                item["data"], kind, self.json_cache, context, self._tracker)
-            if imported_owner is not None:
-                self._embedded_imported += 1
-            else:
-                self._embedded_skipped += 1
+            f"Materials/worlds {done}/{total}: {name}")
+        try:
+            context.window_manager.progress_update(
+                98 + min(2, int(2 * done / total)))
+        except Exception:
+            pass
+        from .importer import import_embedded_entry
+        coll = (bpy.data.materials if kind == "material"
+                else bpy.data.worlds)
+        owner = coll.get(name)
+        if (owner is not None and getattr(owner, "use_nodes", False)
+                and getattr(owner, "node_tree", None) is not None
+                and not self.overwrite_existing):
+            self._embedded_skipped += 1
+            return
+        imported_owner = import_embedded_entry(
+            item["data"], kind, self.json_cache, context, self._tracker)
+        if imported_owner is not None:
+            self._embedded_imported += 1
+        else:
+            self._embedded_skipped += 1
 
     def modal(self, context, event):
         if event.type == 'ESC':
@@ -737,7 +750,10 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             # All groups done (and no group currently being imported):
             # apply modifiers and finish.
             if self._current_gen is None and not self._group_names:
-                self._process_embedded(context)
+                if self._embedded_entries:
+                    self._process_embedded(context)
+                    if self._embedded_entries:
+                        return {'RUNNING_MODAL'}
                 self._process_modifiers(context)
                 elapsed = time.perf_counter() - self._start_time
                 counts = (f"{self._groups_imported} imported, "
