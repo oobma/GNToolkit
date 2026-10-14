@@ -178,6 +178,9 @@ def _canonicalize_interface_socket_entry(it: dict) -> None:
             props["default_value"] = dv[:dims]
 
 
+_NO_DEFAULT = object()
+
+
 def _fold_version_defaults(props: dict, scope: str) -> dict:
     """Drop properties whose value equals the version-gated default.
 
@@ -185,13 +188,19 @@ def _fold_version_defaults(props: dict, scope: str) -> dict:
     default differs per version) must hash the same when it is absent
     (older version) as when it carries the default (newer version).
     Non-default values stay: they are real content.  Table and rationale:
-    constants.CROSS_VERSION_DEFAULTS.
+    constants.CROSS_VERSION_DEFAULTS.  A table value that is a tuple
+    lists several equivalent-to-absent values (e.g. an enum default plus
+    the '' Blender sanitizes from invalid legacy data).
     """
     out = {}
     for key, value in props.items():
-        if (scope, key) in CROSS_VERSION_DEFAULTS \
-                and CROSS_VERSION_DEFAULTS[(scope, key)] == value:
-            continue
+        expected = CROSS_VERSION_DEFAULTS.get((scope, key), _NO_DEFAULT)
+        if expected is not _NO_DEFAULT:
+            if isinstance(expected, (tuple, list, set, frozenset)):
+                if value in expected:
+                    continue
+            elif expected == value:
+                continue
         out[key] = value
     return out
 

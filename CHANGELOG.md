@@ -151,6 +151,15 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Group Input/Output socket defaults no longer swap when identifiers
+  were recycled.** Legacy files store interface sockets with renumbered
+  ids (`Socket_2` on the first display socket, real `blender-5.1-splash`
+  case); the rebuild matched serialized defaults by that stale id and
+  silently exchanged values between adjacent sockets (Fill/Falloff
+  0.8/0.5), which surfaced as false "Changed in JSON" right after
+  tracking a fresh clone. Interface sockets are now matched by
+  name/position (the rebuilt interface order), like group-node sockets
+  already were.
 - **Import reports no longer count freshly created owners as issues.**
   Creating a missing material/world while importing is logged as an
   informational notice (Console) instead of adding to the "issue(s)"
@@ -166,11 +175,14 @@ All notable changes to this project are documented in this file.
   only some Blender versions (or whose default text differs per version)
   now fold to absent when they carry their default, class-level `bl_*`
   tree text (tooltips/labels) and the per-session `is_runtime_data` flag
-  are excluded from the hash, so the same group hashes identically when
-  tracked from 4.2 and from 5.x: a project tracked from 4.2 is reported
-  as synced when opened in 5.x (and vice versa after one import).
-  Non-default values stay real differences. `HASH_VERSION` 19; stored
-  baselines are re-stamped by the existing migration as usual.
+  are excluded from the hash, and `default_input` folds both its enum
+  default and the sanitized `''` that older exports wrote for invalid
+  legacy values, so
+  the same group hashes identically when tracked from 4.2 and from 5.x:
+  a project tracked from 4.2 is reported as synced when opened in 5.x
+  (and vice versa after one import). Non-default values stay real
+  differences. `HASH_VERSION` 20; stored baselines are re-stamped by the
+  existing migration as usual.
 - **Node references survive import again when a mode switch resets
   them.** Enum properties are now applied before the remaining ones, so
   the `mode` switch of Script and IES Texture nodes no longer clears

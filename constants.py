@@ -524,6 +524,11 @@ CROSS_VERSION_DEFAULTS: dict = {
     # Owner settings (materials): shadow_method exists only up to 4.2
     # (EEVEE Next removed it); default 'OPAQUE' (probed 4.2).
     ("owner", "shadow_method"): "OPAQUE",
+    # default_input: 'VALUE' is the enum default for the socket types
+    # that expose it; legacy files (5.1-splash) stored an invalid value
+    # that Blender sanitizes to '' on read, which older exports wrote to
+    # JSON.  Both are unrepresentable/equivalent to absent.
+    ("interface", "default_input"): ("VALUE", ""),
 }
 
 # ---------------------------------------------------------------------------
@@ -581,7 +586,10 @@ WORLD_SETTINGS_PROPS: tuple[str, ...] = (
 # 19: version-gated properties fold to absent when they carry their
 # default (CROSS_VERSION_DEFAULTS), so 4.2 and 5.x sessions hash the
 # same group identically.
-HASH_VERSION: int = 19
+# 20: default_input folds both 'VALUE' (its enum default) and the ''
+# sanitized from invalid legacy values — the last false-change class
+# found on the real 5.1-splash project.
+HASH_VERSION: int = 20
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

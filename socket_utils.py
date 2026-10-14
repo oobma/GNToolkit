@@ -154,9 +154,15 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
         if s:
             return s
 
-    # Group nodes with positional disambiguation requested: resolve by
-    # name+type first (their interface identifiers are rebuilt/recycled).
-    if is_group_node_bl_idname(node.bl_idname) and not name_only and name_index is not None:
+    # Nodes whose sockets mirror an interface — group nodes and the tree's
+    # own Group Input/Output — with positional disambiguation requested:
+    # resolve by name+type first, because their identifiers are rebuilt/
+    # recycled and a recycled id silently matches a DIFFERENT socket (real
+    # 5.1-splash case: two adjacent Group Input outputs got their default
+    # values swapped because the source ids were Socket_2/Socket_1).
+    if (is_group_node_bl_idname(node.bl_idname)
+            or node.bl_idname in ("NodeGroupInput", "NodeGroupOutput")) \
+            and not name_only and name_index is not None:
         cands = [x for x in sockets if x.name == sname
                  and (expected_type is None or x.type == expected_type)]
         s = _name_pick(cands)
