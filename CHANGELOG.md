@@ -151,6 +151,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Import reports no longer count freshly created owners as issues.**
+  Creating a missing material/world while importing is logged as an
+  informational notice (Console) instead of adding to the "issue(s)"
+  count of the finish message — a clean 47-material clone now reports
+  "47 material/world imported, 0 issue(s)".
 - **Exporting a package no longer aborts on unreadable NODES
   modifiers.** A single modifier whose legacy ID-properties cannot be
   read (Blender 5.x raises TypeError for some types; hit with the real

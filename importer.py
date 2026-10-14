@@ -2768,7 +2768,7 @@ def ensure_embedded_owner(kind: str, name: str, tracker) -> object | None:
         return None
     tracker.record(
         f"{kind.capitalize()} '{name}' did not exist — created (only its "
-        f"node tree and the versioned settings are restored)", level="WARN")
+        f"node tree and the versioned settings are restored)", level="NOTICE")
     return owner
 
 

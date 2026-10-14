@@ -15,6 +15,7 @@ _log = logging.getLogger("GNToolkit")
 
 _LEVELS = {
     "DEBUG": logging.DEBUG,
+    "NOTICE": logging.INFO,
     "WARN": logging.WARNING,
     "CRITICAL": logging.CRITICAL,
     "CRITICAL ERROR": logging.CRITICAL,
@@ -24,7 +25,7 @@ _LEVELS = {
 class ImportErrorTracker:
     """Tracks errors that occur during a single import operation."""
 
-    # DEBUG/DEFAULT_VALUE are informational; only WARN+ count as issues.
+    # DEBUG/NOTICE are informational; only WARN+ count as issues.
     _REPORTED_LEVELS = frozenset({"WARN", "ERROR", "CRITICAL", "CRITICAL ERROR"})
     # WARN is a warning, not a failure.
     _ERROR_LEVELS = frozenset({"ERROR", "CRITICAL", "CRITICAL ERROR"})
