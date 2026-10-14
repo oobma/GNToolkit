@@ -282,7 +282,13 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                     cleaned.append(ed)
                 it["enum_items"] = sorted(cleaned, key=lambda x: x.get("name", ""))
             items.append(it)
-        out["interface_items"] = sorted(items, key=lambda x: x.get("name", ""))
+        # Sort by (name, in_out): the roundtrip may recreate homonymous
+        # INPUT/OUTPUT items in a different relative order (Blender
+        # inserts a same-named output before its input, and the real
+        # 5.1-splash GN-motion_trails pair came back swapped), while the
+        # item identity is name+direction.  Identifiers stay excluded.
+        out["interface_items"] = sorted(
+            items, key=lambda x: (x.get("name", ""), x.get("in_out", "")))
     elif "inputs" in data or "outputs" in data:
         # Legacy path
         def _clean_socket_list(lst):

@@ -151,6 +151,18 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Real-file fidelity, found by the new splash roundtrip gate step.**
+  Cloning the real `blender-5.1-splash` scene (151 groups + 47
+  materials) now round-trips with zero divergences and all 198 entries
+  Synced after Track Folder. Fixes: Bake node outputs are matched by
+  NAME (their `Item_N` ids are positional and were rewired to
+  neighbouring sockets); missing Image/Text/Object/Collection/Material
+  node references are recreated as NAMED PLACEHOLDERS so the reference
+  survives (content is not versioned — Blender's own append does the
+  same, a notice says so); homonymous interface INPUT/OUTPUT items
+  canonicalize by (name, direction) so the recreation order Blender
+  imposes no longer reads as a change; `color_tag` folds its default and
+  the sanitized ''. `HASH_VERSION` 21.
 - **Group Input/Output socket defaults no longer swap when identifiers
   were recycled.** Legacy files store interface sockets with renumbered
   ids (`Socket_2` on the first display socket, real `blender-5.1-splash`
@@ -181,7 +193,7 @@ All notable changes to this project are documented in this file.
   the same group hashes identically when tracked from 4.2 and from 5.x:
   a project tracked from 4.2 is reported as synced when opened in 5.x
   (and vice versa after one import). Non-default values stay real
-  differences. `HASH_VERSION` 20; stored baselines are re-stamped by the
+  differences. `HASH_VERSION` 21; stored baselines are re-stamped by the
   existing migration as usual.
 - **Node references survive import again when a mode switch resets
   them.** Enum properties are now applied before the remaining ones, so

@@ -97,7 +97,8 @@ def build_master(input_path: str, out_path: str = "") -> dict:
     embedded_rebuilt = 0
     for item in embedded_entries:
         owner = import_embedded_entry(item["data"], item["kind"],
-                                      json_cache, None, tracker)
+                                      json_cache, None, tracker,
+                                      group_interface_maps=shared_maps)
         if owner is not None:
             embedded_rebuilt += 1
 

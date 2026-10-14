@@ -747,6 +747,60 @@ def _restore_struct_prop(node, prop_name: str, data: dict, tracker) -> None:
             f"'{struct_name}' on '{prop_name}': {exc}", level="DEBUG")
 
 
+def _restore_missing_ref_placeholder(node, prop_name, prop_val, tracker) -> None:
+    """Create a named placeholder for an unresolved Image/Text/Object ref.
+
+    Datablocks are environment, not versioned: references travel by NAME.
+    When the target file lacks the datablock, Blender's own append would
+    still leave a placeholder carrying the name; doing the same keeps the
+    reference round-tripping (and the canonical hash stable) instead of
+    silently dereferencing the node to None — the real 5.1-splash clone
+    case (image/object refs read as changed forever otherwise).  Only the
+    reference survives; the datablock's content is NOT restored.
+    """
+    if not isinstance(prop_val, dict):
+        return
+    kind = prop_val.get("type")
+    name = prop_val.get("name")
+    if kind not in ("Image", "Text", "Object", "Collection", "Material") \
+            or not name:
+        return
+    if getattr(node, prop_name, None) is not None:
+        return
+    collections = {
+        "Image": bpy.data.images,
+        "Text": bpy.data.texts,
+        "Object": bpy.data.objects,
+        "Collection": bpy.data.collections,
+        "Material": bpy.data.materials,
+    }
+    placeholder = collections[kind].get(name)
+    if placeholder is None:
+        try:
+            if kind == "Image":
+                placeholder = bpy.data.images.new(name, 1, 1)
+            elif kind == "Text":
+                placeholder = bpy.data.texts.new(name)
+            elif kind == "Object":
+                placeholder = bpy.data.objects.new(name, None)
+                bpy.context.scene.collection.objects.link(placeholder)
+            else:
+                placeholder = collections[kind].new(name)
+        except Exception as exc:
+            tracker.record(
+                f"Could not create placeholder {kind} '{name}': {exc}",
+                level="DEBUG")
+            return
+        tracker.record(
+            f"{kind} '{name}' did not exist — created as a placeholder so "
+            f"the node reference survives (the {kind.lower()} content is "
+            f"not versioned)", level="NOTICE")
+    try:
+        setattr(node, prop_name, placeholder)
+    except (TypeError, AttributeError, ValueError, RuntimeError):
+        pass
+
+
 def _apply_custom_properties(target, props, ctx: str, tracker) -> None:
     """Restore serialized custom (ID) properties on a node or tree.
 
@@ -2505,10 +2559,16 @@ def _import_node_tree_gen(
                 # e.g. mute, re-validate the whole tree like socket writes).
                 try:
                     if getattr(new_node, prop_name) == final_val:
+                        # An unresolved Image/Text ref reads as None == the
+                        # (also None) final value: still needs a placeholder.
+                        _restore_missing_ref_placeholder(new_node, prop_name,
+                                                         prop_val, tracker)
                         continue
                 except (TypeError, AttributeError, ValueError, RuntimeError):
                     pass
                 setattr(new_node, prop_name, final_val)
+                _restore_missing_ref_placeholder(new_node, prop_name,
+                                                 prop_val, tracker)
             except (TypeError, AttributeError, ValueError, RuntimeError) as exc:
                 # If the value is a dict (serialized data-block), try to
                 # resolve it directly via bpy.data and assign the result.
@@ -2797,16 +2857,25 @@ def apply_owner_settings(owner, kind: str, settings, tracker) -> None:
 
 
 def import_embedded_entry(entry: dict, kind: str, json_cache: dict,
-                          context=None, tracker=None):
+                          context=None, tracker=None,
+                          group_interface_maps: dict | None = None):
     """Rebuild one embedded tree (and its owner) from a package entry.
 
-    The owner is created when missing (WARN); the tree is rebuilt in
+    The owner is created when missing (NOTICE); the tree is rebuilt in
     place (``target_tree``) so datablock-name collisions with groups are
     irrelevant; the curated owner settings are applied after the tree.
-    Returns the owner, or None when it cannot be resolved.
+
+    ``group_interface_maps`` must be the ACCUMULATED map of every group
+    rebuilt in this import (the modal keeps one for the whole operation):
+    the material/world links into those groups carry pre-rebuild socket
+    identifiers, and without the map a recycled id silently rewires the
+    link to a neighbouring socket.  Returns the owner, or None when it
+    cannot be resolved.
     """
     if tracker is None:
         tracker = ImportErrorTracker()
+    if group_interface_maps is None:
+        group_interface_maps = {}
     name = entry.get("name") or ""
     owner = ensure_embedded_owner(kind, name, tracker)
     if owner is None:
@@ -2824,7 +2893,7 @@ def import_embedded_entry(entry: dict, kind: str, json_cache: dict,
         return None
     holder = {}
     for _frac, _msg in _import_node_tree_gen(
-            entry, json_cache, {}, context, tracker, holder,
+            entry, json_cache, group_interface_maps, context, tracker, holder,
             target_tree=tree):
         pass
     apply_owner_settings(owner, kind, entry.get("owner_settings"), tracker)

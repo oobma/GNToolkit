@@ -42,6 +42,11 @@ _VOLATILE_TYPES: frozenset[str] = frozenset({
     "GeometryNodeViewer", "NodeCombineBundle", "NodeSeparateBundle",
     "GeometryNodeCombineBundle", "GeometryNodeSeparateBundle",
     "GeometryNodeCaptureAttribute", "GeometryNodeMenuSwitch", "GeometryNodeIndexSwitch",
+    # Bake node outputs are generated from its item list in creation order:
+    # the serialized Item_N ids are positional and get reassigned on the
+    # rebuild, so matching by id silently rewires to a neighbouring socket
+    # (real 5.1-splash case: Group ID / Rest Position swapped).
+    "GeometryNodeBake",
 })
 
 # Zone input node types (each one pairs with a corresponding output).
@@ -529,6 +534,9 @@ CROSS_VERSION_DEFAULTS: dict = {
     # that Blender sanitizes to '' on read, which older exports wrote to
     # JSON.  Both are unrepresentable/equivalent to absent.
     ("interface", "default_input"): ("VALUE", ""),
+    # color_tag: same invalid-enum artifact in legacy files ('16' → ''),
+    # default 'NONE'.
+    ("tree", "color_tag"): ("NONE", ""),
 }
 
 # ---------------------------------------------------------------------------
@@ -589,7 +597,10 @@ WORLD_SETTINGS_PROPS: tuple[str, ...] = (
 # 20: default_input folds both 'VALUE' (its enum default) and the ''
 # sanitized from invalid legacy values — the last false-change class
 # found on the real 5.1-splash project.
-HASH_VERSION: int = 20
+# 21: color_tag folds ('NONE'/''), and homonymous interface INPUT/OUTPUT
+# items sort by (name, direction) because the roundtrip may recreate
+# them swapped (Blender inserts a same-named output before its input).
+HASH_VERSION: int = 21
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

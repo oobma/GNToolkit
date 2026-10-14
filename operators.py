@@ -734,7 +734,8 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             self._embedded_skipped += 1
             return
         imported_owner = import_embedded_entry(
-            item["data"], kind, self.json_cache, context, self._tracker)
+            item["data"], kind, self.json_cache, context, self._tracker,
+            group_interface_maps=self.group_interface_maps)
         if imported_owner is not None:
             self._embedded_imported += 1
         else:
