@@ -90,7 +90,40 @@ def _serialize_modifier_inputs(mod) -> dict:
             except (KeyError, TypeError):
                 pass
         return data
-    return {k: clean_value(v) for k, v in dict(mod).items()}
+    # Legacy path (NODES modifiers from older Blender stored their inputs
+    # as dynamic ID-properties).  Blender 5.x no longer exposes
+    # IDProperties on some modifier types — ``bpy_struct.keys()`` raises
+    # TypeError — and such modifiers have no readable legacy inputs, so
+    # they serialize as empty instead of aborting the export.
+    try:
+        return {k: clean_value(v) for k, v in dict(mod).items()}
+    except TypeError:
+        return {}
+
+
+def _modifier_task_data(obj, mod, idx: int) -> dict | None:
+    """One serialized NODES modifier task (None when unreadable).
+
+    A single modifier with unreadable state must not abort an export of
+    the whole file (a real 5.1-splash case: legacy ID-properties raised
+    TypeError mid-package); the offender is logged and skipped.
+    """
+    try:
+        inputs = _serialize_modifier_inputs(mod)
+    except Exception as exc:
+        _log.warning("Modifier '%s' on '%s' skipped in export: %s",
+                     mod.name, obj.name, exc)
+        return None
+    return {
+        "object": obj.name,
+        "modifier_name": mod.name,
+        "node_group": mod.node_group.name if mod.node_group else None,
+        "order": idx,
+        "show_viewport": mod.show_viewport,
+        "show_render": mod.show_render,
+        "inputs": inputs,
+        **modifier_task_bake_entry(mod),
+    }
 
 
 def _apply_modifier_inputs(mod, inputs: dict, identifier_map: dict | None = None) -> None:
@@ -254,16 +287,9 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 for obj in all_objects:
                     for idx, mod in enumerate(obj.modifiers):
                         if mod.type == 'NODES' and not _modifier_excluded(mod):
-                            data = {
-                                "object": obj.name,
-                                "modifier_name": mod.name,
-                                "node_group": mod.node_group.name if mod.node_group else None,
-                                "order": idx,
-                                "show_viewport": mod.show_viewport,
-                                "show_render": mod.show_render,
-                                "inputs": _serialize_modifier_inputs(mod),
-                                **modifier_task_bake_entry(mod),
-                            }
+                            data = _modifier_task_data(obj, mod, idx)
+                            if data is None:
+                                continue
                             stem = mod_names.allocate(f"{obj.name}_{mod.name}",
                                                       "modifier")
                             write_json_file(
@@ -318,16 +344,9 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 for obj in all_objects:
                     for idx, mod in enumerate(obj.modifiers):
                         if mod.type == 'NODES' and not _modifier_excluded(mod):
-                            master_data["modifiers"].append({
-                                "object": obj.name,
-                                "modifier_name": mod.name,
-                                "node_group": mod.node_group.name if mod.node_group else None,
-                                "order": idx,
-                                "show_viewport": mod.show_viewport,
-                                "show_render": mod.show_render,
-                                "inputs": _serialize_modifier_inputs(mod),
-                                **modifier_task_bake_entry(mod),
-                            })
+                            task = _modifier_task_data(obj, mod, idx)
+                            if task is not None:
+                                master_data["modifiers"].append(task)
                 count_emb = 0
                 for kind, section in EMBEDDED_KINDS.items():
                     for owner in _embedded_export_owners(kind):
@@ -408,16 +427,9 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
         if obj:
             for idx, mod in enumerate(obj.modifiers):
                 if mod.type == 'NODES' and mod.node_group and mod.node_group.name == tree.name:
-                    master_data["modifiers"].append({
-                        "object": obj.name,
-                        "modifier_name": mod.name,
-                        "node_group": mod.node_group.name,
-                        "order": idx,
-                        "show_viewport": mod.show_viewport,
-                        "show_render": mod.show_render,
-                        "inputs": _serialize_modifier_inputs(mod),
-                        **modifier_task_bake_entry(mod),
-                    })
+                    task = _modifier_task_data(obj, mod, idx)
+                    if task is not None:
+                        master_data["modifiers"].append(task)
 
         try:
             write_json_file(self.filepath, master_data, dump_args)

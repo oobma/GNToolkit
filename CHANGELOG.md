@@ -151,6 +151,12 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Exporting a package no longer aborts on unreadable NODES
+  modifiers.** A single modifier whose legacy ID-properties cannot be
+  read (Blender 5.x raises TypeError for some types; hit with the real
+  `blender-5.1-splash` scene, 1799 modifiers) now serializes with empty
+  inputs and is logged, and any unexpected per-modifier error skips that
+  modifier instead of killing the whole export.
 - **Cross-version tracking is normalized.** Properties that exist in
   only some Blender versions (or whose default text differs per version)
   now fold to absent when they carry their default, class-level `bl_*`
