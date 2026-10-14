@@ -13,14 +13,15 @@ import os
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .constants import (ADDON_VERSION, is_group_node_bl_idname,
-                        is_trackable_tree_type)
+from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
+                        is_group_node_bl_idname, is_trackable_tree_type)
 from .serializer import serialize_node_tree, tree_has_animation
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
-    group_library_path, resolve_json_path,
+    group_library_path, resolve_json_path, resolve_entry_tree,
 )
-from .sync_metadata import find_tree_by_uuid, find_uuid_for_tree, get_uuid_from_tree
+from .sync_metadata import (SYNC_UUID_PROP, find_tree_by_uuid,
+                            find_uuid_for_tree, get_uuid_from_tree)
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,40 @@ def _get_active_tree(context):
         for mod in obj.modifiers:
             if mod.type == 'NODES' and mod.node_group:
                 return mod.node_group
+    return None
+
+
+def _get_active_material(context):
+    """Active material in the Shader Editor (or the object's active slot)."""
+    mat = getattr(context, 'material', None)
+    if isinstance(mat, bpy.types.Material):
+        return mat
+    space = getattr(context, 'space_data', None)
+    if space is not None and getattr(space, 'tree_type', '') == 'ShaderNodeTree':
+        idblock = getattr(space, 'id', None)
+        if isinstance(idblock, bpy.types.Material):
+            return idblock
+        if isinstance(idblock, bpy.types.Object) and idblock.active_material:
+            return idblock.active_material
+    obj = getattr(context, 'active_object', None)
+    if obj is not None and getattr(obj, 'active_material', None) is not None:
+        return obj.active_material
+    return None
+
+
+def _get_active_world(context):
+    """Active world in the Shader Editor (or the scene's world)."""
+    world = getattr(context, 'world', None)
+    if isinstance(world, bpy.types.World):
+        return world
+    space = getattr(context, 'space_data', None)
+    if space is not None and getattr(space, 'tree_type', '') == 'ShaderNodeTree':
+        idblock = getattr(space, 'id', None)
+        if isinstance(idblock, bpy.types.World):
+            return idblock
+    scene = getattr(context, 'scene', None)
+    if scene is not None and scene.world is not None:
+        return scene.world
     return None
 
 
@@ -202,6 +237,128 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, f"Failed to link: {e}")
             return {'CANCELLED'}
 
+        _refresh_after_sync_change(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncLinkMaterial(bpy.types.Operator, ExportHelper):
+    bl_idname = "gn.sync_link_material"
+    bl_label = "Track Material"
+    bl_description = ("Start tracking the active material: writes its JSON "
+                      "(node tree + versioned material settings) from the "
+                      "current .blend content (first save)")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    material_name: StringProperty(name="Material")
+
+    def invoke(self, context, event):
+        mat = _get_active_material(context)
+        if mat is None:
+            self.report({'ERROR'},
+                        "No active material found (open a material in the "
+                        "Shader Editor)")
+            return {'CANCELLED'}
+        self.material_name = mat.name
+        self.filepath = mat.name + ".json"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        mat = (bpy.data.materials.get(self.material_name)
+               if self.material_name else None)
+        if mat is None:
+            self.report({'ERROR'}, "Material not found")
+            return {'CANCELLED'}
+        if mat.library is not None:
+            self.report({'ERROR'},
+                        f"'{mat.name}' is linked from a library - "
+                        "make it local to track it")
+            return {'CANCELLED'}
+        existing = mat.get(SYNC_UUID_PROP)
+        if existing and sync_manager.get_tracked_group(existing) is not None:
+            self.report({'WARNING'},
+                        f"'{mat.name}' is already tracked "
+                        f"(UUID: {existing[:8]}...)")
+            return {'CANCELLED'}
+        if not getattr(mat, "use_nodes", False) or mat.node_tree is None:
+            self.report({'ERROR'},
+                        f"'{mat.name}' has no node tree (enable 'Use Nodes')")
+            return {'CANCELLED'}
+        try:
+            sync_uuid = sync_manager.link_embedded(mat, "material", self.filepath)
+            sync_manager.save()
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to link: {e}")
+            return {'CANCELLED'}
+        if not sync_uuid:
+            self.report({'ERROR'}, f"Could not track '{mat.name}'")
+            return {'CANCELLED'}
+        self.report({'INFO'},
+                    f"Now tracking '{mat.name}' to "
+                    f"{os.path.basename(self.filepath)} "
+                    f"(UUID: {sync_uuid[:8]}...)")
+        _refresh_after_sync_change(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncLinkWorld(bpy.types.Operator, ExportHelper):
+    bl_idname = "gn.sync_link_world"
+    bl_label = "Track World"
+    bl_description = ("Start tracking the active world: writes its JSON "
+                      "(node tree + versioned world settings) from the "
+                      "current .blend content (first save)")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    world_name: StringProperty(name="World")
+
+    def invoke(self, context, event):
+        world = _get_active_world(context)
+        if world is None:
+            self.report({'ERROR'}, "No world found")
+            return {'CANCELLED'}
+        self.world_name = world.name
+        self.filepath = world.name + ".json"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        world = (bpy.data.worlds.get(self.world_name)
+                 if self.world_name else None)
+        if world is None:
+            self.report({'ERROR'}, "World not found")
+            return {'CANCELLED'}
+        if world.library is not None:
+            self.report({'ERROR'},
+                        f"'{world.name}' is linked from a library - "
+                        "make it local to track it")
+            return {'CANCELLED'}
+        existing = world.get(SYNC_UUID_PROP)
+        if existing and sync_manager.get_tracked_group(existing) is not None:
+            self.report({'WARNING'},
+                        f"'{world.name}' is already tracked "
+                        f"(UUID: {existing[:8]}...)")
+            return {'CANCELLED'}
+        if not getattr(world, "use_nodes", False) or world.node_tree is None:
+            self.report({'ERROR'},
+                        f"'{world.name}' has no node tree (enable 'Use Nodes')")
+            return {'CANCELLED'}
+        try:
+            sync_uuid = sync_manager.link_embedded(world, "world", self.filepath)
+            sync_manager.save()
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to link: {e}")
+            return {'CANCELLED'}
+        if not sync_uuid:
+            self.report({'ERROR'}, f"Could not track '{world.name}'")
+            return {'CANCELLED'}
+        self.report({'INFO'},
+                    f"Now tracking '{world.name}' to "
+                    f"{os.path.basename(self.filepath)} "
+                    f"(UUID: {sync_uuid[:8]}...)")
         _refresh_after_sync_change(context)
         return {'FINISHED'}
 
@@ -391,10 +548,11 @@ def _change_rows() -> dict:
             ignored += 1
             continue
         info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
-        tree = bpy.data.node_groups.get(info.get("blend_name", ""))
+        tree = resolve_entry_tree(uid, info)
         rows.append({
             "uid": uid,
             "name": info.get("blend_name", "?"),
+            "kind": info.get("kind", "group"),
             "status": status,
             "saveable": status in saveable,
             "pullable": status in pullable,
@@ -1318,6 +1476,79 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
 
 
 # ---------------------------------------------------------------------------
+# Operator: Track all materials (batch)
+# ---------------------------------------------------------------------------
+
+def _mass_counts_link_all_materials() -> dict:
+    mats = [m for m in bpy.data.materials
+            if getattr(m, "use_nodes", False) and m.node_tree is not None]
+    linked = sum(1 for m in mats if m.library is not None)
+    tracked = sum(1 for _uid, info in
+                  sync_manager.metadata.get("tracked_groups", {}).items()
+                  if info.get("kind") == "material")
+    return {"total": len(mats), "linked": linked, "tracked": tracked}
+
+
+class GN_OT_SyncLinkAllMaterials(bpy.types.Operator, ExportHelper):
+    bl_idname = "gn.sync_link_all_materials"
+    bl_label = "Track All Materials"
+    bl_description = ("Track every material with a node tree, writing one "
+                      "master JSON from the current .blend — the addon "
+                      "CREATES the JSON here (first save). Versioned per "
+                      "material: its node tree plus the curated settings "
+                      "(mix mode, culling, viewport display...)")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        counts = _mass_counts_link_all_materials()
+        if not self.filepath:
+            stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "file"
+            base = sync_manager._blend_dir() or os.getcwd()
+            self.filepath = os.path.join(base, f"{stem}_materials.json")
+        if counts["total"] - counts["linked"] <= 1:
+            return super().invoke(context, event)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def draw(self, context):
+        layout = self.layout
+        counts = _mass_counts_link_all_materials()
+        layout.label(text=f"Track {counts['total'] - counts['linked']} material(s)?",
+                     icon='MATERIAL')
+        col = layout.column(align=True)
+        col.label(text=f"Materials with nodes: {counts['total']}")
+        if counts["linked"]:
+            col.label(text=f"Library-linked, skipped: {counts['linked']}",
+                      icon='LINK_BLEND')
+        col.label(text=f"Already tracked (re-written): {counts['tracked']}")
+        layout.separator()
+        layout.prop(self, "filepath")
+        layout.label(text="Each entry versions the node tree plus the curated "
+                          "material settings", icon='INFO')
+
+    def execute(self, context):
+        if self.filepath and not self.filepath.lower().endswith(".json"):
+            self.filepath += ".json"
+        try:
+            result = sync_manager.link_all_materials(self.filepath, context)
+            sync_manager.save()
+        except Exception as e:
+            self.report({'ERROR'}, f"Batch link failed: {e}")
+            return {'CANCELLED'}
+        msg = (f"Tracking {result['linked']} material(s), "
+               f"{result['skipped']} already tracked, "
+               f"{result['errors']} errors")
+        if result.get("linked_skipped"):
+            msg += (f", {result['linked_skipped']} library-linked skipped - "
+                    "make them local to track")
+        self.report({'INFO'}, msg)
+        _refresh_after_sync_change(context)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Operator: Track all groups from a folder of per-group exports
 # ---------------------------------------------------------------------------
 
@@ -1396,7 +1627,10 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
             if not groups and "nodes" in data and data.get("name"):
                 groups = {data["name"]: data}
             if not groups:
-                skipped += 1
+                # Embedded-entry files (Materials/Worlds) are handled below.
+                if not any(isinstance(data.get(s), dict)
+                           for s in EMBEDDED_KINDS.values()):
+                    skipped += 1
                 continue
 
             for gname in groups:
@@ -1426,6 +1660,77 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                 store_uuid_on_tree(tree, uid)
                 linked_by_name[gname] = uid
 
+        # Embedded trees: the folder's Materials/ and Worlds/ subfolders
+        # (each file is a package-shaped single-owner entry).  Picking a
+        # file inside those subfolders scans them directly.
+        from .hash_utils import (canonical_hash_from_json_embedded,
+                                 canonical_hash_from_json_path)
+        from .serializer import canonical_hash_from_embedded
+        if os.path.basename(scan_dir) in ("Materials", "Worlds"):
+            embed_dirs = [(scan_dir, os.path.basename(scan_dir))]
+        else:
+            parent = (os.path.dirname(scan_dir)
+                      if os.path.basename(scan_dir) == "NodeGroups"
+                      else scan_dir)
+            embed_dirs = [(os.path.join(parent, sub), sub)
+                          for sub in ("Materials", "Worlds")]
+
+        embedded_linked = 0
+        for sub_dir, sub in embed_dirs:
+            if not os.path.isdir(sub_dir):
+                continue
+            kind = "material" if sub == "Materials" else "world"
+            section = EMBEDDED_KINDS[kind]
+            for fname in sorted(os.listdir(sub_dir)):
+                if not fname.lower().endswith(".json"):
+                    continue
+                fp = os.path.join(sub_dir, fname)
+                data = read_json_tolerant(fp)
+                if not isinstance(data, dict):
+                    errors += 1
+                    continue
+                entries = data.get(section)
+                if not isinstance(entries, dict):
+                    if "nodes" in data and data.get("name"):
+                        entries = {data["name"]: data}
+                    else:
+                        continue
+                for ename in entries:
+                    coll = (bpy.data.materials if kind == "material"
+                            else bpy.data.worlds)
+                    owner = coll.get(ename)
+                    if (owner is None or not getattr(owner, "use_nodes", False)
+                            or getattr(owner, "node_tree", None) is None):
+                        skipped += 1
+                        continue
+                    if getattr(owner, "library", None) is not None:
+                        linked_skipped += 1
+                        skipped += 1
+                        continue
+                    if owner.get(SYNC_UUID_PROP):
+                        skipped += 1
+                        continue
+                    uid = generate_uuid()
+                    blend_hash = canonical_hash_from_embedded(owner, kind)
+                    json_hash = canonical_hash_from_json_embedded(fp, kind,
+                                                                  ename)
+                    if json_hash is None:
+                        json_hash = canonical_hash_from_json_path(fp)
+                    mtime = os.path.getmtime(fp)
+                    stored_path = make_json_path_relative(
+                        fp, sync_manager._saved_blend_dir())
+                    add_tracked_group(
+                        sync_manager.metadata, uid, ename, stored_path,
+                        blend_hash, json_hash, mtime, layout="folder",
+                        kind=kind,
+                    )
+                    owner[SYNC_UUID_PROP] = uid
+                    try:
+                        owner.use_fake_user = True
+                    except Exception:
+                        pass
+                    embedded_linked += 1
+
         # Second pass: dependency edges (mirrors Track All's two-pass logic)
         for gname, uid in linked_by_name.items():
             tree = bpy.data.node_groups.get(gname)
@@ -1448,6 +1753,8 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
 
         msg = (f"Tracked {len(linked_by_name)} group(s) from folder, "
                f"{skipped} skipped (already tracked or not in .blend)")
+        if embedded_linked:
+            msg += f", {embedded_linked} material/world(s)"
         if linked_skipped:
             msg += f", {linked_skipped} library-linked (make them local to track)"
         if errors:
@@ -1830,10 +2137,11 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 # ---------------------------------------------------------------------------
 
 def _load_import_package(filepath: str) -> dict:
-    """Read a JSON package into (data, groups) with a single disk read."""
+    """Read a JSON package into (data, groups, embedded) with one read."""
     import os
     data = None
     groups = {}
+    embedded = []
     mtime = None
     if filepath and os.path.isfile(filepath):
         try:
@@ -1844,9 +2152,16 @@ def _load_import_package(filepath: str) -> dict:
         if isinstance(data, dict):
             if data.get("type") == "GN_UNIFIED_PACKAGE":
                 groups = data.get("node_groups", {})
+                for kind, section in EMBEDDED_KINDS.items():
+                    entries = data.get(section)
+                    if isinstance(entries, dict):
+                        for name, entry in entries.items():
+                            embedded.append({"kind": kind, "name": name,
+                                             "data": entry})
             elif "nodes" in data:
                 groups = {data.get("name", "?"): data}
-    return {"filepath": filepath, "mtime": mtime, "data": data, "groups": groups}
+    return {"filepath": filepath, "mtime": mtime, "data": data,
+            "groups": groups, "embedded": embedded}
 
 
 def _get_import_package(cache: dict, filepath: str) -> dict:
@@ -2000,13 +2315,37 @@ def _set_failed_imports(scene, failures) -> None:
                      if failures else "")
 
 
+_EMBEDDED_PREFIXES = {"material": "Material: ", "world": "World: "}
+
+
+def _qualified_embedded_name(kind: str, name: str) -> str:
+    """Picker display name of an embedded entry (kind-qualified)."""
+    return _EMBEDDED_PREFIXES.get(kind, "Material: ") + name
+
+
+def _parse_qualified_embedded(name: str):
+    """Split a qualified embedded item name into (kind, plain_name)."""
+    for kind, prefix in _EMBEDDED_PREFIXES.items():
+        if name.startswith(prefix):
+            return kind, name[len(prefix):]
+    return None, name
+
+
 def _fill_import_items(state) -> None:
-    """(Re)build the searchable group list from the selected package."""
+    """(Re)build the searchable list from the selected package.
+
+    Groups keep their plain names; embedded entries are kind-qualified
+    ("Material: X" / "World: Y") so the flat search list stays readable.
+    """
     state.items.clear()
     package = _get_import_package(_import_package_cache, state.filepath)
     for gname in sorted(package.get("groups", {})):
         item = state.items.add()
         item.name = gname
+    for entry in sorted(package.get("embedded", []),
+                        key=lambda e: (e["kind"], e["name"])):
+        item = state.items.add()
+        item.name = _qualified_embedded_name(entry["kind"], entry["name"])
 
 
 # Live refresh while the picker is open: panels only redraw on UI
@@ -2051,6 +2390,36 @@ def _ensure_picker_pump() -> None:
 _selection_plan_cache: dict = {}
 
 
+def _compute_embedded_plan(package, kind: str, name: str) -> dict | None:
+    """Plan for an embedded picker selection (owner presence/divergence)."""
+    entry = None
+    for item in package.get("embedded", []):
+        if item["kind"] == kind and item["name"] == name:
+            entry = item["data"]
+            break
+    if entry is None:
+        return None
+    coll = (bpy.data.materials if kind == "material" else bpy.data.worlds)
+    owner = coll.get(name)
+    if (owner is None or not getattr(owner, "use_nodes", False)
+            or getattr(owner, "node_tree", None) is None):
+        return {"ordered": [name], "existing": [], "missing": [name],
+                "divergent": [], "external": [],
+                "embedded": {"kind": kind, "name": name}}
+    divergent = []
+    try:
+        from .hash_utils import canonical_hash_from_json_data
+        from .serializer import canonical_hash_from_embedded
+        if (canonical_hash_from_embedded(owner, kind)
+                != canonical_hash_from_json_data(entry)):
+            divergent.append(name)
+    except Exception:
+        pass
+    return {"ordered": [name], "existing": [name], "missing": [],
+            "divergent": divergent, "external": [],
+            "embedded": {"kind": kind, "name": name}}
+
+
 def _compute_selection_plan(state) -> dict | None:
     """Return the cached closure plan shown under the search field."""
     package = _get_import_package(_import_package_cache, state.filepath)
@@ -2059,7 +2428,12 @@ def _compute_selection_plan(state) -> dict | None:
     cached = _selection_plan_cache.get(key)
     if cached is not None:
         return cached
-    plan = _compute_import_plan(package.get("groups", {}), state.group_name)
+    kind, plain = _parse_qualified_embedded(state.group_name)
+    if kind:
+        plan = _compute_embedded_plan(package, kind, plain)
+    else:
+        plan = _compute_import_plan(package.get("groups", {}),
+                                    state.group_name)
     if plan is None:
         return None
     _selection_plan_cache.clear()
@@ -2201,6 +2575,51 @@ class GN_OT_SyncImportGroup(bpy.types.Operator):
             self.report({'ERROR'}, "Pick a group from the list first")
             return {'CANCELLED'}
 
+        # Embedded entries are kind-qualified ("Material: X" / "World: Y"):
+        # import (creating the owner when missing) or report untouched.
+        emb_kind, emb_name = _parse_qualified_embedded(self.group_name)
+        if emb_kind:
+            from .importer import import_embedded_entry
+            package = _get_import_package(_import_package_cache, self.filepath)
+            entry = next((i["data"] for i in package.get("embedded", [])
+                          if i["kind"] == emb_kind and i["name"] == emb_name),
+                         None)
+            if entry is None:
+                self.report({'ERROR'},
+                            f"{emb_kind.capitalize()} '{emb_name}' not found "
+                            f"in the package")
+                return {'CANCELLED'}
+            coll = (bpy.data.materials if emb_kind == "material"
+                    else bpy.data.worlds)
+            owner = coll.get(emb_name)
+            if (owner is not None and getattr(owner, "use_nodes", False)
+                    and getattr(owner, "node_tree", None) is not None):
+                _selection_plan_cache.clear()
+                self.report({'INFO'},
+                            f"{emb_kind.capitalize()} '{emb_name}' already "
+                            "exists (untouched) - use Import Package/Folder "
+                            "with 'Update existing groups', or track it and "
+                            "Pull from JSON")
+                return {'FINISHED'}
+            tracker = ImportErrorTracker()
+            owner = import_embedded_entry(entry, emb_kind,
+                                          package.get("groups", {}),
+                                          context, tracker)
+            _selection_plan_cache.clear()
+            for area in context.screen.areas:
+                area.tag_redraw()
+            if owner is None:
+                self.report({'WARNING'},
+                            f"Could not import {emb_kind} '{emb_name}' "
+                            f"({tracker.issue_count} issue(s) - check console)")
+                return {'FINISHED'}
+            sync_manager.mark_pending_save()
+            self.report({'INFO'},
+                        f"Imported {emb_kind} '{emb_name}' (tree + versioned "
+                        "settings) - not tracked yet; use Track Material/World "
+                        "to sync")
+            return {'FINISHED'}
+
         package = _get_import_package(_import_package_cache, self.filepath)
         groups = package.get("groups", {})
         target_data = groups.get(self.group_name)
@@ -2312,6 +2731,9 @@ classes = (
     GN_FailedImportsState,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
+    GN_OT_SyncLinkMaterial,
+    GN_OT_SyncLinkWorld,
+    GN_OT_SyncLinkAllMaterials,
     GN_OT_SyncUnlink,
     GN_OT_SyncUnlinkAll,
     GN_OT_SyncImport,

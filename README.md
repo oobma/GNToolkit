@@ -6,8 +6,9 @@ Node groups are serialized into deterministic JSON files — the DNA, or
 source of truth — while the .blend stays your working cache (RNA).
 GNToolkit watches both sides: canonical change detection, per-group sync
 statuses, dependency-aware import and a save/pull/conflict loop that
-plugs into Git, all from inside Blender. Geometry Nodes and Shader node
-groups are supported (compositor and embedded trees are not tracked yet).
+plugs into Git, all from inside Blender. Geometry Nodes, Shader node
+groups and the Shader Editor's materials and worlds are supported
+(compositor trees are not tracked yet).
 
 The status layer also runs **headless** through `gnt_check.py`
 (`gnt_check.py` and `scripts/` are GitHub repository tools — they are not
@@ -282,11 +283,18 @@ repository — never part of the extension zip.
 - **Concurrency-safe**: lock files prevent two Blender sessions from
   corrupting the same JSON.
 - **Tree kinds and declared limits**: Geometry Nodes and Shader node
-  groups are versioned. Compositor trees and the trees embedded in
-  materials, worlds and scenes are not tracked yet; Texture node trees
-  never. **Animation** (keyframes/drivers/NLA) is not saved into JSON:
-  animated groups are flagged in the Sync panel and by `gnt_check.py`
-  instead of passing as silently synced.
+  groups are versioned, **and so are the Shader Editor's materials and
+  worlds** (embedded trees, tracked as owner-aware entries: "Track
+  Material"/"Track World"/"Track All Materials", with per-entry status,
+  save, pull and conflicts). A material/world entry stores its node tree
+  plus a curated allowlist of the owner's settings (mix mode, shadows,
+  culling, refraction/SSS, displacement, viewport display, Freestyle;
+  world color/sun) and its custom properties — the rest of the datablock
+  and object material slots are not versioned, and cloning a missing
+  owner warns about that. Compositor trees are not tracked yet; Texture
+  node trees never. **Animation** (keyframes/drivers/NLA) is not saved
+  into JSON: animated groups and materials are flagged in the Sync panel
+  and by `gnt_check.py` instead of passing as silently synced.
 
 ### Collaboration with Git
 
@@ -577,9 +585,13 @@ Each node group entry contains its interface, nodes (with socket defaults),
 links and tree properties — enough to fully reconstruct the group. A group
 entry also carries a `tree_type` marker when it is not a Geometry Nodes
 tree (absent means Geometry Nodes, so existing exports are unchanged).
+Tracked materials and worlds live in their own sections (`materials`,
+`worlds`); each entry carries the owner's name and an `owner_settings`
+block with the versioned datablock properties and custom properties.
 
-A package is **node logic, not scene data**. It stores node groups and
-their NODES modifier setups — which object uses them, where in the stack,
+A package is **node logic, not scene data**. It stores node groups,
+tracked materials/worlds and their NODES modifier setups — which object
+uses them, where in the stack,
 visibility flags and input values — but **not** objects, meshes,
 materials or transforms. On import, stored modifiers attach to the
 objects that already exist with the same name; geometry never travels

@@ -6,6 +6,22 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Materials and worlds are tracked (embedded trees, owner-aware).** The
+  Shader Editor's material and world node trees now sync like groups:
+  "Track Material" / "Track World" on the active owner, "Track All
+  Materials" to one master file, or a folder export with `Materials/`
+  and `Worlds/` next to `NodeGroups/` — with per-entry statuses, staged
+  saves, pulls, conflicts and the import picker (embedded entries are
+  listed kind-qualified). Each entry versions its node tree **plus a
+  curated allowlist of the owner's settings** (mix mode, shadows,
+  culling, refraction/SSS/volume, displacement, viewport display,
+  Freestyle, pass index; world color, sun and lightgroup) and the
+  owner's custom properties; a `shadow_method` only 4.2 has folds to its
+  default for parity. Cloning recreates missing owners with the tree and
+  those settings — and warns that nothing else of the datablock travels.
+  Not versioned: object material slots, and the per-session
+  `is_runtime_data` tree flag is excluded from the hash. The graph view
+  stays Geometry Nodes-only for now.
 - **Shader node groups are tracked too (multi-editor, scope A).** Geometry
   Nodes and Shader node groups now share the whole loop: the same
   track/save/pull/conflict model, folder exports, master JSON files and
@@ -17,9 +33,8 @@ All notable changes to this project are documented in this file.
   mismatch over a same-named tree of another kind instead of corrupting
   it. `HASH_VERSION` 17 folds the marker in; stored baselines are
   re-stamped by the existing migration, so updating produces no churn.
-  Compositor trees and the trees embedded in materials, worlds and
-  scenes are **not tracked yet**, and Texture node trees never will be
-  (legacy format).
+  Compositor trees are **not tracked yet**, and Texture node trees never
+  will be (legacy format).
 - **The animation boundary is declared.** Keyframes, drivers and NLA on
   node trees are still not versioned — and now that is explicit instead
   of silent: trees with animation data export an informational
@@ -138,13 +153,13 @@ All notable changes to this project are documented in this file.
 
 - **Cross-version tracking is normalized.** Properties that exist in
   only some Blender versions (or whose default text differs per version)
-  now fold to absent when they carry their default and class-level
-  `bl_*` tree text (tooltips/labels) is excluded from the hash, so the
-  same group hashes identically when tracked from 4.2 and from 5.x: a
-  project tracked from 4.2 is reported as synced when opened in 5.x
-  (and vice versa after one import). Non-default values stay real
-  differences. `HASH_VERSION` 19; stored baselines are re-stamped by
-  the existing migration as usual.
+  now fold to absent when they carry their default, class-level `bl_*`
+  tree text (tooltips/labels) and the per-session `is_runtime_data` flag
+  are excluded from the hash, so the same group hashes identically when
+  tracked from 4.2 and from 5.x: a project tracked from 4.2 is reported
+  as synced when opened in 5.x (and vice versa after one import).
+  Non-default values stay real differences. `HASH_VERSION` 19; stored
+  baselines are re-stamped by the existing migration as usual.
 - **Node references survive import again when a mode switch resets
   them.** Enum properties are now applied before the remaining ones, so
   the `mode` switch of Script and IES Texture nodes no longer clears

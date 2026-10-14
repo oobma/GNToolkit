@@ -2417,6 +2417,110 @@ class SyncManager:
         return {"linked": linked, "skipped": skipped, "errors": errors,
                 "linked_skipped": linked_skipped}
 
+    def link_all_materials(self, json_path: str, context=None) -> dict:
+        """Link every local material with a node tree to one master JSON.
+
+        Mirrors ``link_all_groups``: serializes each material entry (tree
+        + curated owner settings) into the package's ``materials``
+        section, creates per-entry tracking metadata with kind
+        ``material`` and refreshes already-tracked ones.
+
+        Returns a dict with counts:
+            {"linked": int, "skipped": int, "errors": int,
+             "linked_skipped": int}
+        """
+        owners = [m for m in bpy.data.materials
+                  if getattr(m, "use_nodes", False)
+                  and getattr(m, "node_tree", None) is not None]
+        linked_skipped = sum(1 for m in owners
+                             if getattr(m, "library", None) is not None)
+        owners = [m for m in owners
+                  if getattr(m, "library", None) is None]
+        if not owners:
+            return {"linked": 0, "skipped": 0, "errors": 0,
+                    "linked_skipped": linked_skipped}
+
+        abs_path = json_path
+        if not os.path.isabs(abs_path):
+            abs_path = os.path.join(self._blend_dir(), abs_path)
+
+        master_data = read_json_tolerant(abs_path) if os.path.isfile(abs_path) else None
+        if not isinstance(master_data, dict):
+            master_data = {
+                "version": ADDON_VERSION,
+                "type": "GN_UNIFIED_PACKAGE",
+                "export_method": PACKAGE_EXPORT_METHOD,
+                "node_groups": {},
+            }
+        master_data = _ensure_package_shape(master_data)
+
+        for owner in owners:
+            info = {"kind": "material", "blend_name": owner.name}
+            package_put(master_data, info,
+                        serialize_embedded_entry(owner, "material"))
+        write_json_file(abs_path, master_data)
+        json_mtime = os.path.getmtime(abs_path)
+        stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
+
+        linked = 0
+        skipped = 0
+        errors = 0
+        synced_uids = []
+        for owner in owners:
+            try:
+                blend_hash = canonical_hash_from_embedded(owner, "material")
+                json_hash = canonical_hash_from_json_embedded(
+                    abs_path, "material", owner.name)
+                if json_hash is None:
+                    json_hash = canonical_hash_from_json_path(abs_path)
+
+                existing_uid = owner.get(SYNC_UUID_PROP) or ""
+                existing = (get_tracked_group(self.metadata, existing_uid)
+                            if existing_uid else None)
+                if existing is None:
+                    for uid, ig in self.metadata.get("tracked_groups", {}).items():
+                        if (entry_kind(ig) == "material"
+                                and ig.get("blend_name") == owner.name):
+                            existing_uid, existing = uid, ig
+                            break
+
+                if existing is not None:
+                    update_tracked_group(
+                        self.metadata, existing_uid,
+                        last_blend_hash=blend_hash,
+                        last_json_hash=json_hash,
+                        last_json_mtime=json_mtime,
+                        json_path=stored_path,
+                    )
+                    synced_uids.append(existing_uid)
+                    skipped += 1
+                    continue
+
+                sync_uuid = generate_uuid()
+                owner[SYNC_UUID_PROP] = sync_uuid
+                try:
+                    owner.use_fake_user = True
+                except Exception:
+                    pass
+                add_tracked_group(
+                    self.metadata, sync_uuid, owner.name, stored_path,
+                    blend_hash, json_hash, json_mtime,
+                    depends_on=[], layout="package", kind="material",
+                )
+                synced_uids.append(sync_uuid)
+                linked += 1
+            except Exception as exc:
+                _log.warning("[Link All Materials] '%s': %s", owner.name, exc)
+                errors += 1
+
+        self._dirty = True
+        for uid in synced_uids:
+            self._status_cache[uid] = SyncStatus.SYNCED
+        _log.info("[Link All Materials] done: %d linked, %d refreshed, %d errors",
+                  linked, skipped, errors)
+        return {"linked": linked, "skipped": skipped, "errors": errors,
+                "linked_skipped": linked_skipped}
+
     def export_all(self, force: bool = False, context=None) -> dict:
         """Export all tracked groups to their respective JSON files.
 

@@ -18,7 +18,8 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, BoolProperty
 
 from .codec import clean_value, unclean_value, reset_coercion_count, coercion_count
-from .constants import (ADDON_VERSION, PACKAGE_EXPORT_METHOD,
+from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
+                        PACKAGE_EXPORT_METHOD,
                         is_group_node_bl_idname, is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
@@ -31,11 +32,32 @@ from .modifier_utils import (
     modifier_uses_rna_inputs,
     remap_input_keys,
 )
-from .serializer import serialize_node_tree
+from .serializer import serialize_embedded_entry, serialize_node_tree
 from .socket_utils import get_tree_dependencies
 from .sync_manager import SyncManager, _ensure_package_shape
 
 _log = logging.getLogger("GNToolkit.operators")
+
+
+def _embedded_export_owners(kind: str) -> list:
+    """Local owners (materials/worlds) with a node tree, for exports."""
+    coll = bpy.data.materials if kind == "material" else bpy.data.worlds
+    return [o for o in coll
+            if getattr(o, "use_nodes", False)
+            and getattr(o, "node_tree", None) is not None
+            and getattr(o, "library", None) is None]
+
+
+def _embedded_folder_entry(kind: str, owner) -> dict:
+    """Package-shaped single-owner file for folder exports."""
+    return {
+        "version": ADDON_VERSION,
+        "type": "GN_UNIFIED_PACKAGE",
+        "export_method": PACKAGE_EXPORT_METHOD,
+        EMBEDDED_KINDS[kind]: {
+            owner.name: serialize_embedded_entry(owner, kind, derived=False),
+        },
+    }
 
 
 def _serialize_modifier_inputs(mod) -> dict:
@@ -248,9 +270,26 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 os.path.join(mod_dir, f"{stem}.json"),
                                 data, dump_args)
                             count_mod += 1
+                count_emb = 0
+                for kind, sub in (("material", "Materials"),
+                                  ("world", "Worlds")):
+                    owners = _embedded_export_owners(kind)
+                    if not owners:
+                        continue
+                    own_dir = os.path.join(base_dir, sub)
+                    if not os.path.exists(own_dir):
+                        os.makedirs(own_dir)
+                    own_names = FilenameAllocator()
+                    for owner in owners:
+                        data = _embedded_folder_entry(kind, owner)
+                        stem = own_names.allocate(owner.name, kind)
+                        write_json_file(os.path.join(own_dir, f"{stem}.json"),
+                                        data, dump_args)
+                        count_emb += 1
                 self.report({'INFO'},
-                            f"Exported {count_ng} group file(s) and "
-                            f"{count_mod} modifier file(s)."
+                            f"Exported {count_ng} group file(s), "
+                            f"{count_mod} modifier file(s) and "
+                            f"{count_emb} material/world file(s)."
                             + (f" Skipped {len(excluded_names)} group(s) from "
                                "excluded libraries." if excluded_names else ""))
                 adjusted = ng_names.adjusted + mod_names.adjusted
@@ -289,9 +328,17 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                                 "inputs": _serialize_modifier_inputs(mod),
                                 **modifier_task_bake_entry(mod),
                             })
+                count_emb = 0
+                for kind, section in EMBEDDED_KINDS.items():
+                    for owner in _embedded_export_owners(kind):
+                        master_data.setdefault(section, {})[owner.name] = \
+                            serialize_embedded_entry(owner, kind, derived=False)
+                        count_emb += 1
                 write_json_file(self.filepath, master_data, dump_args)
                 self.report({'INFO'},
-                            "Package export completed."
+                            f"Package export completed "
+                            f"({count_emb} material/world entr"
+                            f"{'y' if count_emb == 1 else 'ies'})."
                             + (f" Skipped {len(excluded_names)} group(s) from "
                                "excluded libraries." if excluded_names else ""))
         except PermissionError:
@@ -388,15 +435,18 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
         return {'FINISHED'}
 
 
-def load_package_sources(filepath: str) -> tuple[dict, list]:
-    """Load groups and modifiers from a package file or a folder export.
+def load_package_sources(filepath: str) -> tuple[dict, list, list]:
+    """Load groups, modifiers and embedded entries from a package/folder.
 
     Accepts a unified package file, a standalone single-group file, or a
-    folder (a folder export is detected by its NodeGroups/Modifiers
-    subfolders). Returns (json_cache, mod_data_list).
+    folder (a folder export is detected by its NodeGroups/Modifiers/
+    Materials/Worlds subfolders). Returns
+    ``(json_cache, mod_data_list, embedded_entries)`` where each embedded
+    entry is ``{"kind", "name", "data"}``.
     """
     json_cache = {}
     mod_data_list = []
+    embedded_entries = []
     if os.path.isdir(filepath):
         ng_dir = os.path.join(filepath, "NodeGroups")
         mod_dir = os.path.join(filepath, "Modifiers")
@@ -414,16 +464,43 @@ def load_package_sources(filepath: str) -> tuple[dict, list]:
                 if f.endswith('.json'):
                     with open(os.path.join(mod_dir, f), 'r', encoding='utf-8') as file:
                         mod_data_list.append(json.load(file))
+        for kind, sub in (("material", "Materials"), ("world", "Worlds")):
+            sub_dir = os.path.join(filepath, sub)
+            if not os.path.exists(sub_dir):
+                continue
+            section = EMBEDDED_KINDS[kind]
+            for f in os.listdir(sub_dir):
+                if not f.endswith('.json'):
+                    continue
+                with open(os.path.join(sub_dir, f), 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+                entries = (data.get(section)
+                           if isinstance(data, dict) else None)
+                if isinstance(entries, dict):
+                    for name, entry in entries.items():
+                        embedded_entries.append({"kind": kind, "name": name,
+                                                 "data": entry})
+                elif (isinstance(data, dict) and "nodes" in data
+                        and "name" in data):
+                    embedded_entries.append({"kind": kind,
+                                             "name": data["name"],
+                                             "data": data})
     else:
         with open(filepath, 'r', encoding='utf-8') as f:
             master_data = json.load(f)
         if master_data.get("type") == "GN_UNIFIED_PACKAGE":
             json_cache.update(master_data.get("node_groups", {}))
             mod_data_list = master_data.get("modifiers", [])
+            for kind, section in EMBEDDED_KINDS.items():
+                entries = master_data.get(section)
+                if isinstance(entries, dict):
+                    for name, entry in entries.items():
+                        embedded_entries.append({"kind": kind, "name": name,
+                                                 "data": entry})
         elif "name" in master_data and "nodes" in master_data:
             json_cache[master_data["name"]] = master_data
     merge_derived_groups(json_cache)
-    return json_cache, mod_data_list
+    return json_cache, mod_data_list, embedded_entries
 
 
 def dependency_ordered_names(json_cache: dict) -> list:
@@ -502,12 +579,15 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
 
     _group_names = []
     _mod_data_list = []
+    _embedded_entries = []
     _current_gen = None
     _current_name = ""
     _groups_done = 0
     _total_groups = 0
     _groups_imported = 0
     _groups_skipped = 0
+    _embedded_imported = 0
+    _embedded_skipped = 0
     _start_time: float = 0.0
 
     def draw(self, context):
@@ -533,9 +613,11 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         self.json_cache = {}
         self.group_interface_maps = {}
         mod_data_list = []
+        embedded_entries = []
 
         try:
-            self.json_cache, mod_data_list = load_package_sources(filepath)
+            self.json_cache, mod_data_list, embedded_entries = \
+                load_package_sources(filepath)
         except Exception as e:
             self.report({'ERROR'}, f"Read error: {str(e)}")
             return {'CANCELLED'}
@@ -549,6 +631,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         # silently to existing objects with matching names is surprising
         # (e.g. the default Cube matching a stored modifier's object name).
         self._mod_data_list = mod_data_list if self.apply_modifiers else []
+        self._embedded_entries = list(embedded_entries)
         self._current_gen = None
         self._current_name = ""
         self._pending_restore = None
@@ -556,8 +639,10 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         self._total_groups = len(self._group_names)
         self._groups_imported = 0
         self._groups_skipped = 0
+        self._embedded_imported = 0
+        self._embedded_skipped = 0
 
-        if not self._group_names and not mod_data_list:
+        if not self._group_names and not mod_data_list and not self._embedded_entries:
             self.report({'ERROR'}, "No data found.")
             return {'CANCELLED'}
 
@@ -603,6 +688,33 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         context.workspace.status_text_set("Importing: modifiers...")
         apply_modifier_tasks(self._mod_data_list, self.group_interface_maps)
 
+    def _process_embedded(self, context):
+        """Recreate the package's material/world entries (after groups)."""
+        entries = self._embedded_entries
+        self._embedded_entries = []
+        if not entries:
+            return
+        from .importer import import_embedded_entry
+        context.workspace.status_text_set(
+            f"Importing embedded trees ({len(entries)})...")
+        for item in entries:
+            kind = item["kind"]
+            name = item["name"]
+            coll = (bpy.data.materials if kind == "material"
+                    else bpy.data.worlds)
+            owner = coll.get(name)
+            if (owner is not None and getattr(owner, "use_nodes", False)
+                    and getattr(owner, "node_tree", None) is not None
+                    and not self.overwrite_existing):
+                self._embedded_skipped += 1
+                continue
+            imported_owner = import_embedded_entry(
+                item["data"], kind, self.json_cache, context, self._tracker)
+            if imported_owner is not None:
+                self._embedded_imported += 1
+            else:
+                self._embedded_skipped += 1
+
     def modal(self, context, event):
         if event.type == 'ESC':
             self.report({'WARNING'}, "Cancelled by user")
@@ -613,10 +725,14 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
             # All groups done (and no group currently being imported):
             # apply modifiers and finish.
             if self._current_gen is None and not self._group_names:
+                self._process_embedded(context)
                 self._process_modifiers(context)
                 elapsed = time.perf_counter() - self._start_time
                 counts = (f"{self._groups_imported} imported, "
                           f"{self._groups_skipped} skipped (already exist)")
+                if self._embedded_imported or self._embedded_skipped:
+                    counts += (f", {self._embedded_imported} material/world "
+                               f"imported, {self._embedded_skipped} skipped")
                 coercions = coercion_count()
                 if coercions:
                     counts += (f", {coercions} value coercion(s) "

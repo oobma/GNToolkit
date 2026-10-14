@@ -22,7 +22,9 @@ from .geometry_validator import (
     ValidationIssue,
     format_issue_report,
 )
-from .sync_manager import sync_manager, SyncStatus, group_library_path
+from .sync_manager import (sync_manager, SyncStatus, group_library_path,
+                           package_entry, read_json_tolerant)
+from .hash_utils import canonical_hash_from_json_data
 from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
 from .sync_operators import _get_active_tree
 from .serializer import tree_has_animation
@@ -46,6 +48,13 @@ STATUS_LABELS = {
     SyncStatus.ORPHAN: "Missing in Blend",
     SyncStatus.UNTRACKED: "Untracked",
     SyncStatus.JSON_MISSING: "JSON File Missing",
+}
+
+# Leading icon of a tracked entry, by kind (groups are the historical
+# default; embedded trees are owned by a material/world).
+KIND_ICONS = {
+    "material": 'MATERIAL',
+    "world": 'WORLD',
 }
 
 
@@ -154,6 +163,15 @@ def _notify_external_changes(count: int) -> None:
 # Changes list (VS Code-style staging for the next save to JSON)
 # ---------------------------------------------------------------------------
 
+def _picker_item_icon(name: str, default: str) -> str:
+    """Icon for a picker item label (kind-qualified embedded entries)."""
+    if name.startswith("Material: "):
+        return 'MATERIAL'
+    if name.startswith("World: "):
+        return 'WORLD'
+    return default
+
+
 def _draw_changes_list(layout, context) -> None:
     """Draw the collapsible Changes box.
 
@@ -211,6 +229,9 @@ def _draw_changes_list(layout, context) -> None:
 
     def _draw_change_row(target, r):
         row = target.row(align=True)
+        kind_icon = KIND_ICONS.get(r.get("kind", "group"))
+        if kind_icon:
+            row.label(text="", icon=kind_icon)
         row.label(text=r["name"],
                   icon=STATUS_ICONS.get(r["status"], 'QUESTION'))
         row.label(text=STATUS_LABELS.get(r["status"], r["status"].value))
@@ -301,9 +322,16 @@ class GN_PT_SyncPanel(bpy.types.Panel):
         row.operator("gn.sync_link_all", text="Track All", icon='FILE_TICK')
         row.operator("gn.sync_link_folder", text="Track Folder…", icon='FILE_FOLDER')
 
+        mat_row = layout.row(align=True)
+        mat_row.operator("gn.sync_link_material", text="Track Material",
+                         icon='MATERIAL')
+        mat_row.operator("gn.sync_link_all_materials", text="Track All Materials",
+                         icon='FILE_TICK')
+        mat_row.operator("gn.sync_link_world", text="Track World", icon='WORLD')
+
         if not tracked:
             layout.separator()
-            layout.label(text="No groups tracked", icon='INFO')
+            layout.label(text="Nothing tracked yet", icon='INFO')
             layout.separator()
             layout.operator("gn.sync_initialize", text="Track from Existing JSON", icon='FILE_FOLDER')
             layout.label(text="Reads the JSON as the source of truth — it is NOT modified")
@@ -365,7 +393,10 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             imp.filepath = state.filepath
             imp.group_name = state.group_name
             track_row = picker_box.row(align=True)
-            track_row.enabled = bool(state.group_name) and \
+            _is_group_item = (bool(state.group_name)
+                              and not state.group_name.startswith(
+                                  ("Material: ", "World: ")))
+            track_row.enabled = _is_group_item and \
                 bpy.data.node_groups.get(state.group_name) is not None
             track_op = track_row.operator("gn.sync_import_group_track",
                                           text="Track to JSON…", icon='LINKED')
@@ -379,11 +410,15 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                         picker_box.label(text="Already in the .blend (not touched):",
                                          icon='INFO')
                         for name in plan["existing"]:
-                            picker_box.label(text=f"  {name}", icon='CHECKMARK')
+                            picker_box.label(text=f"  {name}",
+                                             icon=_picker_item_icon(
+                                                 name, 'CHECKMARK'))
                     if plan["missing"]:
                         picker_box.label(text="Will be imported:", icon='IMPORT')
                         for name in plan["missing"]:
-                            picker_box.label(text=f"  {name}", icon='NODETREE')
+                            picker_box.label(text=f"  {name}",
+                                             icon=_picker_item_icon(
+                                                 name, 'NODETREE'))
                     if plan["divergent"]:
                         picker_box.label(
                             text=f"Differ from {os.path.basename(state.filepath)}: "
@@ -398,7 +433,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                             text=f"{name} — tracked to: {other_pkg} (not this package)",
                             icon='INFO')
                 else:
-                    picker_box.label(text="Group not found in this package",
+                    picker_box.label(text="Not found in this package",
                                      icon='ERROR')
             picker_box.label(text="Existing groups are never touched — only missing "
                                   "dependencies are imported.", icon='INFO')
@@ -657,12 +692,15 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             return
 
         max_rows = 200
-        for uid, blend_name, status, ignored in filtered_items[:max_rows]:
+        for uid, blend_name, status, ignored, kind in filtered_items[:max_rows]:
             box = iss_box.box()
             icon = STATUS_ICONS.get(status, 'QUESTION')
             label = STATUS_LABELS.get(status, status.value)
 
             header = box.row()
+            kind_icon = KIND_ICONS.get(kind)
+            if kind_icon:
+                header.label(text="", icon=kind_icon)
             header.label(text=blend_name, icon=icon)
 
             if ignored:
@@ -722,6 +760,7 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
 
             info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
             blend_name = info.get("blend_name", "?")
+            kind = info.get("kind", "group")
 
             if status == SyncStatus.BLEND_MODIFIED and not prefs.show_blend_modified:
                 continue
@@ -734,7 +773,7 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             if status == SyncStatus.JSON_MISSING and not prefs.show_json_missing:
                 continue
 
-            items.append((uid, blend_name, status, ignored))
+            items.append((uid, blend_name, status, ignored, kind))
 
         items.sort(key=lambda x: (x[3], x[2].value))
         return items
@@ -816,6 +855,19 @@ class GN_OT_AuditProject(bpy.types.Operator):
             if not json_path or not os.path.isfile(json_path):
                 n_missing += 1
                 _audit_add(state, "missing", f"{name} — file not found")
+                continue
+            kind = info.get("kind", "group")
+            if kind != "group":
+                entry = package_entry(read_json_tolerant(json_path), info)
+                if entry is None:
+                    n_missing += 1
+                    _audit_add(state, "missing",
+                               f"{name} — {kind} entry not found inside "
+                               f"{os.path.basename(json_path)}")
+                else:
+                    records.append({
+                        "name": f"{kind}: {name}",
+                        "hash": canonical_hash_from_json_data(entry)})
                 continue
             data, err = audit.group_data_from_file(json_path, name)
             if err == "conflict":

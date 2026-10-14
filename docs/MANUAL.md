@@ -549,6 +549,28 @@ group is local. **No source file needs to be modified:**
 
 ---
 
+## Additional workflow 10 - Materials and worlds (embedded trees)
+
+Material and world node trees live inside their datablock, not as named
+node groups — GNToolkit tracks them as **owner-aware entries**:
+
+1. Open the material (or world) in the Shader Editor and click **Track
+   Material** (**Track World**) in the Sync panel: the addon writes the
+   owner's tree plus its versioned settings into the chosen JSON
+   (created here the first time).
+2. **Track All Materials** does the same for every material with nodes,
+   into one master file. Folder exports write `Materials/` and `Worlds/`
+   next to `NodeGroups/`, and **Track Folder…** links those files back
+   to their owners.
+3. Statuses, the Changes list, staged saves, **Pull from JSON**,
+   conflicts and the import picker work exactly like with groups;
+   embedded entries appear with a material/world icon.
+4. Cloning into a fresh file recreates missing owners (with a warning)
+   and restores the tree, the curated settings and the owner's custom
+   properties. Object material slots are **not** versioned.
+
+---
+
 ## References between groups and the package
 
 Two principles drive everything below:

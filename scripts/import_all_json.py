@@ -75,8 +75,8 @@ def build_master(input_path: str, out_path: str = "") -> dict:
     from GNToolkit.importer import import_node_tree_recursive
     from GNToolkit.operators import dependency_ordered_names, load_package_sources
 
-    json_cache, mod_data = load_package_sources(input_path)
-    if not json_cache:
+    json_cache, mod_data, embedded_entries = load_package_sources(input_path)
+    if not json_cache and not embedded_entries:
         raise RuntimeError(f"No node groups found in '{input_path}'")
 
     tracker = ImportErrorTracker()
@@ -93,6 +93,14 @@ def build_master(input_path: str, out_path: str = "") -> dict:
         else:
             failed.append(name)
 
+    from GNToolkit.importer import import_embedded_entry
+    embedded_rebuilt = 0
+    for item in embedded_entries:
+        owner = import_embedded_entry(item["data"], item["kind"],
+                                      json_cache, None, tracker)
+        if owner is not None:
+            embedded_rebuilt += 1
+
     if out_path:
         if not out_path.lower().endswith(".blend"):
             out_path += ".blend"
@@ -105,6 +113,7 @@ def build_master(input_path: str, out_path: str = "") -> dict:
         "failed": failed,
         "errors": tracker.error_count,
         "modifiers": len(mod_data),
+        "embedded": embedded_rebuilt,
     }
 
 
