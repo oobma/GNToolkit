@@ -3,6 +3,8 @@
 gn_toolkit.constants — All constants and immutable sets for the addon.
 """
 
+from enum import Enum
+
 # Canonical addon version — single source of truth.
 # Reflected in bl_info (__init__.py), exported JSON files, the sidecar
 # metadata file, and UI labels.
@@ -44,6 +46,50 @@ def is_group_node_bl_idname(bl_idname) -> bool:
 BUILTIN_GROUP_BL_IDNAMES: frozenset[str] = frozenset({
     "GeometryNodeGroup", "ShaderNodeGroup", "CompositorNodeGroup",
 })
+
+
+class SyncStatus(Enum):
+    """Sync state of a tracked entry.
+
+    Shared vocabulary (pure module): the add-on and the headless checker
+    import it from here so their verdicts cannot drift apart.
+    """
+    SYNCED = "synced"
+    BLEND_MODIFIED = "blend_modified"
+    JSON_MODIFIED = "json_modified"
+    CONFLICT = "conflict"
+    ORPHAN = "orphan"
+    UNTRACKED = "untracked"
+    JSON_MISSING = "json_missing"
+
+
+def hashes_differ(current, baseline) -> bool:
+    """True when *current* differs from *baseline*.
+
+    A missing baseline (None or empty string) counts as changed: there is
+    no stored hash to compare against (first tracking).
+    """
+    return (current != baseline) if baseline else True
+
+
+def classify_sync_status(json_hash, last_json_hash, blend_hash=None,
+                         last_blend_hash=None) -> SyncStatus:
+    """The shared sync-status rule: stored vs current hashes -> status.
+
+    With both blend arguments omitted (None) only the JSON side is judged
+    (the headless checker has no .blend): SYNCED or JSON_MODIFIED.
+    """
+    json_changed = hashes_differ(json_hash, last_json_hash)
+    if blend_hash is None and last_blend_hash is None:
+        return SyncStatus.JSON_MODIFIED if json_changed else SyncStatus.SYNCED
+    blend_changed = hashes_differ(blend_hash, last_blend_hash)
+    if not json_changed and not blend_changed:
+        return SyncStatus.SYNCED
+    if json_changed and not blend_changed:
+        return SyncStatus.JSON_MODIFIED
+    if not json_changed and blend_changed:
+        return SyncStatus.BLEND_MODIFIED
+    return SyncStatus.CONFLICT
 
 # Node types whose socket identifiers are volatile (recycled by Blender at runtime).
 _VOLATILE_TYPES: frozenset[str] = frozenset({

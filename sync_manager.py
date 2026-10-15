@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import time
-from enum import Enum
 
 import bpy
 
@@ -25,8 +24,9 @@ _log = logging.getLogger("GNToolkit.sync")
 
 from .constants import (ADDON_VERSION, EMBEDDED_KINDS, HASH_VERSION,
                         LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD,
-                        READ_TIMEOUT_SECONDS, is_group_node_bl_idname,
-                        is_trackable_tree_type)
+                        READ_TIMEOUT_SECONDS, SyncStatus,
+                        classify_sync_status, hashes_differ,
+                        is_group_node_bl_idname, is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
@@ -181,16 +181,6 @@ def package_entry(data, info):
 def package_put(data: dict, info, entry: dict) -> None:
     """Write an entry into a package dict, creating its section."""
     data.setdefault(entry_section(info), {})[info.get("blend_name", "")] = entry
-
-
-class SyncStatus(Enum):
-    SYNCED = "synced"
-    BLEND_MODIFIED = "blend_modified"
-    JSON_MODIFIED = "json_modified"
-    CONFLICT = "conflict"
-    ORPHAN = "orphan"
-    UNTRACKED = "untracked"
-    JSON_MISSING = "json_missing"
 
 
 class JsonLock:
@@ -577,10 +567,9 @@ class SyncManager:
         if current_mtime is not None and current_mtime <= last_mtime:
             blend_hash_current = entry_blend_hash(sync_uuid, info)
             last_blend_hash = info.get("last_blend_hash", "")
-            if blend_hash_current == last_blend_hash:
-                return SyncStatus.SYNCED
-            else:
+            if hashes_differ(blend_hash_current, last_blend_hash):
                 return SyncStatus.BLEND_MODIFIED
+            return SyncStatus.SYNCED
 
         # Layer 2: compute per-entry JSON hash
         json_hash_current = entry_json_hash(json_path, info)
@@ -596,17 +585,8 @@ class SyncManager:
         if json_hash_current is None:
             return SyncStatus.JSON_MISSING
 
-        json_changed = (json_hash_current != last_json_hash) if last_json_hash else True
-        blend_changed = (blend_hash_current != last_blend_hash) if last_blend_hash else True
-
-        if not json_changed and not blend_changed:
-            return SyncStatus.SYNCED
-        elif json_changed and not blend_changed:
-            return SyncStatus.JSON_MODIFIED
-        elif not json_changed and blend_changed:
-            return SyncStatus.BLEND_MODIFIED
-        else:
-            return SyncStatus.CONFLICT
+        return classify_sync_status(json_hash_current, last_json_hash,
+                                    blend_hash_current, last_blend_hash)
 
     def check_all_statuses(self) -> dict[str, SyncStatus]:
         """Check all tracked groups, optimised for batch operation.
@@ -678,10 +658,10 @@ class SyncManager:
             if current_mtime <= last_mtime:
                 blend_hash_current = entry_blend_hash(uid, info)
                 last_blend_hash = info.get("last_blend_hash", "")
-                if blend_hash_current == last_blend_hash:
-                    result[uid] = SyncStatus.SYNCED
-                else:
+                if hashes_differ(blend_hash_current, last_blend_hash):
                     result[uid] = SyncStatus.BLEND_MODIFIED
+                else:
+                    result[uid] = SyncStatus.SYNCED
                 continue
 
             # Full check: JSON changed, use cached per-entry hashes
@@ -702,17 +682,8 @@ class SyncManager:
             last_blend_hash = info.get("last_blend_hash", "")
             last_json_hash = info.get("last_json_hash", "")
 
-            json_changed = (json_hash_current != last_json_hash) if last_json_hash else True
-            blend_changed = (blend_hash_current != last_blend_hash) if last_blend_hash else True
-
-            if not json_changed and not blend_changed:
-                result[uid] = SyncStatus.SYNCED
-            elif json_changed and not blend_changed:
-                result[uid] = SyncStatus.JSON_MODIFIED
-            elif not json_changed and blend_changed:
-                result[uid] = SyncStatus.BLEND_MODIFIED
-            else:
-                result[uid] = SyncStatus.CONFLICT
+            result[uid] = classify_sync_status(json_hash_current, last_json_hash,
+                                               blend_hash_current, last_blend_hash)
 
         self._status_cache = result
         return result
@@ -3207,7 +3178,7 @@ class SyncManager:
                 skipped += 1
                 continue
 
-            json_changed = (not last_json_hash) or (current_json_hash != last_json_hash)
+            json_changed = hashes_differ(current_json_hash, last_json_hash)
 
             # Also check if blend was modified (user wants to overwrite with
             # JSON). Only serialized when the JSON did NOT change: a changed
@@ -3217,7 +3188,7 @@ class SyncManager:
             if (not json_changed) and last_blend_hash:
                 if resolve_entry_tree(uid, info) is not None:
                     current_blend_hash = entry_blend_hash(uid, info)
-                    blend_changed = current_blend_hash != last_blend_hash
+                    blend_changed = hashes_differ(current_blend_hash, last_blend_hash)
 
             if json_changed or blend_changed:
                 # Needs import (JSON changed or blend changed and user wants to overwrite)

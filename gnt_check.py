@@ -88,6 +88,13 @@ def _load_hash_utils():
     return _load_pure("gnt_core.hash_utils", os.path.join(_ROOT, "hash_utils.py"))
 
 
+def _load_constants():
+    """Load constants.py (pure) — the shared sync-status rules live there."""
+    if "gnt_core.constants" not in sys.modules:
+        _load_hash_utils()
+    return sys.modules["gnt_core.constants"]
+
+
 def _load_audit():
     """Load audit.py (pure) after the synthetic package exists."""
     if "gnt_core.hash_utils" not in sys.modules:
@@ -176,6 +183,7 @@ def _read_json(fp: str):
 
 def check(folder_or_file: str, baseline_path: str | None, strict: bool):
     hu = _load_hash_utils()
+    const = _load_constants()
     if os.path.isdir(folder_or_file):
         files = _scan_folder(folder_or_file)
     else:
@@ -202,9 +210,12 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
                 h = hu.canonical_hash_from_json_data(gdata)
                 if name in baseline:
                     expected, _exp_fp = baseline[name]
-                    (clean if expected == h else changed).append(
-                        name if expected == h else {"name": name, "file": fp,
-                                                    "before": expected, "after": h})
+                    status = const.classify_sync_status(h, expected, None, None)
+                    if status == const.SyncStatus.SYNCED:
+                        clean.append(name)
+                    else:
+                        changed.append({"name": name, "file": fp,
+                                        "before": expected, "after": h})
                 else:
                     clean.append(name)
         else:
@@ -218,7 +229,8 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
             h = hu.canonical_hash_from_json_data(data)
             if name in baseline:
                 expected, _exp_fp = baseline[name]
-                if expected == h:
+                status = const.classify_sync_status(h, expected, None, None)
+                if status == const.SyncStatus.SYNCED:
                     clean.append(name)
                 else:
                     changed.append({"name": name, "file": fp,

@@ -36,6 +36,16 @@ All notable changes to this project are documented in this file.
   reference-only (declared limit, like images: the `.osl` file lives
   outside the project).
 
+### Changed
+
+- **Sync-status decisions come from a single shared rule.** The
+  comparison that turns the stored/current hashes into "Synced",
+  "Edited Locally", "Changed in JSON" or "Conflict" now lives in one
+  dependency-free function used by both the add-on and the headless
+  checker (`gnt_check.py`), so their verdicts cannot drift apart. No
+  visible behavior change and no hash-version bump: statuses, reports
+  and stored baselines stay identical.
+
 ### Fixed
 
 - **The Script node's compiled `bytecode` is no longer stored.** It is a
