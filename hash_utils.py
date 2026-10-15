@@ -342,6 +342,14 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             nd["custom_properties"] = dict(sorted(custom.items()))
         else:
             nd.pop("custom_properties", None)
+        # Custom group nodes carry their per-instance inner tree embedded:
+        # canonicalize it like a tree of its own (order-independent).  The
+        # datablock name is incidental — Blender auto-suffixes instances
+        # of the same class (.001/.002), so content is the identity.
+        if isinstance(nd.get("inner_tree"), dict):
+            inner = canonicalize_node_tree_data(nd["inner_tree"])
+            inner.pop("name", None)
+            nd["inner_tree"] = inner
         # Node sockets: canonical form is by NAME. Socket identifiers are
         # reordered by the roundtrip (like interface identifiers), so
         # sorting by identifier yields different orders per side.
@@ -465,6 +473,13 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             for name, dep in sorted(derived.items())
             if isinstance(dep, dict)
         }
+
+    # Referenced Text datablocks (OSL scripts): the code is real content —
+    # editing it must move the hash.  Sorted by name; the content itself
+    # is compared as written.
+    texts = data.get("texts")
+    if isinstance(texts, dict) and texts:
+        out["texts"] = {str(name): texts[name] for name in sorted(texts)}
 
     return _normalize_floats(out)
 

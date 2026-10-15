@@ -2375,6 +2375,97 @@ def import_node_tree_recursive(
     return holder.get("tree")
 
 
+def _tree_is_unreferenced(tree) -> bool:
+    """True when no node (anywhere) points at *tree*.
+
+    ``tree.users`` is NOT usable for custom group nodes: the tree their
+    ``init`` created keeps a phantom user count of 1 for the whole
+    session even after the node switched away or was deleted (verified
+    on 5.1/5.2), so the file itself is the source of truth.
+    """
+    for ng in bpy.data.node_groups:
+        for node in ng.nodes:
+            if getattr(node, "node_tree", None) is tree:
+                return False
+    for coll in (bpy.data.materials, bpy.data.worlds):
+        for owner in coll:
+            owner_tree = getattr(owner, "node_tree", None)
+            if owner_tree is None:
+                continue
+            for node in owner_tree.nodes:
+                if getattr(node, "node_tree", None) is tree:
+                    return False
+    return True
+
+
+def _rebuild_custom_inner_tree(node, inner_data: dict, json_cache: dict,
+                               group_interface_maps, context, tracker,
+                               visiting: set) -> bool:
+    """Rebuild the per-instance inner tree of a custom group node.
+
+    Custom group classes create their inner tree in ``init``; the JSON
+    carries the edited content.  The saved tree is rebuilt over a fresh
+    datablock, assigned to the node, and the tree the class just
+    generated is removed (only when users-free) so the per-instance
+    content wins and no orphan accumulates (decision 2026-10-15).
+    Returns True when the node ended up with the rebuilt content.
+    """
+    fresh = getattr(node, "node_tree", None)
+    wanted = inner_data.get("name") or (fresh.name if fresh is not None else "")
+    tree_type = inner_data.get("tree_type", "GeometryNodeTree")
+    try:
+        rebuilt = bpy.data.node_groups.new(wanted or "CustomGroupTree",
+                                           tree_type)
+    except Exception as exc:
+        tracker.record(
+            f"Node '{node.name}': could not create inner tree "
+            f"'{wanted}': {exc}", level="WARN")
+        return False
+    try:
+        node.node_tree = rebuilt
+    except Exception as exc:
+        tracker.record(
+            f"Node '{node.name}': could not assign the restored inner "
+            f"tree: {exc}", level="WARN")
+        try:
+            if rebuilt.users == 0:
+                bpy.data.node_groups.remove(rebuilt)
+        except Exception:
+            pass
+        return False
+
+    holder = {}
+    for _frac, _msg in _import_node_tree_gen(
+            inner_data, json_cache, group_interface_maps, context, tracker,
+            holder, set(visiting), target_tree=rebuilt):
+        pass
+
+    # Drop the class-generated tree once nothing references it.
+    if fresh is not None and fresh is not rebuilt:
+        try:
+            if _tree_is_unreferenced(fresh):
+                bpy.data.node_groups.remove(fresh)
+        except Exception:
+            pass
+    # Same for leftovers holding the wanted name (an orphan left by the
+    # in-place node rebuild) — keeps names canonical across successive
+    # pulls instead of drifting to .001/.002.
+    if wanted:
+        stale = bpy.data.node_groups.get(wanted)
+        if (stale is not None and stale is not rebuilt
+                and _tree_is_unreferenced(stale)):
+            try:
+                bpy.data.node_groups.remove(stale)
+            except Exception:
+                pass
+        if bpy.data.node_groups.get(wanted) is None:
+            try:
+                rebuilt.name = wanted
+            except Exception:
+                pass
+    return True
+
+
 def _import_node_tree_gen(
     data: dict,
     json_cache: dict,
@@ -2413,6 +2504,35 @@ def _import_node_tree_gen(
             f"Cyclic group reference detected at '{name}' — import stopped")
         return
     _visiting.add(name)
+
+    # Referenced Text datablocks (OSL scripts): restore BEFORE the nodes
+    # so script references resolve during property application and the
+    # Script node can parse its sockets.  JSON wins over local edits
+    # (Pull semantics, decision 2026-10-15); a differing local text is
+    # reported.
+    texts = data.get("texts")
+    if isinstance(texts, dict):
+        for t_name in sorted(texts):
+            raw = texts[t_name]
+            content = raw.get("text") if isinstance(raw, dict) else raw
+            if not isinstance(content, str):
+                continue
+            try:
+                text = bpy.data.texts.get(t_name)
+                if text is None:
+                    text = bpy.data.texts.new(t_name)
+                    text.write(content)
+                elif text.as_string() != content:
+                    text.clear()
+                    text.write(content)
+                    tracker.record(
+                        f"Text '{t_name}' updated from JSON (local content "
+                        f"overwritten)", level="WARN")
+                text.use_fake_user = True
+            except Exception as exc:
+                tracker.record(
+                    f"Text '{t_name}': could not restore from JSON: {exc}",
+                    level="WARN")
 
     if context:
         context.workspace.status_text_set(f"Rebuilding: {name}...")
@@ -2588,12 +2708,30 @@ def _import_node_tree_gen(
         _apply_custom_properties(new_node, node_data.get("custom_properties"),
                                  f"Node '{new_node.name}'", tracker)
 
-        if is_group_node_bl_idname(node_type):
+        if isinstance(node_data.get("inner_tree"), dict):
+            # Third-party custom group class: restore its per-instance
+            # inner tree (checked before the name-reference path because
+            # suffix-named custom classes also match is_group_node_bl_idname).
+            _rebuild_custom_inner_tree(new_node, node_data["inner_tree"],
+                                       json_cache, group_interface_maps,
+                                       context, tracker, _visiting)
+        elif is_group_node_bl_idname(node_type):
             ref_name = node_data.get("node_tree_reference")
             if ref_name:
                 ref_tree = bpy.data.node_groups.get(ref_name)
                 if ref_tree:
                     new_node.node_tree = ref_tree
+
+        if node_type == "ShaderNodeScript":
+            # The Script node's sockets are derived from the OSL source:
+            # nudge the parse so they materialize before the socket
+            # defaults and link passes run (best effort — parsing needs
+            # the Cycles OSL front-end; the link pass reports whatever is
+            # still missing).
+            try:
+                new_node.update()
+            except Exception:
+                pass
 
     # --- Step 1.3: Zone pairing ---
     # Zone pairs are established with pair_with_output() (a direct RNA

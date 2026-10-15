@@ -12,6 +12,7 @@ import bpy
 
 from .codec import clean_value
 from .constants import (
+    BUILTIN_GROUP_BL_IDNAMES,
     MATERIAL_SETTINGS_PROPS,
     NODE_PROPS_TO_SKIP,
     TREE_PROPS_TO_SKIP,
@@ -380,8 +381,15 @@ def serialize_node(node, skip_output_defaults: bool = False):
         data["zone_paired_node"] = node.paired_output.name
     elif hasattr(node, 'paired_input') and node.paired_input:
         data["zone_paired_node"] = node.paired_input.name
-    if is_group_node_bl_idname(node.bl_idname):
-        data["node_tree_reference"] = node.node_tree.name if node.node_tree else None
+    inner_tree = getattr(node, "node_tree", None)
+    if node.bl_idname in BUILTIN_GROUP_BL_IDNAMES:
+        # Native group node: shared first-class tree, referenced by name.
+        data["node_tree_reference"] = inner_tree.name if inner_tree else None
+    elif inner_tree is not None:
+        # Third-party custom group class (any naming): the inner tree is
+        # per-instance content — embed it so two instances with divergent
+        # edits round-trip exactly, with no global name needed.
+        data["inner_tree"] = _serialize_node_tree_core(inner_tree)
 
     return data
 
@@ -405,6 +413,43 @@ def _custom_properties(id_block) -> dict:
         except (TypeError, AttributeError, ValueError, RuntimeError):
             continue
     return props
+
+
+def _collect_tree_texts(nodes_data: list) -> dict:
+    """Referenced Text datablocks of a serialized node list, name → content.
+
+    Script nodes (OSL) reference a Text datablock; Blender persists and
+    carries that content on append/save, so it is versioned content of
+    the entry (decision 2026-10-15).  Only LOCAL texts referenced from
+    serialized properties are collected — library-linked ones belong to
+    another .blend and are out of scope, like other linked datablocks.
+    """
+    names: set[str] = set()
+
+    def _scan(value):
+        if isinstance(value, dict):
+            if value.get("type") == "Text" and isinstance(value.get("name"), str):
+                names.add(value["name"])
+            for item in value.values():
+                _scan(item)
+        elif isinstance(value, list):
+            for item in value:
+                _scan(item)
+
+    for node_data in nodes_data:
+        _scan(node_data.get("properties"))
+        _scan(node_data.get("custom_properties"))
+
+    texts = {}
+    for name in sorted(names):
+        text = bpy.data.texts.get(name)
+        if text is None or getattr(text, "library", None) is not None:
+            continue
+        try:
+            texts[name] = text.as_string()
+        except Exception:
+            continue
+    return texts
 
 
 def _serialize_node_tree_core(tree):
@@ -658,6 +703,10 @@ def _serialize_node_tree_core(tree):
     custom = _custom_properties(tree)
     if custom:
         data["custom_properties"] = custom
+
+    texts = _collect_tree_texts(data.get("nodes", []))
+    if texts:
+        data["texts"] = texts
 
     return data
 

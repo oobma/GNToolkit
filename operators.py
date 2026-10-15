@@ -33,7 +33,7 @@ from .modifier_utils import (
     remap_input_keys,
 )
 from .serializer import serialize_embedded_entry, serialize_node_tree
-from .socket_utils import get_tree_dependencies
+from .socket_utils import custom_inner_tree_names, get_tree_dependencies
 from .sync_manager import SyncManager, _ensure_package_shape
 
 _log = logging.getLogger("GNToolkit.operators")
@@ -263,8 +263,10 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                         "Nothing to export - enable at least one category")
             return {'CANCELLED'}
 
+        inner_names = custom_inner_tree_names()
         trackable = [t for t in bpy.data.node_groups
-                     if is_trackable_tree_type(t.type)]
+                     if is_trackable_tree_type(t.type)
+                     and t.name not in inner_names]
 
         fragments = [frag.strip().lower()
                      for frag in (self.exclude_libraries or "").split(";")

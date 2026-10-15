@@ -11,8 +11,50 @@ from __future__ import annotations
 import bpy
 
 from .constants import (_VOLATILE_TYPES, ZONE_INPUTS, SOCKET_TYPE_MAP,
-                        is_group_node_bl_idname)
+                        BUILTIN_GROUP_BL_IDNAMES, is_group_node_bl_idname)
 from .error_tracker import ImportErrorTracker
+
+
+# ---------------------------------------------------------------------------
+# Custom group nodes (third-party classes with a per-instance inner tree)
+# ---------------------------------------------------------------------------
+
+def is_custom_group_node(node) -> bool:
+    """True for third-party custom group nodes.
+
+    A custom group class (``ShaderNodeCustomGroup`` subclass or similar)
+    owns a per-instance ``node_tree``; native Geometry/Shader/Compositor
+    Group nodes reference shared, first-class trees instead.  The inner
+    tree of a custom node is versioned embedded (``inner_tree``) and is
+    NOT a menu-trackable group (decision 2026-10-15).
+    """
+    return (getattr(node, "node_tree", None) is not None
+            and node.bl_idname not in BUILTIN_GROUP_BL_IDNAMES)
+
+
+def custom_inner_tree_names() -> set:
+    """Names of the node trees owned as inner trees by custom nodes.
+
+    Scans every tree (standalone groups plus material/world owner trees)
+    for custom group nodes.  Used by the mass operations (Track All,
+    Export JSON Package) to keep inner trees out of the standalone
+    group set.
+    """
+    names: set = set()
+
+    def _scan(tree):
+        if tree is None:
+            return
+        for node in tree.nodes:
+            if is_custom_group_node(node):
+                names.add(node.node_tree.name)
+
+    for tree in bpy.data.node_groups:
+        _scan(tree)
+    for coll in (bpy.data.materials, bpy.data.worlds):
+        for owner in coll:
+            _scan(getattr(owner, "node_tree", None))
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -215,13 +257,20 @@ def find_robust_socket(node, sockets, sid, sname, expected_type=None, dynamic_hi
 # ---------------------------------------------------------------------------
 
 def get_tree_dependencies(tree, deps=None):
-    """Recursively collect all node-trees referenced by *tree*."""
+    """Recursively collect all node-trees referenced by *tree*.
+
+    Custom group nodes' inner trees are NOT collected: they are
+    per-instance content serialized embedded in the node itself
+    (``inner_tree``), not standalone dependencies.
+    """
     if deps is None:
         deps = {}
     if tree.name in deps:
         return deps
     deps[tree.name] = tree
     for node in tree.nodes:
+        if is_custom_group_node(node):
+            continue
         if is_group_node_bl_idname(node.bl_idname) and getattr(node, "node_tree", None):
             get_tree_dependencies(node.node_tree, deps)
     return deps

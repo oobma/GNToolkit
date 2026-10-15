@@ -16,6 +16,38 @@ All notable changes to this project are documented in this file.
   script (`scripts/export_all_json.py`) gains
   `--categories gn,shader,modifiers,materials,worlds` for the same
   filtering headless.
+- **Custom group nodes from third-party add-ons keep their inner tree.**
+  A node class that owns a per-instance `node_tree` (a
+  `ShaderNodeCustomGroup` subclass — the official template style or the
+  `...NodeGroup` naming alike) now serializes that tree **embedded**
+  (`inner_tree`) instead of a name reference: edits made inside the node
+  travel with it and survive in-place rebuilds and clones, exactly like
+  Blender persists them. On rebuild the class-generated inner tree is
+  discarded (only when nothing references it) so the saved content wins
+  and no orphan accumulates. These inner trees are never standalone
+  entries — Track All, Export JSON Package and the dependency collectors
+  skip them. A missing add-on still degrades with a clear issue.
+- **OSL Script nodes version their code.** The Text datablocks referenced
+  by Script nodes travel in the entry under `texts` and are restored
+  BEFORE sockets and links, so the node parses again and its wiring to
+  the Material Output (with the node's parameter defaults) survives a
+  clone. Re-importing over local edits overwrites the text — the JSON
+  wins, as everywhere on Pull — and reports it. `External` mode stays
+  reference-only (declared limit, like images: the `.osl` file lives
+  outside the project).
+
+### Fixed
+
+- **The Script node's compiled `bytecode` is no longer stored.** It is a
+  session cache whose listing embeds absolute temporary paths, so
+  identical content hashed differently between processes (a permanent
+  false "modified" for OSL projects) and leaked local paths into the
+  committed JSON. With it excluded, the canonical hash of an identical
+  OSL material is the same across separate Blender processes (verified
+  in the gate).
+
+`HASH_VERSION` 22 — stored baselines re-stamp automatically; entries
+containing custom group nodes re-sync once.
 
 ## [0.4.0] - 2026-10-13
 

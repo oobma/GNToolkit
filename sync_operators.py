@@ -16,6 +16,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
                         is_group_node_bl_idname, is_trackable_tree_type)
 from .serializer import serialize_node_tree, tree_has_animation
+from .socket_utils import custom_inner_tree_names
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
     group_library_path, resolve_json_path, resolve_entry_tree,
@@ -1387,8 +1388,10 @@ class GN_OT_SyncTrackDeps(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 def _mass_counts_link_all() -> dict:
+    inner_names = custom_inner_tree_names()
     groups = [ng for ng in bpy.data.node_groups
-              if is_trackable_tree_type(ng.type)]
+              if is_trackable_tree_type(ng.type)
+              and ng.name not in inner_names]
     linked = sum(1 for ng in groups if group_library_path(ng))
     tracked = len(sync_manager.metadata.get("tracked_groups", {}))
     return {"total": len(groups), "linked": linked, "tracked": tracked}
@@ -1445,8 +1448,10 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
         if self.filepath and not self.filepath.lower().endswith(".json"):
             self.filepath += ".json"
 
+        inner_names = custom_inner_tree_names()
         gn_groups = [ng for ng in bpy.data.node_groups
-                     if is_trackable_tree_type(ng.type)]
+                     if is_trackable_tree_type(ng.type)
+                     and ng.name not in inner_names]
         if not gn_groups:
             self.report({'ERROR'},
                         "No trackable node groups found in this .blend")

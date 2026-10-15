@@ -42,7 +42,7 @@ from .importer import (import_node_tree_recursive, import_embedded_entry,
                        merge_derived_groups)
 from .serializer import (serialize_node_tree, serialize_embedded_entry,
                          canonical_hash_from_embedded)
-from .socket_utils import get_tree_dependencies
+from .socket_utils import custom_inner_tree_names, get_tree_dependencies
 from .sync_metadata import (
     SYNC_UUID_PROP,
     generate_uuid,
@@ -2241,9 +2241,13 @@ class SyncManager:
         Returns a dict with counts:
             {"linked": int, "skipped": int, "errors": int}
         """
-        # Collect all trackable node groups
+        # Collect all trackable node groups (custom nodes' inner trees are
+        # per-instance content that travels embedded — never standalone
+        # entries, decision 2026-10-15).
+        inner_names = custom_inner_tree_names()
         all_groups = {ng.name: ng for ng in bpy.data.node_groups
-                      if is_trackable_tree_type(ng.type)}
+                      if is_trackable_tree_type(ng.type)
+                      and ng.name not in inner_names}
         linked_skipped = sum(1 for ng in all_groups.values()
                              if group_library_path(ng))
         if linked_skipped:

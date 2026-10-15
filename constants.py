@@ -33,6 +33,18 @@ def is_group_node_bl_idname(bl_idname) -> bool:
     """
     return bool(bl_idname) and str(bl_idname).endswith("NodeGroup")
 
+
+# Native (built-in) group-node bl_idnames.  These reference shared,
+# first-class node-tree datablocks and travel as a name-based
+# ``node_tree_reference``.  Any OTHER node that owns a ``node_tree`` is a
+# third-party custom group class (a ``ShaderNodeCustomGroup`` subclass or
+# similar): its inner tree is PER-INSTANCE content (each node owns its
+# own), serialized embedded as ``inner_tree`` (decision 2026-10-15) so
+# two instances with divergent edits round-trip exactly.
+BUILTIN_GROUP_BL_IDNAMES: frozenset[str] = frozenset({
+    "GeometryNodeGroup", "ShaderNodeGroup", "CompositorNodeGroup",
+})
+
 # Node types whose socket identifiers are volatile (recycled by Blender at runtime).
 _VOLATILE_TYPES: frozenset[str] = frozenset({
     "GeometryNodeRepeatInput", "GeometryNodeRepeatOutput",
@@ -116,6 +128,12 @@ EXCLUSIONS: dict[str, dict[str, str]] = {
         "asset_data": "Asset-library metadata, not tree content.",
         "is_preview": "Runtime preview state.",
         "rna_type": "RNA introspection marker.",
+        "bytecode": "Derived compile cache of the Script node (OSL): the "
+                    "compiled listing embeds per-session absolute temp "
+                    "paths, so hashing it makes identical content differ "
+                    "between processes; regenerated on load.",
+        "bytecode_hash": "Derived compile cache of the Script node (same "
+                         "as bytecode).",
     },
     "interface": {
         "name": "Structural key written by the interface serializer itself.",
@@ -600,7 +618,11 @@ WORLD_SETTINGS_PROPS: tuple[str, ...] = (
 # 21: color_tag folds ('NONE'/''), and homonymous interface INPUT/OUTPUT
 # items sort by (name, direction) because the roundtrip may recreate
 # them swapped (Blender inserts a same-named output before its input).
-HASH_VERSION: int = 21
+# 22: custom group nodes embed their per-instance inner tree
+# (``inner_tree``) instead of a name reference, and referenced Text
+# datablocks (OSL scripts) are versioned under ``texts``; the Script
+# node's compiled ``bytecode``/``bytecode_hash`` are no longer stored.
+HASH_VERSION: int = 22
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

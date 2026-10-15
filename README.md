@@ -290,9 +290,17 @@ repository — never part of the extension zip.
   plus a curated allowlist of the owner's settings (mix mode, shadows,
   culling, refraction/SSS, displacement, viewport display, Freestyle;
   world color/sun) and its custom properties — the rest of the datablock
-  and object material slots are not versioned, and cloning a missing
+  and object material slots are   not versioned, and cloning a missing
   owner warns about that. Compositor trees are not tracked yet; Texture
-  node trees never. **Animation** (keyframes/drivers/NLA) is not saved
+  node trees never. **Third-party custom group nodes** (add-ons that
+  define their own node classes) keep their per-instance inner tree: it
+  is versioned embedded with the node, so edits made inside it survive
+  clones and rebuilds, and the inner tree is never a standalone tracked
+  entry. **OSL Script nodes** version their code — the referenced Text
+  travels with the entry and a re-import overwrites local edits (the
+  JSON wins, as everywhere on Pull); `External` mode is reference-only
+  (the `.osl` file lives outside, like images). **Animation**
+  (keyframes/drivers/NLA) is not saved
   into JSON: animated groups and materials are flagged in the Sync panel
   and by `gnt_check.py` instead of passing as silently synced.
 
