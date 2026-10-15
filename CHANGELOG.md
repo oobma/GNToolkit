@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Export JSON Package can filter by category.** The export dialog gains
+  an "Include:" set of switches — Geometry Nodes groups, Shader groups,
+  NODES modifiers, materials and worlds — all on by default (unchanged
+  behavior); unselected categories are left out of both the single-file
+  package and the folder export (no empty subfolders). NODES modifiers
+  are exported only together with the Geometry Nodes groups they
+  reference: deselecting the groups skips them and says so. The batch
+  script (`scripts/export_all_json.py`) gains
+  `--categories gn,shader,modifiers,materials,worlds` for the same
+  filtering headless.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added

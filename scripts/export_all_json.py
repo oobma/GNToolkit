@@ -25,6 +25,12 @@ toolsets out of the export/conversion.  The addon is enabled
 automatically when missing (extension module or the repo copy next to
 this script).
 
+--categories gn,shader,modifiers,materials,worlds exports only the listed
+categories (comma-separated; the omitted ones are left out).  Without it
+the export is the same as before (everything).  "modifiers" needs "gn":
+NODES modifiers are exported only together with the Geometry Nodes groups
+they reference.
+
 The folder export can then be versioned and used with
 'Track from Existing JSON' / 'Track Folder…' inside Blender, and checked
 headless with gnt_check.py:
@@ -39,6 +45,9 @@ import sys
 ADDON_MODULES = ("GNToolkit", "bl_ext.user_default.gn_toolkit")
 # Mirrors constants.TRACKABLE_TREE_TYPES (script stays self-contained).
 TRACKABLE_TREE_TYPES = ("GEOMETRY", "SHADER")
+CATEGORY_TOKENS = {"gn": "include_geometry", "shader": "include_shader",
+                   "modifiers": "include_modifiers",
+                   "materials": "include_materials", "worlds": "include_worlds"}
 DEFAULT_OUT = os.path.join(os.getcwd(), "gnt_export")
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -159,6 +168,9 @@ def main():
     minify = "--minify" in argv
     make_local = "--make-local" in argv
     save = "--save" in argv
+    categories_arg = None
+    if "--categories" in argv and argv.index("--categories") + 1 < len(argv):
+        categories_arg = argv[argv.index("--categories") + 1]
     exclude_fragments = [argv[i + 1].strip().lower()
                          for i, arg in enumerate(argv)
                          if arg == "--exclude-library" and i + 1 < len(argv)]
@@ -191,16 +203,57 @@ def main():
                      "use_minify": minify}
     if exclude_fragments:
         export_kwargs["exclude_libraries"] = ";".join(exclude_fragments)
-    result = bpy.ops.gn.export_batch_json(**export_kwargs)
+    tokens = None
+    if categories_arg is not None:
+        tokens = [t.strip().lower()
+                  for t in categories_arg.split(",") if t.strip()]
+        unknown = [t for t in tokens if t not in CATEGORY_TOKENS]
+        if unknown:
+            print(f"[ERROR] unknown --categories token(s): "
+                  f"{', '.join(unknown)} (valid: "
+                  f"{', '.join(CATEGORY_TOKENS)})")
+            sys.exit(2)
+        if "modifiers" in tokens and "gn" not in tokens:
+            print("[WARN] --categories modifiers without gn: NODES "
+                  "modifiers need their Geometry Nodes groups and will "
+                  "be skipped by the exporter")
+        for token, prop in CATEGORY_TOKENS.items():
+            export_kwargs[prop] = token in tokens
+    try:
+        result = bpy.ops.gn.export_batch_json(**export_kwargs)
+    except RuntimeError as exc:
+        print(f"[ERROR] export failed: {exc}")
+        sys.exit(1)
     if result != {'FINISHED'}:
         print(f"[ERROR] export failed: {result}")
         sys.exit(1)
 
+    selected = None if tokens is None else set(tokens)
+
+    def _wanted(category):
+        if selected is None:
+            return True
+        if category == "groups":
+            return bool({"gn", "shader"} & selected)
+        if category == "modifiers":
+            return "modifiers" in selected and "gn" in selected
+        return category in selected
+
     ng_dir = os.path.join(out, "NodeGroups")
-    if os.path.isdir(ng_dir):
-        print(f"[OK] {len(os.listdir(ng_dir))} group file(s) exported to {ng_dir}")
-    else:
-        print("[WARN] no NodeGroups folder was produced — check the console output")
+    if _wanted("groups"):
+        if os.path.isdir(ng_dir):
+            print(f"[OK] {len(os.listdir(ng_dir))} group file(s) exported to {ng_dir}")
+        else:
+            print("[WARN] no NodeGroups folder was produced — check the console output")
+    for sub, label, category in (("Modifiers", "modifier", "modifiers"),
+                                 ("Materials", "material", "materials"),
+                                 ("Worlds", "world", "worlds")):
+        if not _wanted(category):
+            continue
+        sub_dir = os.path.join(out, sub)
+        if os.path.isdir(sub_dir):
+            print(f"[OK] {len(os.listdir(sub_dir))} {label} file(s) "
+                  f"exported to {sub_dir}")
 
 
 if __name__ == "__main__":

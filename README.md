@@ -312,9 +312,14 @@ repository — never part of the extension zip.
 
 ### Import & share
 
-- **JSON package snapshots**: export/import of all tracked node groups
-  (Geometry Nodes and Shader) and NODES modifier setups to/from a single
-  JSON package, with in-place update of existing groups on import.
+- **JSON package snapshots**: export/import of the node groups (Geometry
+  Nodes and Shader), NODES modifier setups, materials and worlds to/from
+  a single JSON package, with in-place update of existing groups on
+  import. The export can be **filtered by category** ("Include:"
+  switches — Geometry Nodes groups / Shader groups / Modifiers /
+  Materials / Worlds, everything on by default), both in the dialog and
+  headless via `scripts/export_all_json.py --categories`; NODES
+  modifiers are exported only together with Geometry Nodes groups.
 - **Export active group** with its full dependency chain.
 - **Folder workflow**: the per-group folder export (`NodeGroups/` +
   `Modifiers/`) round-trips end to end — track every file of a folder in

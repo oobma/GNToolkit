@@ -223,16 +223,48 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
         default="",
     )
 
+    include_geometry: BoolProperty(
+        name="Geometry Nodes groups", default=True,
+        description="Include Geometry Nodes group trees")
+    include_shader: BoolProperty(
+        name="Shader groups", default=True,
+        description="Include Shader node group trees")
+    include_modifiers: BoolProperty(
+        name="Modifiers (NODES)", default=True,
+        description="Include NODES modifier setups (exported only together "
+                    "with Geometry Nodes groups)")
+    include_materials: BoolProperty(
+        name="Materials", default=True,
+        description="Include material node trees")
+    include_worlds: BoolProperty(
+        name="Worlds", default=True,
+        description="Include world node trees")
+
     def draw(self, context):
         layout = self.layout
+        col = layout.column(heading="Include:")
+        col.prop(self, "include_geometry")
+        col.prop(self, "include_shader")
+        col.prop(self, "include_modifiers")
+        col.prop(self, "include_materials")
+        col.prop(self, "include_worlds")
+        layout.separator()
         layout.prop(self, "use_folder_structure")
         layout.prop(self, "use_minify")
         layout.prop(self, "exclude_libraries")
 
     def execute(self, context):
         base_dir = os.path.dirname(self.filepath)
-        trees = [t for t in bpy.data.node_groups
-                 if is_trackable_tree_type(t.type)]
+        modifiers_on = self.include_modifiers and self.include_geometry
+        if not (self.include_geometry or self.include_shader
+                or modifiers_on or self.include_materials
+                or self.include_worlds):
+            self.report({'ERROR'},
+                        "Nothing to export - enable at least one category")
+            return {'CANCELLED'}
+
+        trackable = [t for t in bpy.data.node_groups
+                     if is_trackable_tree_type(t.type)]
 
         fragments = [frag.strip().lower()
                      for frag in (self.exclude_libraries or "").split(";")
@@ -247,9 +279,18 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
             lib_path = (lib.filepath or "").lower()
             return any(frag in lib_path for frag in fragments)
 
-        excluded_names = {t.name for t in trees if _excluded(t)}
-        if excluded_names:
-            trees = [t for t in trees if t.name not in excluded_names]
+        def _selected(tree):
+            if tree.type == 'GEOMETRY':
+                return self.include_geometry
+            return self.include_shader
+
+        excluded_names = {t.name for t in trackable if _excluded(t)}
+        trees = [t for t in trackable
+                 if t.name not in excluded_names and _selected(t)]
+        auto_omit_note = ("; NODES modifiers skipped (Geometry Nodes "
+                          "groups deselected)"
+                          if self.include_modifiers
+                          and not self.include_geometry else "")
 
         context.window_manager.progress_begin(0, len(trees) or 1)
 
@@ -262,43 +303,51 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
             if self.use_folder_structure:
                 if not os.path.exists(base_dir):
                     os.makedirs(base_dir)
-                ng_dir = os.path.join(base_dir, "NodeGroups")
-                if not os.path.exists(ng_dir):
-                    os.makedirs(ng_dir)
 
                 ng_names = FilenameAllocator()
-                count_ng = 0
-                for i, tree in enumerate(trees):
-                    context.window_manager.progress_update(i)
-                    context.workspace.status_text_set(f"Exporting: {tree.name}")
-                    data = _ensure_package_shape(
-                        serialize_node_tree(tree, derived=False))
-                    stem = ng_names.allocate(tree.name, "node_group")
-                    write_json_file(os.path.join(ng_dir, f"{stem}.json"),
-                                    data, dump_args)
-                    count_ng += 1
-
-                mod_dir = os.path.join(base_dir, "Modifiers")
-                if not os.path.exists(mod_dir):
-                    os.makedirs(mod_dir)
                 mod_names = FilenameAllocator()
+                count_ng = 0
+                if self.include_geometry or self.include_shader:
+                    ng_dir = os.path.join(base_dir, "NodeGroups")
+                    if not os.path.exists(ng_dir):
+                        os.makedirs(ng_dir)
+                    for i, tree in enumerate(trees):
+                        context.window_manager.progress_update(i)
+                        context.workspace.status_text_set(
+                            f"Exporting: {tree.name}")
+                        data = _ensure_package_shape(
+                            serialize_node_tree(tree, derived=False))
+                        stem = ng_names.allocate(tree.name, "node_group")
+                        write_json_file(os.path.join(ng_dir, f"{stem}.json"),
+                                        data, dump_args)
+                        count_ng += 1
+
                 count_mod = 0
-                all_objects = bpy.data.objects
-                for obj in all_objects:
-                    for idx, mod in enumerate(obj.modifiers):
-                        if mod.type == 'NODES' and not _modifier_excluded(mod):
-                            data = _modifier_task_data(obj, mod, idx)
-                            if data is None:
-                                continue
-                            stem = mod_names.allocate(f"{obj.name}_{mod.name}",
-                                                      "modifier")
-                            write_json_file(
-                                os.path.join(mod_dir, f"{stem}.json"),
-                                data, dump_args)
-                            count_mod += 1
+                if modifiers_on:
+                    mod_dir = os.path.join(base_dir, "Modifiers")
+                    if not os.path.exists(mod_dir):
+                        os.makedirs(mod_dir)
+                    all_objects = bpy.data.objects
+                    for obj in all_objects:
+                        for idx, mod in enumerate(obj.modifiers):
+                            if (mod.type == 'NODES'
+                                    and not _modifier_excluded(mod)):
+                                data = _modifier_task_data(obj, mod, idx)
+                                if data is None:
+                                    continue
+                                stem = mod_names.allocate(
+                                    f"{obj.name}_{mod.name}", "modifier")
+                                write_json_file(
+                                    os.path.join(mod_dir, f"{stem}.json"),
+                                    data, dump_args)
+                                count_mod += 1
                 count_emb = 0
                 for kind, sub in (("material", "Materials"),
                                   ("world", "Worlds")):
+                    if kind == "material" and not self.include_materials:
+                        continue
+                    if kind == "world" and not self.include_worlds:
+                        continue
                     owners = _embedded_export_owners(kind)
                     if not owners:
                         continue
@@ -317,7 +366,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                             f"{count_mod} modifier file(s) and "
                             f"{count_emb} material/world file(s)."
                             + (f" Skipped {len(excluded_names)} group(s) from "
-                               "excluded libraries." if excluded_names else ""))
+                               "excluded libraries." if excluded_names else "")
+                            + auto_omit_note)
                 adjusted = ng_names.adjusted + mod_names.adjusted
                 if adjusted:
                     shown = "; ".join(f"{old} → {new}"
@@ -332,23 +382,30 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     "version": ADDON_VERSION,
                     "type": "GN_UNIFIED_PACKAGE",
                     "export_method": PACKAGE_EXPORT_METHOD,
-                    "node_groups": {},
-                    "modifiers": [],
                 }
-                for i, tree in enumerate(trees):
-                    context.window_manager.progress_update(i)
-                    master_data["node_groups"][tree.name] = \
-                        serialize_node_tree(tree, derived=False)
+                if self.include_geometry or self.include_shader:
+                    master_data["node_groups"] = {}
+                    for i, tree in enumerate(trees):
+                        context.window_manager.progress_update(i)
+                        master_data["node_groups"][tree.name] = \
+                            serialize_node_tree(tree, derived=False)
 
-                all_objects = bpy.data.objects
-                for obj in all_objects:
-                    for idx, mod in enumerate(obj.modifiers):
-                        if mod.type == 'NODES' and not _modifier_excluded(mod):
-                            task = _modifier_task_data(obj, mod, idx)
-                            if task is not None:
-                                master_data["modifiers"].append(task)
+                if modifiers_on:
+                    master_data["modifiers"] = []
+                    all_objects = bpy.data.objects
+                    for obj in all_objects:
+                        for idx, mod in enumerate(obj.modifiers):
+                            if (mod.type == 'NODES'
+                                    and not _modifier_excluded(mod)):
+                                task = _modifier_task_data(obj, mod, idx)
+                                if task is not None:
+                                    master_data["modifiers"].append(task)
                 count_emb = 0
                 for kind, section in EMBEDDED_KINDS.items():
+                    if kind == "material" and not self.include_materials:
+                        continue
+                    if kind == "world" and not self.include_worlds:
+                        continue
                     for owner in _embedded_export_owners(kind):
                         master_data.setdefault(section, {})[owner.name] = \
                             serialize_embedded_entry(owner, kind, derived=False)
@@ -359,7 +416,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                             f"({count_emb} material/world entr"
                             f"{'y' if count_emb == 1 else 'ies'})."
                             + (f" Skipped {len(excluded_names)} group(s) from "
-                               "excluded libraries." if excluded_names else ""))
+                               "excluded libraries." if excluded_names else "")
+                            + auto_omit_note)
         except PermissionError:
             self.report({'ERROR'},
                         f"Cannot write to {self.filepath} - save the .blend "
