@@ -3,7 +3,7 @@
 This template lives in the repository (it is never shipped inside the
 extension zip). The workflow downloads `gnt_check.py` from a **tagged
 release** of this repository, so the pinned tag matters: it must be the tag
-of the add-on release your team uses — below it is pinned to `v0.3.3`, the
+of the add-on release your team uses — below it is pinned to `v0.4.0`, the
 current release. The template's commands are unchanged between tags, so the
 checks behave the same either way.
 
@@ -75,9 +75,9 @@ jobs:
 
       - name: Fetch GNToolkit (pinned to the addon tag)
         run: |
-          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.3.3.zip
+          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.4.0.zip
           unzip -q gnt.zip
-          mv GNToolkit-0.3.3 gnt
+          mv GNToolkit-0.4.0 gnt
 
       - name: JSON-side status check
         run: python gnt/gnt_check.py NodeGroups --baseline project.blend.gntsync --strict
