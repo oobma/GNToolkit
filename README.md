@@ -293,7 +293,10 @@ repository — never part of the extension zip.
   board"** to reproduce whatever arrangement the node editor shows
   (e.g. after an external node arrangement).
 - **Conflict resolution**: keep the .blend or the JSON version with a
-  single click.
+  single click — or **Merge**: the per-item value merge keeps your local
+  edits, applies the JSON changes on top (the common base is recovered
+  from the JSON file's git history) and reports every item the two sides
+  changed differently; nothing is written in that case.
 - **JSON files visibility**: the Sync panel always shows where each
   group is tracked — the active group's JSON (`Active: name →
   file.json`) and a collapsible list of all tracked JSON files with
@@ -329,9 +332,13 @@ repository — never part of the extension zip.
   repository stays the authority): the Collaboration panel detects the
   repository behind the tracked JSONs and shows its state. The engine is
   bundled with the add-on; nothing extra needs to be installed.
-- **Git Commit…** stages only the tracked JSONs; **Sync Changes** is a
-  fast-forward pull + push — diverged versions are refused, never
-  auto-merged.
+- **Git Commit…** stages only the tracked JSONs; **Sync Changes** pulls,
+  pushes, and when the branch diverged it **merges the tracked JSON
+  files per item** (values, modifier input overrides, materials/worlds)
+  and pushes a real two-parent merge commit. Anything that cannot be
+  decided — a conflicting item, or a file outside the tracked JSONs
+  changed on both sides — aborts the operation with a per-item report
+  and nothing is written; commit your JSONs first (the messages say so).
 - Merge-conflict markers in a JSON are detected and reported; per-group
   and repository history is available. The JSONs are plain files, so the
   repository also works with any external Git tooling — see

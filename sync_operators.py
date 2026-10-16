@@ -1193,18 +1193,33 @@ def handle_git_job_done(kind, payload, result):
     if kind == "sync":
         status = result.get("status")
         detail = result.get("detail", "")
-        if status == "ok":
+        if status in ("ok", "merged"):
             affected = _affected_uids_for_files(
                 payload["repo"], result.get("files", []))
             if affected:
                 for uid in affected:
                     sync_manager.invalidate_cache(uid)
                 sync_manager.check_all_statuses()
+            if status == "merged":
+                _show_status_message(
+                    f"Git sync: merged {len(result.get('files', []))} "
+                    "file(s) with the remote changes and pushed")
+            elif affected:
                 _show_status_message(
                     f"Git sync complete — {len(affected)} group(s) "
                     "refreshed from remote")
             else:
                 _show_status_message("Git sync complete")
+        elif status == "merge_conflict":
+            report = result.get("report")
+            if report:
+                from .sync_ui import _store_merge_report
+                _store_merge_report(bpy.context, report)
+            _show_status_message(
+                f"Git merge: {detail} — see the merge report",
+                duration=10.0)
+        elif status in ("dirty", "merge_blocked"):
+            _show_status_message(detail, duration=10.0)
         elif status == "diverged":
             _show_status_message(
                 "Git: versions diverged — resolve with your Git tooling "
@@ -1252,8 +1267,9 @@ class GN_OT_GitCommit(bpy.types.Operator):
 class GN_OT_GitSync(bpy.types.Operator):
     bl_idname = "gn.git_sync"
     bl_label = "Git Sync"
-    bl_description = ("Bring remote changes (fast-forward only — never an automatic "
-                      "merge) and push local commits")
+    bl_description = ("Bring remote changes in and push local commits; when "
+                      "the branch diverged, the tracked JSON files merge per "
+                      "item (nothing is written if anything conflicts)")
     bl_options = {'REGISTER'}
 
     repo: StringProperty(name="Repository")

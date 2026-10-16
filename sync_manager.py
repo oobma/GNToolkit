@@ -2205,11 +2205,11 @@ class SyncManager:
         base_rev = ""
         for rev in revisions_for_path(repo_root, rel_path,
                                       MERGE_BASE_SEARCH_LIMIT):
-            text = read_blob_at(repo_root, rev, rel_path)
-            if text is None:
+            blob = read_blob_at(repo_root, rev, rel_path)
+            if blob is None:
                 continue
             try:
-                data = json.loads(text.lstrip("\ufeff"))
+                data = json.loads(blob.decode("utf-8-sig"))
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 continue
             entry = package_entry(_ensure_package_shape(data), info)

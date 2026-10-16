@@ -8,7 +8,9 @@ credentials. This module only:
   - reports porcelain state (branch, upstream, ahead/behind, changed
     files), including the default identity for commits,
   - adds + commits ONLY the JSON files the addon tracks (never ``-A``),
-  - syncs with ``pull --ff-only`` + ``push`` (never an automatic merge),
+  - syncs with ``pull --ff-only`` + ``push``; when the branch diverged
+    the facade merges the tracked JSON files itself (see git_integration)
+    and commits the result as a two-parent merge through ``commit_merge``,
   - shows per-file / repository history,
   - starts fetch/pull/push as polled child processes.
 
@@ -66,6 +68,16 @@ def _git(args, cwd, timeout=_TIMEOUT):
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _git_bytes(args, cwd, timeout=_TIMEOUT):
+    """Like ``_git`` but returns raw bytes (file content safe)."""
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.run(
+        _git_argv(args), cwd=cwd, capture_output=True,
+        timeout=timeout, creationflags=creationflags,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
 def invalidate(repo_root=None):
     pass
 
@@ -101,12 +113,14 @@ def _parse_status(out):
                 upstream = up_part.split(" ")[0].strip()
                 if "[ahead" in up_part:
                     try:
-                        ahead = int(up_part.split("[ahead ")[1].split("]")[0].split(",")[0])
+                        ahead = int(up_part.split("[ahead ", 1)[1]
+                                    .split("]")[0].split(",")[0])
                     except (ValueError, IndexError):
                         ahead = 0
-                if "[behind" in up_part:
+                if "behind" in up_part:
                     try:
-                        behind = int(up_part.split("[behind ")[1].split("]")[0].split(",")[0])
+                        behind = int(up_part.split("behind ", 1)[1]
+                                     .split("]")[0].split(",")[0])
                     except (ValueError, IndexError):
                         behind = 0
     changed = []
@@ -164,13 +178,99 @@ def revisions_for_path(repo_root, rel_path, limit=50):
 
 
 def read_blob_at(repo_root, rev, rel_path):
-    """Content of *rel_path* at *rev* (str), or None when absent/failed."""
+    """Content of *rel_path* at *rev* (bytes), or None when absent/failed."""
     if not available():
         return None
-    rc, out, err = _git(["show", f"{rev}:{rel_path}"], repo_root)
+    rc, out, err = _git_bytes(["show", f"{rev}:{rel_path}"], repo_root)
     if rc != 0:
         return None
     return out
+
+
+def upstream_sha(repo_root):
+    """Commit id of the branch upstream ("" when none configured)."""
+    if not available():
+        return ""
+    rc, out, err = _git(["rev-parse", "@{u}"], repo_root)
+    return out.strip() if rc == 0 else ""
+
+
+def merge_base(repo_root):
+    """Best common ancestor of HEAD and its upstream ("" when none)."""
+    if not available():
+        return ""
+    rc, out, err = _git(["merge-base", "HEAD", "@{u}"], repo_root)
+    return out.strip() if rc == 0 else ""
+
+
+def staged_names(repo_root):
+    """Repo-relative paths with staged (index) changes."""
+    if not available():
+        return []
+    rc, out, err = _git(["diff", "--cached", "--name-only", "-z"],
+                        repo_root)
+    if rc != 0:
+        return []
+    return [name for name in out.split("\x00") if name]
+
+
+def commit_merge(repo_root, message, rel_paths, second_parent):
+    """Commit the staged merge result with TWO parents (no MERGE_HEAD).
+
+    Uses plumbing (add -A, write-tree, commit-tree, update-ref) so no
+    hook or merge state is involved; the branch ref only moves when the
+    old head still matches (no races).  Returns (ok, detail).
+    """
+    if not available():
+        return False, ("Git not found — install Git only for Collaboration, "
+                       "then restart Blender")
+    rel = list(rel_paths)
+    if rel:
+        rc, out, err = _git(["add", "-A", "--"] + rel, repo_root)
+        if rc != 0:
+            return False, (err or out).strip() or "git add failed"
+    old_head = head_sha(repo_root)
+    if not old_head:
+        return False, "no HEAD in this repository"
+    rc, tree, err = _git(["write-tree"], repo_root)
+    if rc != 0:
+        return False, (err or "").strip() or "git write-tree failed"
+    rc, out, err = _git(["commit-tree", tree.strip(), "-p", old_head,
+                         "-p", second_parent, "-m", message], repo_root)
+    if rc != 0:
+        return False, (err or out).strip() or "git commit-tree failed"
+    new_commit = out.strip()
+    rc, out, err = _git(["update-ref", "-m", message, "HEAD", new_commit,
+                         old_head], repo_root)
+    if rc != 0:
+        return False, (err or out).strip() or "git update-ref failed"
+    return True, new_commit
+
+
+def restore_paths(repo_root, blobs):
+    """Best-effort restore after a failed merge: unstage and rewrite.
+
+    ``blobs`` maps repo-relative paths to their pre-merge bytes (None =
+    the path must not exist).  Never raises.
+    """
+    if not available():
+        return
+    rel = sorted(blobs)
+    try:
+        if rel:
+            _git(["reset", "-q", "--"] + rel, repo_root)
+    except Exception:
+        pass
+    for rel_path, blob in blobs.items():
+        abs_path = os.path.join(repo_root, rel_path.replace("/", os.sep))
+        try:
+            if blob is None:
+                os.remove(abs_path)
+            else:
+                with open(abs_path, "wb") as handle:
+                    handle.write(blob)
+        except OSError:
+            pass
 
 
 def commit(repo_root, message, paths):
@@ -429,6 +529,31 @@ def head_task(repo_root):
     return _MapTask(
         _CallTask(lambda: _git(["rev-parse", "HEAD"], repo_root)),
         lambda result: result[1].strip() if result[0] == 0 else "")
+
+
+def upstream_sha_task(repo_root):
+    return _CallTask(lambda: upstream_sha(repo_root))
+
+
+def merge_base_task(repo_root):
+    return _CallTask(lambda: merge_base(repo_root))
+
+
+def staged_names_task(repo_root):
+    return _CallTask(lambda: staged_names(repo_root))
+
+
+def read_blob_task(repo_root, rev, rel_path):
+    return _CallTask(lambda: read_blob_at(repo_root, rev, rel_path))
+
+
+def commit_merge_task(repo_root, message, rel_paths, second_parent):
+    return _CallTask(lambda: commit_merge(repo_root, message, rel_paths,
+                                          second_parent))
+
+
+def restore_paths_task(repo_root, blobs):
+    return _CallTask(lambda: restore_paths(repo_root, blobs))
 
 
 def diff_names_task(repo_root, sha_a, sha_b):

@@ -280,27 +280,29 @@ issues.
 
 ---
 
-## Additional workflow 2 — Commit with Review
+## Additional workflow 2 — Resolving a conflict (Keep JSON / Keep Blend / Merge)
 
 **What to do**
 
-1. Edit one or more groups locally in the .blend.
-2. Click **Commit with Review…** in the Sync panel.
-3. For each listed group choose: **Keep Blend** (commit the .blend
-   version into the JSON), **Keep JSON** (pull the JSON version into the
-   .blend) or **Skip** (leave it untouched). Conflicts default to Skip.
-4. Click OK to apply.
+1. The Changes list shows a row as **Conflict** when the group changed
+   in the .blend *and* in the JSON since the last sync.
+2. Choose one of the row actions (or the buttons in the Conflicts box):
+   - **Keep JSON** (↩): discard the local edits and take the JSON
+     version into the .blend.
+   - **Mark + Save** (＋ then *Save marked to JSON*): keep the .blend
+     version and overwrite the JSON.
+   - **Merge** (merge icon): decide per item — your local edits are
+     kept and the JSON changes applied on top; the common base is
+     recovered from the JSON file's git history. A clean merge writes
+     the merged entry and rebuilds the group (Synced); if any item
+     changed differently on both sides, **nothing is written** and the
+     merge report box lists every item (base / ours / theirs).
 
 **What should happen**
 
-- Only locally edited groups appear in the dialog — unedited groups are
-  ignored.
-- Untracked dependency children appear as extra rows (default: **track**)
-  so they are filed and committed together with their parent — the plain
-  **Commit** buttons only warn about them and never write implicitly.
-- The report shows the applied decisions
-  ("Committed N, pulled M, skipped K").
-- Groups with unedited content stay untouched and synced.
+- The row leaves the Changes list once resolved.
+- Merge requires the JSON file to be committed in a git repository and
+  covers Geometry Nodes groups in v1; otherwise the action reports why.
 
 ---
 
@@ -373,8 +375,11 @@ file and modifiers in `Modifiers/*.json`.
    - **Git Commit…** — message dialog; stages only the tracked JSONs
      that changed and commits locally.
    - **Git Sync** — `pull --ff-only` + `push`. Remote changes arrive
-     only when your branch is simply behind; if versions diverged, it
-     refuses with a clear message.
+     only when your branch is simply behind; if versions diverged, the
+     tracked JSON files merge per item (values, modifier inputs,
+     materials/worlds) into a two-parent merge commit and are pushed —
+     unless anything conflicts, in which case nothing is written and the
+     per-item report lands in the merge report box.
 3. Use **Pull from JSON** (Sync panel) after a sync to apply changed
    JSONs to the .blend.
 
@@ -383,7 +388,9 @@ file and modifiers in `Modifiers/*.json`.
 - Git Commit reports the number of committed files; the repository row
   returns to `clean`.
 - Git Sync on a behind branch fast-forwards and pushes; on divergent
-  branches it refuses without touching any file.
+  branches it merges the tracked JSONs and pushes the merge (or refuses
+  without touching any file when an item or a non-tracked file
+  conflicts).
 - A JSON with merge-conflict markers is listed in the panel (and
   reported when tracking/importing); after resolving it with your git
   client, **Pull from JSON** applies the resolved content.

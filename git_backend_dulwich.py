@@ -372,7 +372,7 @@ def revisions_for_path(repo_root, rel_path, limit=50):
 
 
 def read_blob_at(repo_root, rev, rel_path):
-    """Content of *rel_path* at *rev* (str), or None when absent/failed."""
+    """Content of *rel_path* at *rev* (bytes), or None when absent/failed."""
     if not available():
         return None
     try:
@@ -386,9 +386,163 @@ def read_blob_at(repo_root, rev, rel_path):
                 # releases; named entries expose .sha.
                 sha = entry[-1] if isinstance(entry, tuple) else entry.sha
                 node = repo.object_store[sha]
-            return node.data.decode("utf-8", "replace")
+            return node.data
     except Exception:
         return None
+
+
+def upstream_sha(repo_root):
+    """Commit id of the branch upstream ("" when none configured)."""
+    if not available():
+        return ""
+    try:
+        with _repo(repo_root) as repo:
+            remote_sha = _upstream_tip(repo)
+            return remote_sha.decode() if remote_sha else ""
+    except Exception:
+        return ""
+
+
+def _upstream_tip(repo):
+    """Bytes sha of the remote-tracking tip of the active branch."""
+    try:
+        branch = _porcelain().active_branch(repo).decode("utf-8", "replace")
+    except (KeyError, IndexError, ValueError):
+        return None
+    try:
+        config = repo.get_config_stack()
+        key = (b"branch", branch.encode("utf-8"))
+        remote = config.get(key, b"remote").decode("utf-8", "replace")
+        merge = config.get(key, b"merge").decode("utf-8", "replace")
+    except (KeyError, UnicodeDecodeError, ValueError):
+        return None
+    short = merge[len("refs/heads/"):] if merge.startswith("refs/heads/") \
+        else merge
+    try:
+        return repo.refs[f"refs/remotes/{remote}/{short}".encode("utf-8")]
+    except KeyError:
+        return None
+
+
+def merge_base(repo_root):
+    """Best common ancestor of HEAD and its upstream ("" when none)."""
+    if not available():
+        return ""
+    try:
+        with _repo(repo_root) as repo:
+            upstream_sha_bytes = _upstream_tip(repo)
+            if not upstream_sha_bytes:
+                return ""
+            from dulwich.graph import find_merge_base
+            try:
+                local = repo.head()
+            except KeyError:
+                return ""
+            bases = find_merge_base(repo, [local, upstream_sha_bytes])
+            return bases[0].decode() if bases else ""
+    except Exception:
+        return ""
+
+
+def staged_names(repo_root):
+    """Repo-relative paths with staged (index) changes."""
+    if not available():
+        return []
+    try:
+        with _repo(repo_root) as repo:
+            result = _porcelain().status(repo)
+            staged = result.staged
+            paths = []
+            if isinstance(staged, dict):
+                for group in staged.values():
+                    paths.extend(group or [])
+            else:
+                paths.extend(staged or [])
+            return sorted(_fs_rel(path) if isinstance(path, bytes) else path
+                          for path in paths)
+    except Exception:
+        return []
+
+
+def commit_merge(repo_root, message, rel_paths, second_parent):
+    """Commit the staged merge result with TWO parents (no MERGE_HEAD).
+
+    Returns (ok, detail); mirrors the plain ``commit`` failure dance.
+    """
+    if not available():
+        return False, "Embedded Git engine unavailable"
+    porcelain = _porcelain()
+    try:
+        with _repo(repo_root) as repo:
+            try:
+                old_head = repo.head().decode()
+            except KeyError:
+                old_head = ""
+            adds = []
+            removals = []
+            for rel in rel_paths:
+                abs_path = os.path.join(repo_root, rel.replace("/", os.sep))
+                (adds if os.path.isfile(abs_path) else removals).append(rel)
+            if adds:
+                porcelain.add(repo, paths=adds)
+            if removals:
+                porcelain.remove(repo, paths=removals)
+            identity = _identity(repo)
+            try:
+                sha = repo.get_worktree().commit(
+                    message=message.encode("utf-8"),
+                    author=identity,
+                    committer=identity,
+                    merge_heads=[second_parent.encode()],
+                    no_verify=True,
+                    config=repo.get_config_stack())
+            except Exception as exc:
+                try:
+                    new_head = repo.head().decode()
+                except KeyError:
+                    new_head = ""
+                if not new_head or new_head == old_head:
+                    return False, _friendly_error(exc)
+                sha = new_head.encode()
+            try:
+                branch = porcelain.active_branch(repo).decode("utf-8",
+                                                              "replace")
+            except Exception:
+                branch = "detached"
+    except Exception as exc:
+        return False, _friendly_error(exc)
+    invalidate(repo_root)
+    subject = message.strip().splitlines()[0] if message.strip() else ""
+    return True, f"[{branch} {sha.decode()[:7]}] {subject}"
+
+
+def restore_paths(repo_root, blobs):
+    """Best-effort restore after a failed merge: unstage and rewrite.
+
+    ``blobs`` maps repo-relative paths to their pre-merge bytes (None =
+    the path must not exist).  Never raises.
+    """
+    if not available():
+        return
+    try:
+        with _repo(repo_root) as repo:
+            try:
+                _porcelain().restore(repo, paths=sorted(blobs), source=None,
+                                     staged=True, worktree=False)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    for rel_path, blob in blobs.items():
+        abs_path = os.path.join(repo_root, rel_path.replace("/", os.sep))
+        try:
+            if blob is None:
+                os.remove(abs_path)
+            else:
+                with open(abs_path, "wb") as handle:
+                    handle.write(blob)
+        except OSError:
+            pass
 
 
 class _Task:
@@ -639,6 +793,31 @@ def head_task(repo_root):
 
 def diff_names_task(repo_root, sha_a, sha_b):
     return _CallTask(lambda: diff_names(repo_root, sha_a, sha_b))
+
+
+def upstream_sha_task(repo_root):
+    return _CallTask(lambda: upstream_sha(repo_root))
+
+
+def merge_base_task(repo_root):
+    return _CallTask(lambda: merge_base(repo_root))
+
+
+def staged_names_task(repo_root):
+    return _CallTask(lambda: staged_names(repo_root))
+
+
+def read_blob_task(repo_root, rev, rel_path):
+    return _CallTask(lambda: read_blob_at(repo_root, rev, rel_path))
+
+
+def commit_merge_task(repo_root, message, rel_paths, second_parent):
+    return _CallTask(lambda: commit_merge(repo_root, message, rel_paths,
+                                          second_parent))
+
+
+def restore_paths_task(repo_root, blobs):
+    return _CallTask(lambda: restore_paths(repo_root, blobs))
 
 
 def fetch_task(repo_root, timeout=None):

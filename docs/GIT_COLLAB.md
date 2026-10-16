@@ -97,6 +97,10 @@ git clone https://github.com/<user>/<repo>.git
    ("has merge conflicts — resolve them with your git client"); resolve
    the file with your client (or `git checkout --theirs/--ours`) and
    then **Pull from JSON** again. The addon never merges JSON text.
+   (Editing the *values* of the same group on both sides is a different
+   case: when the addon itself reports the group as **Conflict** — local
+   .blend edits against changed JSON — the **Merge** action resolves it
+   per item; see “Merging conflicted groups” below.)
 
 ## Collaboration panel (thin git transport)
 
@@ -109,12 +113,18 @@ on the PATH.
   - **Git Commit…** — opens a dialog for the commit message; stages
     **only the tracked JSON files that changed** (never `git add -A`,
     never the .blend) and commits locally.
-  - **Git Sync** — `git pull --ff-only` then `git push`. Fast-forward
-    only: remote changes arrive only when the local branch is simply
-    behind (no merge is ever attempted). When local and remote
-    versions diverged, the sync refuses and reports "Versions diverged
-    — resolve with your git client". After a clean sync the sync status
-    cache is refreshed so a changed JSON shows up as "Changed in JSON"
+  - **Git Sync** — `git pull --ff-only` then `git push`. When the local
+    branch is simply behind, the remote changes arrive; when local and
+    remote **diverged**, the tracked JSON files are merged per item
+    (values, modifier inputs, materials/worlds — `ours` = your HEAD,
+    `theirs` = the upstream branch, `base` = their merge-base), written,
+    committed as a real two-parent merge commit and pushed. Any item
+    that cannot be decided aborts the whole operation with a per-item
+    report in the merge report box and **nothing is written**; files that
+    are not tracked JSON changed on both sides also abort (they are never
+    merged blindly). Tracked files must be committed first — the refusal
+    message says so. After a clean sync the sync status cache is
+    refreshed so a changed JSON shows up as "Changed in JSON"
     immediately. When the pull brought changes, the tracked groups of
     the updated files are re-checked automatically — no manual
     **Refresh Status** needed.
@@ -150,8 +160,36 @@ on the PATH.
 ### Notes and limits
 
 - The panel is a transport, not a replacement for a Git client: staging
-  non-addon files, branches, merges, rebases, PRs and conflict
-  resolution happen in your client.
+  non-addon files, branches, rebases, PRs and conflict resolution happen
+  in your client.
 - The .blend is never committed or pushed by the addon.
 - `Git Commit…` commits to the **local** repository; sharing happens
   with `Git Sync` (push) or your client.
+
+## Merging conflicted groups (Sync panel)
+
+When a tracked group changed on **both sides** — you edited the group in
+the .blend and the JSON changed (a pull, a checkout, another tool) — the
+row shows as **Conflict** and offers three exits:
+
+- **Merge** — the add-on decides the file per item: your local edits are
+  kept and the JSON changes are applied on top; the common base is
+  recovered from the JSON file's git history (the newest revision whose
+  content hash matches the recorded baseline — nothing new is stored).
+  A clean merge writes the merged entry into its package and rebuilds
+  the group, ending Synced. If any item changed differently on both
+  sides (or both restructured the group differently), **nothing is
+  written** and the merge report box lists every item with its
+  base/ours/theirs values.
+- **Keep JSON** / **Keep Blend** — the one-sided resolutions, unchanged.
+
+`git merge-base`/history is required: merging needs the JSON file to be
+committed in a git repository. Without a repository (or without the
+baseline revision in history) the Merge action reports why.
+
+v1 covers Geometry Nodes groups; shader and material/world entries
+report "not covered by merge v1". Merges are values only — socket
+defaults, node labels/properties, custom properties, tree properties;
+the structure is adopted whole from the side that changed it and never
+guessed. Renames are not detected (they read as delete + add), and
+animated groups are flagged but not merged specially.

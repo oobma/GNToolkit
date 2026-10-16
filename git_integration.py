@@ -26,13 +26,19 @@ anywhere in this module.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+
+from .file_utils import write_file_bytes, write_json_file
+from .merge import merge_package_dicts
 
 _log = logging.getLogger("GNToolkit.git")
 
 _BACKEND_ENV = "GNT_GIT_BACKEND"
 _VALID_BACKENDS = ("auto", "dulwich", "git")
+
+_MERGE_COMMIT_MESSAGE = "Merge remote changes into node JSON files (GNToolkit)"
 
 _available_cache = None
 _backend_cache = None
@@ -452,7 +458,10 @@ def _job_commit(payload):
 
 
 def _job_sync(payload):
-    """pull --ff-only then push, both through backend tasks."""
+    """pull --ff-only then push; on a real divergence, merge the tracked
+    JSON files semantically (values per item) into a two-parent merge
+    commit and push it (F4, spec 2026-10-16).  Nothing is written when
+    anything conflicts."""
     repo = payload["repo"]
     network_timeout = payload.get("network_timeout")
     backend = _backend()
@@ -471,6 +480,10 @@ def _job_sync(payload):
     head_before = yield ("task", backend.head_task(repo))
     pull = yield ("task", backend.pull_ff_task(repo, timeout=network_timeout))
     if pull.get("status") != "ok":
+        if pull.get("status") == "diverged":
+            result = yield from _merge_remote_changes(repo, payload, backend)
+            _drop_cache()
+            return result
         _drop_cache()
         return {"status": pull.get("status", "error"),
                 "detail": pull.get("detail", ""), "files": []}
@@ -490,6 +503,167 @@ def _job_sync(payload):
     return {"status": "ok",
             "detail": push.get("detail") or pull.get("detail") or "",
             "files": files}
+
+
+def _json_load_bytes(blob):
+    if blob is None:
+        return None
+    return json.loads(blob.decode("utf-8-sig"))
+
+
+def _file_merge_report(rel, report):
+    """Report dict for the panel (same shape the in-addon merge stores)."""
+    return {
+        "name": rel,
+        "status": "conflicted",
+        "summary": "%d conflict(s)" % len(report.get("conflicts") or []),
+        "applied": list(report.get("applied") or []),
+        "conflicts": list(report.get("conflicts") or []),
+        "notices": list(report.get("notices") or []),
+    }
+
+
+def _merge_remote_changes(repo, payload, backend):
+    """Generator: semantic continuation of a diverged sync (F4).
+
+    ours = HEAD, theirs = upstream, base = merge-base.  Tracked JSON
+    files changed on both sides merge per item; any other file changed on
+    both sides aborts.  A clean result is written, staged and committed
+    as a real two-parent merge commit, then pushed.
+    """
+    tracked_paths = repos_for_tracked(payload.get("metadata"),
+                                      payload.get("blend_dir")).get(repo, [])
+    tracked_rels = {os.path.relpath(p, repo).replace(os.sep, "/")
+                    for p in tracked_paths}
+    tracked_norm = {os.path.normcase(rel): rel for rel in tracked_rels}
+    if not tracked_rels:
+        return {"status": "diverged",
+                "detail": "no tracked JSON files in this repository - "
+                          "resolve with your Git client",
+                "files": []}
+
+    st = yield ("task", backend.status_task(repo, tracked_paths))
+    if not st.get("ok"):
+        return {"status": "error",
+                "detail": st.get("error", "status failed"), "files": []}
+    if not (st.get("ahead") and st.get("behind")):
+        return {"status": "diverged",
+                "detail": "the pull did not fast-forward and the branch is "
+                          "not diverged - check the repository state",
+                "files": []}
+    changed_norm = {os.path.normcase(p) for p in st.get("changed") or []}
+    if set(tracked_norm) & changed_norm:
+        return {"status": "dirty",
+                "detail": "commit your JSON changes first (Git Commit), "
+                          "then sync again",
+                "files": []}
+    staged = yield ("task", backend.staged_names_task(repo))
+    if staged:
+        return {"status": "dirty",
+                "detail": "the repository index has staged changes - "
+                          "commit or unstage them first",
+                "files": []}
+
+    head = yield ("task", backend.head_task(repo))
+    upstream = yield ("task", backend.upstream_sha_task(repo))
+    base = yield ("task", backend.merge_base_task(repo))
+    if not head or not upstream:
+        return {"status": "error",
+                "detail": "no upstream branch - set it with your Git client",
+                "files": []}
+    if not base:
+        return {"status": "error",
+                "detail": "no common ancestor with the upstream branch",
+                "files": []}
+
+    ours_changed = yield ("task", backend.diff_names_task(repo, base, head))
+    theirs_changed = yield ("task", backend.diff_names_task(repo, base,
+                                                            upstream))
+    both = sorted(set(ours_changed) & set(theirs_changed))
+    theirs_only = sorted(set(theirs_changed) - set(ours_changed))
+
+    merged_files = {}
+    plan_writes = {}
+    plan_deletes = set()
+    for rel in theirs_only:
+        blob = yield ("task", backend.read_blob_task(repo, upstream, rel))
+        if blob is None:
+            plan_deletes.add(rel)
+        else:
+            plan_writes[rel] = blob
+    for rel in both:
+        if os.path.normcase(rel) not in tracked_norm:
+            return {"status": "merge_blocked",
+                    "detail": "file '%s' changed on both sides; only tracked "
+                              "JSON files can merge - resolve it with your "
+                              "Git client" % rel,
+                    "files": []}
+        ours_blob = yield ("task", backend.read_blob_task(repo, head, rel))
+        theirs_blob = yield ("task", backend.read_blob_task(repo, upstream,
+                                                            rel))
+        base_blob = yield ("task", backend.read_blob_task(repo, base, rel))
+        try:
+            ours_data = _json_load_bytes(ours_blob)
+            theirs_data = _json_load_bytes(theirs_blob)
+            base_data = _json_load_bytes(base_blob)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return {"status": "merge_blocked",
+                    "detail": "cannot read '%s': %s" % (rel, exc),
+                    "files": []}
+        report = merge_package_dicts(base_data, ours_data, theirs_data)
+        if not report["ok"]:
+            return {"status": "merge_conflict",
+                    "detail": "merge conflicts in '%s' - nothing was written"
+                              % rel,
+                    "files": [], "report": _file_merge_report(rel, report)}
+        merged_files[rel] = report["merged"]
+
+    touched = sorted(set(merged_files) | set(plan_writes) | plan_deletes)
+    originals = {}
+    for rel in touched:
+        abs_path = os.path.join(repo, rel.replace("/", os.sep))
+        try:
+            with open(abs_path, "rb") as handle:
+                originals[rel] = handle.read()
+        except OSError:
+            originals[rel] = None
+    try:
+        for rel, merged in merged_files.items():
+            write_json_file(os.path.join(repo, rel.replace("/", os.sep)),
+                            merged)
+        for rel, blob in plan_writes.items():
+            write_file_bytes(os.path.join(repo, rel.replace("/", os.sep)),
+                             blob)
+        for rel in plan_deletes:
+            try:
+                os.remove(os.path.join(repo, rel.replace("/", os.sep)))
+            except OSError:
+                pass
+    except OSError as exc:
+        yield ("task", backend.restore_paths_task(repo, originals))
+        return {"status": "error",
+                "detail": "the merge could not write its files: %s" % exc,
+                "files": []}
+
+    ok, detail = yield ("task", backend.commit_merge_task(
+        repo, _MERGE_COMMIT_MESSAGE, touched, upstream))
+    if not ok:
+        yield ("task", backend.restore_paths_task(repo, originals))
+        return {"status": "error",
+                "detail": "the merge commit failed: %s" % detail,
+                "files": []}
+    push = yield ("task", backend.push_task(repo,
+                                            timeout=payload.get(
+                                                "network_timeout")))
+    if push.get("status") != "ok":
+        return {"status": "error",
+                "detail": "the merge was committed locally, but the push "
+                          "failed: %s" % push.get("detail", ""),
+                "files": touched}
+    return {"status": "merged",
+            "detail": "merged %d file(s) with the remote changes"
+                      % len(touched),
+            "files": touched}
 
 
 def _run_job(kind, payload):
@@ -594,7 +768,7 @@ def advance_git_jobs():
 
 def submit_git_job(kind, **payload):
     """Queue a job; ``advance_git_jobs`` runs it on the main thread."""
-    if kind in ("status", "commit") and "blend_dir" not in payload:
+    if kind in ("status", "commit", "sync") and "blend_dir" not in payload:
         blend_dir, metadata = _repo_inputs()
         payload["blend_dir"] = blend_dir
         payload["metadata"] = metadata

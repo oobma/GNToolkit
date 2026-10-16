@@ -6,6 +6,21 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **A diverged Sync merges the tracked JSON files instead of stopping.**
+  When "Git Sync" cannot fast-forward because local and remote commits
+  both moved, the tracked package files are now merged 3-way per item:
+  values (socket defaults, labels, properties, custom properties), the
+  modifiers task list per task with its inputs merged per key (local
+  override values survive upstream edits), and materials/worlds/unknown
+  sections per entry. `ours` is the local HEAD, `theirs` the upstream
+  branch, `base` their merge-base; the result is written, committed as a
+  real two-parent merge commit and pushed. Nothing is written at all
+  when any item conflicts (the per-item report lands in the merge report
+  box) — and files that are not tracked JSON changed on both sides abort
+  the operation so they are never merged blindly. Tracked files must be
+  committed first (the messages say so). Like the in-addon conflict
+  merge, v1 covers Geometry Nodes groups; other tree types are adopted
+  whole when only one side changed them.
 - **Conflicted groups merge in the add-on, per item.** A conflict row
   (Changes list or the Conflicts box) now offers **Merge**: the pure
   merge core decides the .blend edits against the JSON changes with the
@@ -78,6 +93,13 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Repositories that are both ahead and behind now report it.** The
+  "Git status" parser only understood a leading `behind` inside the
+  tracking bracket (`[behind N, ahead M]`); with git's usual
+  `[ahead N, behind M]` order the behind count silently stayed 0, so a
+  diverged branch looked merely ahead in the panel. Both orders parse
+  now — this is also what lets the Sync button detect a diverged branch
+  and start the semantic merge.
 - **Canonicalizing no longer modifies the caller's data.** Folding a
   variant socket class (e.g. `NodeSocketFloatAngle`) into its base class
   plus subtype/dimensions wrote the folded properties into the nested

@@ -187,3 +187,22 @@ def write_json_file(json_path, data, dump_args=None):
     except Exception:
         _remove_quietly(tmp_path)
         raise
+
+
+def write_file_bytes(path, data):
+    """Write raw *data* (bytes) to *path*, atomically (temp + replace)."""
+    directory = os.path.dirname(os.path.abspath(path))
+    tmp_path = None
+    try:
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=os.path.basename(path) + ".", suffix=".tmp",
+            dir=directory,
+        )
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp_path, path)
+        tmp_path = None
+    except Exception:
+        _remove_quietly(tmp_path)
+        raise
