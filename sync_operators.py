@@ -558,6 +558,8 @@ def _change_rows() -> dict:
             "saveable": status in saveable,
             "pullable": status in pullable,
             "discardable": status in discardable,
+            "mergeable": (status == SyncStatus.CONFLICT
+                          and info.get("kind", "group") == "group"),
             "staged": sync_manager.is_staged(uid),
             "animated": bool(tree is not None and tree_has_animation(tree)),
         })
@@ -971,6 +973,12 @@ class GN_OT_SyncCheck(bpy.types.Operator):
         if sync_manager.check_busy():
             self.report({'WARNING'}, "Status check already running")
             return {'CANCELLED'}
+        state = getattr(context.scene, "gnt_merge_state", None)
+        if state is not None and state.group_name:
+            state.group_name = ""
+            state.status = ""
+            state.summary = ""
+            state.items.clear()
         total = sync_manager.start_check_all()
         if not total:
             self.report({'INFO'}, "No tracked groups")

@@ -238,6 +238,34 @@ def git_log(repo_root, rel_path=None, count=10):
     return backend.log(repo_root, rel_path, count)
 
 
+def revisions_for_path(repo_root, rel_path, limit=50):
+    """Commit ids that touched *rel_path*, newest first (bounded)."""
+    backend = _backend()
+    if backend is None:
+        return []
+    fn = getattr(backend, "revisions_for_path", None)
+    if fn is None:
+        return []
+    try:
+        return fn(repo_root, rel_path, limit)
+    except Exception:
+        return []
+
+
+def read_blob_at(repo_root, rev, rel_path):
+    """Content of *rel_path* at *rev*, or None when absent/unreadable."""
+    backend = _backend()
+    if backend is None:
+        return None
+    fn = getattr(backend, "read_blob_at", None)
+    if fn is None:
+        return None
+    try:
+        return fn(repo_root, rev, rel_path)
+    except Exception:
+        return None
+
+
 def git_commit(repo_root, message, paths):
     backend = _backend()
     if backend is None:

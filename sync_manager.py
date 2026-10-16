@@ -40,6 +40,7 @@ from .hash_utils import (
 )
 from .importer import (import_node_tree_recursive, import_embedded_entry,
                        merge_derived_groups)
+from .merge import merge_group_entries
 from .serializer import (serialize_node_tree, serialize_embedded_entry,
                          canonical_hash_from_embedded)
 from .socket_utils import custom_inner_tree_names, get_tree_dependencies
@@ -87,6 +88,8 @@ _EMBEDDED_COLLECTIONS = {
     "material": "materials",
     "world": "worlds",
 }
+
+MERGE_BASE_SEARCH_LIMIT = 50
 
 
 def entry_kind(info) -> str:
@@ -2136,6 +2139,129 @@ class SyncManager:
         if keep == "json":
             return self.import_from_json(sync_uuid)
         return None
+
+    def merge_conflict(self, sync_uuid: str) -> dict:
+        """Resolve a CONFLICT by merging values per item (spec 2026-10-16).
+
+        Sides: ours = the live .blend group, theirs = the JSON entry on
+        disk, base = the entry recovered from the JSON file's git history
+        (the newest revision whose canonical hash matches the recorded
+        baseline hash).  A clean merge writes the merged entry back into
+        the package and rebuilds the group in the .blend; conflicts or an
+        unrecoverable base change nothing and come back as a report.
+        Never raises; every outcome is a status in the returned dict.
+        """
+        info = get_tracked_group(self.metadata, sync_uuid)
+        if info is None:
+            return {"status": "unavailable", "name": "",
+                    "reason": "this group is not tracked"}
+        name = info.get("blend_name", "")
+        if entry_kind(info) != "group":
+            return {"status": "unsupported", "name": name,
+                    "notices": ["merge v1 covers tracked node groups only "
+                                "(%s entries are not covered)"
+                                % entry_kind(info)],
+                    "conflicts": [], "applied": []}
+        tree = resolve_entry_tree(sync_uuid, info)
+        if tree is None:
+            return {"status": "unavailable", "name": name,
+                    "reason": "the group is not in the .blend (orphan)"}
+        if getattr(tree, "bl_idname", "") != "GeometryNodeTree":
+            return {"status": "unsupported", "name": name,
+                    "notices": ["tree type '%s' is not covered by merge v1 "
+                                "(Geometry Nodes only)"
+                                % getattr(tree, "bl_idname", "?")],
+                    "conflicts": [], "applied": []}
+        json_path = resolve_json_path(info.get("json_path", ""),
+                                      self._blend_dir())
+        if not json_path or not os.path.isfile(json_path):
+            return {"status": "unavailable", "name": name,
+                    "reason": "the JSON file was not found"}
+
+        last_json_hash = info.get("last_json_hash", "")
+        if not last_json_hash:
+            return {"status": "no_base", "name": name,
+                    "reason": "no recorded baseline hash to look up in git"}
+
+        from .git_integration import (find_git_repo, read_blob_at,
+                                      revisions_for_path)
+        repo_root = find_git_repo(json_path)
+        if not repo_root:
+            return {"status": "no_base", "name": name,
+                    "reason": "the JSON file is not in a git repository - "
+                              "the merge base comes from git history"}
+
+        json_data = read_json_tolerant(json_path)
+        theirs = (package_entry(_ensure_package_shape(json_data), info)
+                  if json_data is not None else None)
+        if theirs is None:
+            return {"status": "unavailable", "name": name,
+                    "reason": "the JSON file has no entry for this group"}
+
+        ours = serialize_node_tree(tree)
+
+        rel_path = os.path.relpath(json_path, repo_root).replace(os.sep, "/")
+        base = None
+        base_rev = ""
+        for rev in revisions_for_path(repo_root, rel_path,
+                                      MERGE_BASE_SEARCH_LIMIT):
+            text = read_blob_at(repo_root, rev, rel_path)
+            if text is None:
+                continue
+            try:
+                data = json.loads(text.lstrip("\ufeff"))
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                continue
+            entry = package_entry(_ensure_package_shape(data), info)
+            if entry is None:
+                continue
+            if canonical_hash_from_json_data(entry) == last_json_hash:
+                base, base_rev = entry, rev
+                break
+        if base is None:
+            return {"status": "no_base", "name": name,
+                    "reason": "the baseline content was not found in the "
+                              "JSON file's git history - commit the JSON "
+                              "with each save so merges can find it"}
+
+        result = merge_group_entries(base, ours, theirs, name=name)
+        report = {
+            "status": result["status"],
+            "name": name,
+            "base_rev": base_rev,
+            "adopted_structure": result.get("adopted_structure"),
+            "merged_hash": result.get("merged_hash"),
+            "applied": list(result.get("applied") or []),
+            "conflicts": list(result.get("conflicts") or []),
+            "notices": list(result.get("notices") or []),
+        }
+        if result["status"] != "merged":
+            return report
+
+        lock = JsonLock(json_path)
+        if not lock.acquire():
+            report["status"] = "unavailable"
+            report["reason"] = "the JSON file is locked by another session"
+            return report
+        try:
+            fresh = read_json_tolerant(json_path)
+            if fresh is None:
+                report["status"] = "unavailable"
+                report["reason"] = "could not re-read the JSON file"
+                return report
+            fresh = _ensure_package_shape(fresh)
+            package_put(fresh, info, result["merged"])
+            write_json_file(json_path, fresh)
+        finally:
+            lock.release()
+
+        tracker = self.import_from_json(sync_uuid)
+        if tracker is not None and tracker.error_count:
+            report["notices"].append(
+                "the merged JSON was written but the .blend rebuild "
+                "reported %d error(s)" % tracker.error_count)
+        self._dirty = True
+        return report
 
     # --- Cache invalidation ------------------------------------------------
 

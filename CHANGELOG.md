@@ -6,6 +6,19 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Conflicted groups merge in the add-on, per item.** A conflict row
+  (Changes list or the Conflicts box) now offers **Merge**: the pure
+  merge core decides the .blend edits against the JSON changes with the
+  common base recovered from the JSON file's git history (the newest
+  revision whose entry hash matches the recorded baseline — no new
+  storage). A clean merge writes the merged entry into its package and
+  rebuilds the group, so local edits survive an upstream update
+  (the values-only P4 case) and the group ends Synced. Anything that
+  cannot be merged is reported per item (base/ours/theirs) in a merge
+  report box and **nothing is written** — Keep JSON / Keep Blend remain
+  the manual exits. v1 covers Geometry Nodes groups; shader/material
+  entries report as not covered. In-addon merge now ships in both
+  extension builds (`merge.py` entered the file list).
 - **Semantic 3-way merge preview (`gnt_check --merge BASE OURS THEIRS`).**
   The headless checker previews the merge of the three sides on values
   only — socket defaults, node labels/properties, custom properties and

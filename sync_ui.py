@@ -239,6 +239,10 @@ def _draw_changes_list(layout, context) -> None:
             row.label(text="", icon=_layout_icon('STATUS_WARNING', 'WARNING'))
         actions = row.row(align=True)
         actions.alignment = 'RIGHT'
+        if r.get("mergeable"):
+            op = actions.operator("gn.sync_merge_conflict", text="",
+                                  icon='AUTOMERGE_ON')
+            op.sync_uuid = r["uid"]
         if r["saveable"]:
             if r["staged"]:
                 op = actions.operator("gn.sync_change_unmark", text="",
@@ -274,6 +278,37 @@ def _draw_changes_list(layout, context) -> None:
     if ignored:
         box.label(text=f"{ignored} ignored group(s) hidden — manage them in "
                        "Sync Issues", icon='HIDE_ON')
+
+
+def _draw_merge_report(layout, context) -> None:
+    """Draw the last in-addon merge outcome (Scene.gnt_merge_state)."""
+    state = getattr(context.scene, "gnt_merge_state", None)
+    if state is None or not state.group_name:
+        return
+    layout.separator()
+    box = layout.box()
+    head = box.row(align=True)
+    status = state.status
+    icon = 'CHECKMARK' if status == "merged" else 'ERROR'
+    head.label(text=f"Merge report: {state.group_name}", icon=icon)
+    head.label(text=status)
+    head.operator("gn.sync_merge_report_clear", text="", icon='X')
+    if state.summary:
+        box.label(text=state.summary, icon='INFO')
+    total = len(state.items)
+    for index, item in enumerate(state.items):
+        if index >= 20:
+            box.label(text=f"... and {total - index} more", icon='INFO')
+            break
+        if item.kind == "applied":
+            box.label(text=f"from JSON: {item.item} = {item.theirs}",
+                      icon='IMPORT')
+        elif item.kind == "notice":
+            box.label(text=item.item,
+                      icon=_layout_icon('STATUS_WARNING', 'WARNING'))
+        else:
+            box.label(text=f"{item.item}: base {item.base}, ours {item.ours}, "
+                           f"JSON {item.theirs}", icon='ERROR')
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +560,11 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                     info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
                     crow = conf_box.row(align=True)
                     crow.label(text=info.get("blend_name", uid), icon='NODETREE')
+                    if info.get("kind", "group") == "group":
+                        merge_op = crow.operator("gn.sync_merge_conflict",
+                                                 text="Merge",
+                                                 icon='AUTOMERGE_ON')
+                        merge_op.sync_uuid = uid
                     keep_json = crow.operator("gn.sync_resolve_json", text="Keep JSON",
                                               icon='FILE_REFRESH')
                     keep_json.sync_uuid = uid
@@ -547,6 +587,7 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                                               icon='LIGHT')
                 hint_row = conf_box.row()
                 hint_row.label(text="when a group differs on both sides", icon='INFO')
+            _draw_merge_report(layout, context)
         else:
             layout.label(text="No status yet — click Refresh Status", icon='INFO')
 
@@ -806,6 +847,55 @@ class GN_AuditState(bpy.types.PropertyGroup):
     details: bpy.props.CollectionProperty(type=GN_AuditItem)
 
 
+class GN_MergeItem(bpy.types.PropertyGroup):
+    """One line of the last in-addon merge report."""
+    kind: bpy.props.StringProperty()
+    item: bpy.props.StringProperty()
+    base: bpy.props.StringProperty()
+    ours: bpy.props.StringProperty()
+    theirs: bpy.props.StringProperty()
+
+
+class GN_MergeState(bpy.types.PropertyGroup):
+    """Last in-addon merge outcome (Scene.gnt_merge_state)."""
+    group_name: bpy.props.StringProperty()
+    status: bpy.props.StringProperty()
+    summary: bpy.props.StringProperty()
+    items: bpy.props.CollectionProperty(type=GN_MergeItem)
+
+
+def _store_merge_report(context, report) -> None:
+    """Park a merge_conflict report in the scene for the panel to draw."""
+    state = context.scene.gnt_merge_state
+    state.group_name = report.get("name", "")
+    state.status = report.get("status", "")
+    applied = list(report.get("applied") or [])
+    conflicts = list(report.get("conflicts") or [])
+    state.summary = (f"{len(applied)} item(s) from JSON, "
+                     f"{len(conflicts)} conflict(s)")
+    state.items.clear()
+    if report.get("reason"):
+        row = state.items.add()
+        row.kind = "notice"
+        row.item = str(report["reason"])
+    for notice in report.get("notices") or []:
+        row = state.items.add()
+        row.kind = "notice"
+        row.item = str(notice)
+    for applied_item in applied:
+        row = state.items.add()
+        row.kind = "applied"
+        row.item = str(applied_item.get("item", ""))
+        row.theirs = str(applied_item.get("value", ""))
+    for conflict in conflicts:
+        row = state.items.add()
+        row.kind = str(conflict.get("kind", "value"))
+        row.item = str(conflict.get("item", ""))
+        row.base = str(conflict.get("base", ""))
+        row.ours = str(conflict.get("ours", ""))
+        row.theirs = str(conflict.get("theirs", ""))
+
+
 def _audit_add(state, kind: str, text: str) -> None:
     item = state.details.add()
     item.kind = kind
@@ -1047,6 +1137,62 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
                         "(library-linked groups must be made local first)")
             return {'CANCELLED'}
         self.report({'INFO'}, "Conflict resolved - kept the JSON version")
+        return {'FINISHED'}
+
+
+class GN_OT_SyncMergeConflict(bpy.types.Operator):
+    bl_idname = "gn.sync_merge_conflict"
+    bl_label = "Merge with JSON"
+    bl_description = ("Merge this conflicted group per item (socket defaults, "
+                      "node labels/properties, custom properties): local .blend "
+                      "edits are kept and the JSON changes applied; the common "
+                      "base comes from the JSON file's git history. Nothing is "
+                      "written when items conflict")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    sync_uuid: bpy.props.StringProperty(name="UUID")
+
+    def execute(self, context):
+        report = sync_manager.merge_conflict(self.sync_uuid)
+        _store_merge_report(context, report)
+        status = report.get("status")
+        name = report.get("name") or "the group"
+        sync_manager.save()
+        from .sync_operators import _tag_ui_redraw
+        _tag_ui_redraw(context)
+        if status == "merged":
+            self.report(
+                {'INFO'},
+                "Merged '%s': %d item(s) from JSON, local edits kept"
+                % (name, len(report.get("applied") or [])))
+            return {'FINISHED'}
+        if status == "unchanged":
+            self.report({'INFO'}, "'%s' is already in sync" % name)
+            return {'FINISHED'}
+        if status == "conflicted":
+            self.report(
+                {'WARNING'},
+                "Merge conflicts in '%s' (%d) - nothing was written, see the "
+                "merge report"
+                % (name, len(report.get("conflicts") or [])))
+            return {'FINISHED'}
+        reason = report.get("reason") or "; ".join(report.get("notices") or [])
+        self.report({'ERROR'}, "Merge not applied: %s" % (reason or status))
+        return {'CANCELLED'}
+
+
+class GN_OT_SyncMergeReportClear(bpy.types.Operator):
+    bl_idname = "gn.sync_merge_report_clear"
+    bl_label = "Clear Merge Report"
+    bl_description = "Hide the last merge report"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        state = context.scene.gnt_merge_state
+        state.group_name = ""
+        state.status = ""
+        state.summary = ""
+        state.items.clear()
         return {'FINISHED'}
 
 
@@ -1531,6 +1677,8 @@ classes = (
     GN_PT_GeometryIssuesPanel,
     GN_OT_SyncResolveBlend,
     GN_OT_SyncResolveJSON,
+    GN_OT_SyncMergeConflict,
+    GN_OT_SyncMergeReportClear,
     GN_OT_CopyJSONPath,
     GN_OT_RevealJSONPath,
     GN_OT_ValidateGeometry,
@@ -1538,6 +1686,8 @@ classes = (
     GN_AddonPrefs,
     GN_AuditItem,
     GN_AuditState,
+    GN_MergeItem,
+    GN_MergeState,
     GN_OT_AuditProject,
     GN_OT_AuditClear,
 )

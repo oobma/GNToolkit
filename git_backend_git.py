@@ -152,6 +152,27 @@ def log(repo_root, rel_path=None, count=10):
     return entries
 
 
+def revisions_for_path(repo_root, rel_path, limit=50):
+    """Commit ids that touched *rel_path*, newest first (bounded)."""
+    if not available():
+        return []
+    rc, out, err = _git(["log", "--format=%H", f"-n{int(limit)}", "--",
+                         rel_path], repo_root)
+    if rc != 0:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def read_blob_at(repo_root, rev, rel_path):
+    """Content of *rel_path* at *rev* (str), or None when absent/failed."""
+    if not available():
+        return None
+    rc, out, err = _git(["show", f"{rev}:{rel_path}"], repo_root)
+    if rc != 0:
+        return None
+    return out
+
+
 def commit(repo_root, message, paths):
     """Stage ONLY *paths* (tracked JSONs) and commit. Returns (ok, detail)."""
     if not available():

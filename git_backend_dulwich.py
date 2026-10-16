@@ -352,6 +352,45 @@ def diff_names(repo_root, sha_a, sha_b):
         return []
 
 
+def revisions_for_path(repo_root, rel_path, limit=50):
+    """Commit ids that touched *rel_path*, newest first (bounded)."""
+    if not available():
+        return []
+    try:
+        with _repo(repo_root) as repo:
+            try:
+                include = [repo.head()]
+            except KeyError:
+                return []
+            path = rel_path.replace(os.sep, "/").encode("utf-8")
+            return [entry.commit.id.decode()
+                    for entry in repo.get_walker(include=include,
+                                                 max_entries=int(limit),
+                                                 paths=[path])]
+    except Exception:
+        return []
+
+
+def read_blob_at(repo_root, rev, rel_path):
+    """Content of *rel_path* at *rev* (str), or None when absent/failed."""
+    if not available():
+        return None
+    try:
+        with _repo(repo_root) as repo:
+            node = repo.object_store[repo[rev.encode()].tree]
+            for part in rel_path.replace(os.sep, "/").split("/"):
+                if not part:
+                    continue
+                entry = node[part.encode("utf-8")]
+                # dulwich Tree entries are tuples (mode, sha) in recent
+                # releases; named entries expose .sha.
+                sha = entry[-1] if isinstance(entry, tuple) else entry.sha
+                node = repo.object_store[sha]
+            return node.data.decode("utf-8", "replace")
+    except Exception:
+        return None
+
+
 class _Task:
     """poll() -> None while pending, final payload once done."""
 
