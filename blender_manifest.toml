@@ -55,5 +55,6 @@ paths_exclude_pattern = [
     "internal-docs/**",
     "AGENTS.md",
     "gnt_check.py",
+    "merge.py",
     "git_backend_git.py",
 ]

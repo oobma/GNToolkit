@@ -1,0 +1,670 @@
+# -*- coding: utf-8 -*-
+"""Semantic 3-way merge of GNToolkit group JSON data (pure Python, no bpy).
+
+Implements the v1 merge semantics (spec 2026-10-16):
+
+* VALUES ONLY: socket defaults, node labels/properties, custom properties
+  (node and tree) and tree properties, decided per item with a diff3 table
+  over base/ours/theirs.  ABSENT is a value of its own.
+* GEOMETRY NODES ONLY: other tree types report ``unsupported`` (a notice,
+  not a conflict) so a mixed repository does not fail the preview.
+* Anything STRUCTURAL (nodes, links, interface presence, zones, menus,
+  inner trees, texts, derived groups, owner settings) is never fused: it
+  is adopted whole from the side that changed it, or reported as a
+  conflict when both sides changed it differently.
+* Single source of truth: decisions compare the canonical forms produced
+  by ``hash_utils.canonicalize_node_tree_data``, so every fold, exclusion
+  and normalization of the hash algorithm applies here too.  Nothing is
+  re-implemented.
+* Never lose work silently: an edit that cannot be placed on the adopted
+  structure becomes an explicit conflict, never a silent drop.
+
+Preview only: nothing here writes to disk.  ``merge_group_entries``
+decides one entry, ``merge_group_maps`` decides a whole name -> entry map
+(including groups added/removed on either side).
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+
+from .hash_utils import canonical_hash_from_json_data, canonicalize_node_tree_data
+
+MERGE_VERSION = 1
+
+_ABSENT = object()
+
+_DEFAULT_TREE_TYPE = "GeometryNodeTree"
+
+
+# ---------------------------------------------------------------------------
+# Small helpers (deterministic, report-oriented)
+# ---------------------------------------------------------------------------
+
+def _tree_type(entry: dict) -> str:
+    value = entry.get("tree_type", _DEFAULT_TREE_TYPE)
+    return value if isinstance(value, str) else str(value)
+
+
+def _short(value) -> str:
+    """Compact deterministic rendering of a value for reports."""
+    if value is _ABSENT:
+        return "(absent)"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return "%.6g" % value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return "'%s'" % value
+    if isinstance(value, list):
+        return "(" + ", ".join(_short(v) for v in value) + ")"
+    if isinstance(value, dict):
+        if "name" in value and len(value) <= 2:
+            return "'%s'" % value.get("name")
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        return text if len(text) <= 60 else text[:57] + "..."
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def _iter_occurrences(items, fields):
+    """Yield ``(occ, item)``; *occ* counts repeats of the field-tuple.
+
+    The occurrence index is the positional rule shared with the importer
+    and the modifier remap: items are matched by their identity fields
+    plus their order among same-identity items.
+    """
+    seen = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        prefix = tuple(str(item.get(f, "")) for f in fields)
+        occ = seen.get(prefix, 0)
+        seen[prefix] = occ + 1
+        yield occ, item
+
+
+def _find_raw(items, fields, prefix, occ):
+    """Find the raw item whose (fields, occurrence) matches *prefix*."""
+    seen = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        p = tuple(str(item.get(f, "")) for f in fields)
+        n = seen.get(p, 0)
+        seen[p] = n + 1
+        if p == prefix and n == occ:
+            return item
+    return None
+
+
+def _find_node(raw_entry: dict, node_name: str):
+    for node in raw_entry.get("nodes", []):
+        if isinstance(node, dict) and node.get("name") == node_name:
+            return node
+    return None
+
+
+def _item_label(key) -> str:
+    kind = key[0]
+    if kind == "label":
+        return "node '%s' label" % key[1]
+    if kind == "nodeprop":
+        return "node '%s' property '%s'" % (key[1], key[2])
+    if kind == "nodecustom":
+        return "node '%s' custom property '%s'" % (key[1], key[2])
+    if kind == "sockdef":
+        occ_note = " [#%d]" % (key[5] + 1) if key[5] else ""
+        direction = "input" if key[2] == "inputs" else "output"
+        return "node '%s' %s '%s'%s default" % (key[1], direction, key[3],
+                                                occ_note)
+    if kind == "iface":
+        occ_note = " [#%d]" % (key[4] + 1) if key[4] else ""
+        direction = key[3].lower() or key[1].lower()
+        return "interface %s '%s'%s property '%s'" % (direction, key[2],
+                                                      occ_note, key[5])
+    if kind == "legacy_iface":
+        occ_note = " [#%d]" % (key[4] + 1) if key[4] else ""
+        return "interface %s '%s'%s '%s'" % (key[1], key[2], occ_note, key[5])
+    if kind == "treeprop":
+        return "tree property '%s'" % key[1]
+    if kind == "treecustom":
+        return "tree custom property '%s'" % key[1]
+    return repr(key)
+
+
+# ---------------------------------------------------------------------------
+# Canonical views: value map + structure projection
+# ---------------------------------------------------------------------------
+
+def _extract_values(canonical: dict) -> dict:
+    """Sparse {value item key: value} map of a canonical entry."""
+    values = {}
+    items = canonical.get("interface_items")
+    if isinstance(items, list):
+        for occ, item in _iter_occurrences(items, ("name", "in_out",
+                                                   "item_type")):
+            props = item.get("properties")
+            if not isinstance(props, dict):
+                continue
+            for prop, val in props.items():
+                values[("iface", str(item.get("item_type", "")),
+                        str(item.get("name", "")), str(item.get("in_out", "")),
+                        occ, str(prop))] = val
+    else:
+        for direction in ("inputs", "outputs"):
+            for occ, item in _iter_occurrences(canonical.get(direction) or [],
+                                               ("name", "type")):
+                name = str(item.get("name", ""))
+                stype = str(item.get("type", ""))
+                if "default_value" in item:
+                    values[("legacy_iface", direction, name, stype, occ,
+                            "default_value")] = item["default_value"]
+                props = item.get("properties")
+                if isinstance(props, dict):
+                    for prop, val in props.items():
+                        values[("legacy_iface", direction, name, stype, occ,
+                                str(prop))] = val
+    for node in canonical.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        node_name = str(node.get("name", ""))
+        if "label" in node:
+            values[("label", node_name)] = node["label"]
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for prop, val in props.items():
+                values[("nodeprop", node_name, str(prop))] = val
+        custom = node.get("custom_properties")
+        if isinstance(custom, dict):
+            for key, val in custom.items():
+                values[("nodecustom", node_name, str(key))] = val
+        for direction in ("inputs", "outputs"):
+            for occ, sock in _iter_occurrences(node.get(direction) or [],
+                                               ("name", "type")):
+                if "default_value" in sock:
+                    values[("sockdef", node_name, direction,
+                            str(sock.get("name", "")),
+                            str(sock.get("type", "")), occ)] = \
+                        sock["default_value"]
+    tree_props = canonical.get("tree_properties")
+    if isinstance(tree_props, dict):
+        for key, val in tree_props.items():
+            values[("treeprop", str(key))] = val
+    tree_custom = canonical.get("custom_properties")
+    if isinstance(tree_custom, dict):
+        for key, val in tree_custom.items():
+            values[("treecustom", str(key))] = val
+    return values
+
+
+def _extract_structure(canonical: dict) -> dict:
+    """Canonical entry with every value field removed."""
+    structure = {k: v for k, v in canonical.items()
+                 if k not in ("tree_properties", "custom_properties")}
+    items = structure.get("interface_items")
+    if isinstance(items, list):
+        structure["interface_items"] = [
+            {k: v for k, v in item.items() if k != "properties"}
+            if isinstance(item, dict) else item
+            for item in items]
+    else:
+        for direction in ("inputs", "outputs"):
+            lst = structure.get(direction)
+            if isinstance(lst, list):
+                structure[direction] = [
+                    {k: v for k, v in item.items()
+                     if k not in ("default_value", "properties")}
+                    if isinstance(item, dict) else item
+                    for item in lst]
+    nodes = structure.get("nodes")
+    if isinstance(nodes, list):
+        new_nodes = []
+        for node in nodes:
+            if isinstance(node, dict):
+                node = {k: v for k, v in node.items()
+                        if k not in ("label", "properties",
+                                     "custom_properties")}
+                for direction in ("inputs", "outputs"):
+                    lst = node.get(direction)
+                    if isinstance(lst, list):
+                        node[direction] = [
+                            {k: v for k, v in item.items()
+                             if k != "default_value"}
+                            if isinstance(item, dict) else item
+                            for item in lst]
+            new_nodes.append(node)
+        structure["nodes"] = new_nodes
+    return structure
+
+
+# ---------------------------------------------------------------------------
+# Value transplant (adopted raw entry <- winning value)
+# ---------------------------------------------------------------------------
+
+def _apply_value(raw_entry: dict, key, value) -> bool:
+    """Set/remove one value in the adopted raw entry.
+
+    Returns False when the target item cannot be located (the caller turns
+    that into an explicit conflict; work is never dropped silently).
+    """
+    kind = key[0]
+    if kind == "label":
+        node = _find_node(raw_entry, key[1])
+        if node is None:
+            return False
+        if value is _ABSENT:
+            node.pop("label", None)
+        else:
+            node["label"] = value
+        return True
+    if kind == "nodeprop":
+        node = _find_node(raw_entry, key[1])
+        if node is None:
+            return False
+        props = node.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            node["properties"] = props
+        if value is _ABSENT:
+            props.pop(key[2], None)
+        else:
+            props[key[2]] = value
+        return True
+    if kind == "nodecustom":
+        node = _find_node(raw_entry, key[1])
+        if node is None:
+            return False
+        custom = node.get("custom_properties")
+        if value is _ABSENT:
+            if isinstance(custom, dict):
+                custom.pop(key[2], None)
+                if not custom:
+                    node.pop("custom_properties", None)
+            return True
+        if not isinstance(custom, dict):
+            custom = {}
+            node["custom_properties"] = custom
+        custom[key[2]] = value
+        return True
+    if kind == "sockdef":
+        node = _find_node(raw_entry, key[1])
+        if node is None:
+            return False
+        sock = _find_raw(node.get(key[2]) or [], ("name", "type"),
+                         (key[3], key[4]), key[5])
+        if sock is None:
+            return False
+        if value is _ABSENT:
+            sock.pop("default_value", None)
+        else:
+            sock["default_value"] = value
+        return True
+    if kind == "iface":
+        item = _find_raw(raw_entry.get("interface_items") or [],
+                         ("name", "in_out", "item_type"),
+                         (key[2], key[3], key[1]), key[4])
+        if item is None:
+            return False
+        props = item.get("properties")
+        if value is _ABSENT:
+            if isinstance(props, dict):
+                props.pop(key[5], None)
+            return True
+        if not isinstance(props, dict):
+            props = {}
+            item["properties"] = props
+        props[key[5]] = value
+        return True
+    if kind == "legacy_iface":
+        item = _find_raw(raw_entry.get(key[1]) or [], ("name", "type"),
+                         (key[2], key[3]), key[4])
+        if item is None:
+            return False
+        if value is _ABSENT:
+            item.pop(key[5], None)
+        else:
+            item[key[5]] = value
+        return True
+    if kind == "treeprop":
+        props = raw_entry.get("tree_properties")
+        if value is _ABSENT:
+            if isinstance(props, dict):
+                props.pop(key[1], None)
+            return True
+        if not isinstance(props, dict):
+            props = {}
+            raw_entry["tree_properties"] = props
+        props[key[1]] = value
+        return True
+    if kind == "treecustom":
+        custom = raw_entry.get("custom_properties")
+        if value is _ABSENT:
+            if isinstance(custom, dict):
+                custom.pop(key[1], None)
+                if not custom:
+                    raw_entry.pop("custom_properties", None)
+            return True
+        if not isinstance(custom, dict):
+            custom = {}
+            raw_entry["custom_properties"] = custom
+        custom[key[1]] = value
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
+
+def _result(name, status, *, adopted_structure=None, merged=None,
+            merged_hash=None, applied=None, conflicts=None, notices=None):
+    return {
+        "name": name,
+        "status": status,
+        "adopted_structure": adopted_structure,
+        "merged": merged,
+        "merged_hash": merged_hash,
+        "applied": applied or [],
+        "conflicts": conflicts or [],
+        "notices": notices or [],
+    }
+
+
+def _structure_conflicts(s_base: dict, s_ours: dict, s_theirs: dict,
+                         limit: int = 50) -> list:
+    """Human-readable per-element report of two divergent structures.
+
+    Only used when BOTH sides changed the structure differently; the two
+    sides are compared directly (base is informational).  Deterministic
+    ordering; capped so a large restructure cannot flood the report.
+    """
+    items = []
+
+    def add(msg, b="", o="", t=""):
+        items.append({"kind": "structure", "item": msg,
+                      "base": b, "ours": o, "theirs": t})
+
+    def presence(present):
+        return "present" if present else "absent"
+
+    nb = {n.get("name"): n for n in s_base.get("nodes", [])
+          if isinstance(n, dict)}
+    no = {n.get("name"): n for n in s_ours.get("nodes", [])
+          if isinstance(n, dict)}
+    nt = {n.get("name"): n for n in s_theirs.get("nodes", [])
+          if isinstance(n, dict)}
+    for name in sorted(set(no) | set(nt) | set(nb), key=str):
+        in_o, in_t, in_b = name in no, name in nt, name in nb
+        if in_o and in_t:
+            if no[name] != nt[name]:
+                changed = sorted(
+                    str(k) for k in set(no[name]) | set(nt[name])
+                    if no[name].get(k) != nt[name].get(k))
+                add("node '%s' differs (%s)" % (name, ", ".join(changed)),
+                    presence(in_b), "present", "present")
+        elif in_o != in_t:
+            add("node '%s' only in %s" % (name, "ours" if in_o else "theirs"),
+                presence(in_b), presence(in_o), presence(in_t))
+
+    def link_keys(structure):
+        return {json.dumps(link, sort_keys=True)
+                for link in structure.get("links", [])
+                if isinstance(link, dict)}
+
+    lo, lt = link_keys(s_ours), link_keys(s_theirs)
+    if lo != lt:
+        add("links differ (+%d only in ours, +%d only in theirs; "
+            "multi-input order included)" % (len(lo - lt), len(lt - lo)))
+
+    def iface_index(structure):
+        out = {}
+        items_list = structure.get("interface_items")
+        if isinstance(items_list, list):
+            for occ, item in _iter_occurrences(items_list,
+                                               ("name", "in_out",
+                                                "item_type")):
+                key = (str(item.get("name", "")), str(item.get("in_out", "")),
+                       str(item.get("item_type", "")), occ)
+                out[key] = item
+            return out
+        for direction in ("inputs", "outputs"):
+            for occ, item in _iter_occurrences(structure.get(direction) or [],
+                                               ("name", "type")):
+                key = (str(item.get("name", "")), direction,
+                       str(item.get("type", "")), occ)
+                out[key] = item
+        return out
+
+    io, it = iface_index(s_ours), iface_index(s_theirs)
+    for key in sorted(set(io) | set(it), key=repr):
+        if key in io and key in it:
+            if io[key] != it[key]:
+                add("interface item '%s' differs" % key[0])
+        else:
+            add("interface item '%s' only in %s"
+                % (key[0], "ours" if key in io else "theirs"))
+
+    handled = {"nodes", "links", "interface_items", "inputs", "outputs",
+               "name", "tree_type"}
+    for key in sorted(set(s_ours) | set(s_theirs)):
+        if key in handled:
+            continue
+        if s_ours.get(key) != s_theirs.get(key):
+            add("tree field '%s' differs" % key)
+
+    if len(items) > limit:
+        extra = len(items) - limit
+        items = items[:limit]
+        items.append({"kind": "structure",
+                      "item": "... (%d more differences)" % extra,
+                      "base": "", "ours": "", "theirs": ""})
+    return items
+
+
+# ---------------------------------------------------------------------------
+# Core: one entry
+# ---------------------------------------------------------------------------
+
+def merge_group_entries(base: dict, ours: dict, theirs: dict,
+                        name: str | None = None) -> dict:
+    """Decide the 3-way merge of one group entry.
+
+    Returns a result dict with ``status`` one of ``unchanged``, ``merged``,
+    ``conflicted``, ``unsupported``; ``merged`` (the new entry) only when
+    the merge is clean; ``conflicts``/``applied``/``notices`` for reports.
+    """
+    group_name = name or ours.get("name") or base.get("name") \
+        or theirs.get("name") or ""
+
+    types = (_tree_type(base), _tree_type(ours), _tree_type(theirs))
+    if len(set(types)) > 1:
+        return _result(group_name, "conflicted", conflicts=[{
+            "kind": "identity",
+            "item": "tree type mismatch - identity conflict, never fused",
+            "base": _short(types[0]), "ours": _short(types[1]),
+            "theirs": _short(types[2])}])
+
+    hash_b = canonical_hash_from_json_data(base)
+    hash_o = canonical_hash_from_json_data(ours)
+    hash_t = canonical_hash_from_json_data(theirs)
+    if hash_b == hash_o == hash_t:
+        return _result(group_name, "unchanged", merged=deepcopy(ours),
+                       merged_hash=hash_o)
+
+    tree_type = types[0]
+    if tree_type != _DEFAULT_TREE_TYPE:
+        return _result(group_name, "unsupported", notices=[
+            "tree type '%s' is not covered by merge v1 "
+            "(Geometry Nodes only)" % tree_type])
+
+    canon = [canonicalize_node_tree_data(entry)
+             for entry in (base, ours, theirs)]
+    s_b, s_o, s_t = (_extract_structure(c) for c in canon)
+    v_b, v_o, v_t = (_extract_values(c) for c in canon)
+
+    notices = []
+    if s_o == s_t:
+        adopted_side, adopted = "ours", ours
+        if s_o != s_b:
+            notices.append("structure changed identically on both sides; "
+                           "taken from ours")
+    elif s_t == s_b:
+        adopted_side, adopted = "ours", ours
+    elif s_o == s_b:
+        adopted_side, adopted = "theirs", theirs
+    else:
+        return _result(group_name, "conflicted",
+                       conflicts=_structure_conflicts(s_b, s_o, s_t))
+
+    merged = deepcopy(adopted)
+    applied = []
+    conflicts = []
+    v_adopted = v_o if adopted_side == "ours" else v_t
+
+    for key in sorted(set(v_o) | set(v_t)):
+        b = v_b.get(key, _ABSENT)
+        o = v_o.get(key, _ABSENT)
+        t = v_t.get(key, _ABSENT)
+        if o == t:
+            continue
+        if b == o:
+            winner, winner_side = t, "theirs"
+        elif b == t:
+            winner, winner_side = o, "ours"
+        else:
+            msg = _item_label(key)
+            if key not in v_adopted:
+                msg += " - item not present in the adopted structure"
+            conflicts.append({"kind": "value", "item": msg,
+                              "base": _short(b), "ours": _short(o),
+                              "theirs": _short(t)})
+            continue
+        if winner_side == adopted_side:
+            continue
+        if winner is _ABSENT:
+            _apply_value(merged, key, _ABSENT)
+            applied.append({"item": _item_label(key), "from": winner_side,
+                            "value": "(removed)"})
+        elif _apply_value(merged, key, deepcopy(winner)):
+            applied.append({"item": _item_label(key), "from": winner_side,
+                            "value": _short(winner)})
+        else:
+            conflicts.append({
+                "kind": "value",
+                "item": _item_label(key)
+                + " - item not present in the adopted structure",
+                "base": _short(b), "ours": _short(o), "theirs": _short(t)})
+
+    if conflicts:
+        return _result(group_name, "conflicted", conflicts=conflicts,
+                       notices=notices)
+    return _result(group_name, "merged", adopted_structure=adopted_side,
+                   merged=merged,
+                   merged_hash=canonical_hash_from_json_data(merged),
+                   applied=applied, notices=notices)
+
+
+# ---------------------------------------------------------------------------
+# Core: a whole {name: entry} map (adds/removals included)
+# ---------------------------------------------------------------------------
+
+def _simple(name, status, entry=None, notices=None, conflicts=None):
+    return _result(name, status, merged=deepcopy(entry) if entry else None,
+                   merged_hash=(canonical_hash_from_json_data(entry)
+                                if entry else None),
+                   notices=notices, conflicts=conflicts)
+
+
+def merge_group_maps(base_groups: dict, ours_groups: dict,
+                     theirs_groups: dict) -> dict:
+    """Decide the 3-way merge of three ``{name: entry}`` maps.
+
+    Returns ``{"merge_version", "groups", "summary", "ok", "notices"}``;
+    ``ok`` is True when no group is conflicted (``unsupported`` groups are
+    notices here; the CLI decides whether ``--strict`` turns them into a
+    failure).  Nothing is written to disk.
+    """
+    groups = {}
+    for name in sorted(set(base_groups) | set(ours_groups) | set(theirs_groups)):
+        b = base_groups.get(name)
+        o = ours_groups.get(name)
+        t = theirs_groups.get(name)
+
+        if b is not None and o is not None and t is not None:
+            result = merge_group_entries(b, o, t, name=name)
+        elif o is not None and t is not None:
+            hash_o = canonical_hash_from_json_data(o)
+            hash_t = canonical_hash_from_json_data(t)
+            if hash_o == hash_t:
+                result = _simple(name, "added", t, notices=[
+                    "group added on both sides with identical content"])
+            elif _tree_type(o) != _tree_type(t):
+                result = _result(name, "conflicted", conflicts=[{
+                    "kind": "identity",
+                    "item": "tree type mismatch - identity conflict, "
+                            "never fused",
+                    "base": "(absent)", "ours": _short(_tree_type(o)),
+                    "theirs": _short(_tree_type(t))}])
+            else:
+                result = _result(name, "conflicted", conflicts=[{
+                    "kind": "both-added",
+                    "item": "group added on both sides with different "
+                            "content (no base to attribute changes)",
+                    "base": "(absent)", "ours": hash_o[:12],
+                    "theirs": hash_t[:12]}])
+        elif b is not None and o is not None:
+            hash_b = canonical_hash_from_json_data(b)
+            if canonical_hash_from_json_data(o) == hash_b:
+                result = _simple(name, "removed")
+            else:
+                result = _result(name, "conflicted", conflicts=[{
+                    "kind": "delete/modify",
+                    "item": "group removed on theirs while modified on "
+                            "ours",
+                    "base": hash_b[:12],
+                    "ours": canonical_hash_from_json_data(o)[:12],
+                    "theirs": "deleted"}])
+        elif b is not None and t is not None:
+            hash_b = canonical_hash_from_json_data(b)
+            if canonical_hash_from_json_data(t) == hash_b:
+                result = _simple(name, "removed")
+            else:
+                result = _result(name, "conflicted", conflicts=[{
+                    "kind": "delete/modify",
+                    "item": "group removed on ours while modified on "
+                            "theirs",
+                    "base": hash_b[:12],
+                    "ours": "deleted",
+                    "theirs": canonical_hash_from_json_data(t)[:12]}])
+        elif o is not None:
+            result = _simple(name, "added", o)
+        elif t is not None:
+            result = _simple(name, "added", t)
+        else:
+            result = _simple(name, "removed")
+        groups[name] = result
+
+    summary = {status: 0 for status in
+               ("unchanged", "merged", "added", "removed", "conflicted",
+                "unsupported")}
+    for result in groups.values():
+        summary[result["status"]] += 1
+
+    report_notices = []
+    if summary["added"] and summary["removed"]:
+        report_notices.append(
+            "removed and added groups in the same merge - possible "
+            "renames or double materialization (v1 has no rename "
+            "detection)")
+
+    return {
+        "merge_version": MERGE_VERSION,
+        "groups": groups,
+        "summary": summary,
+        "ok": summary["conflicted"] == 0,
+        "notices": report_notices,
+    }

@@ -442,6 +442,15 @@ def _load_semantic_diff():
     return sys.modules["gnt_core.semantic_diff"]
 
 
+def _load_merge():
+    """Load merge.py (pure) after the synthetic package exists."""
+    if "gnt_core.hash_utils" not in sys.modules:
+        _load_hash_utils()
+    if "gnt_core.merge" not in sys.modules:
+        _load_pure("gnt_core.merge", os.path.join(_ROOT, "merge.py"))
+    return sys.modules["gnt_core.merge"]
+
+
 def _add_diff_data(groups: dict, data, fallback_name: str) -> None:
     _load_semantic_diff().add_group_data(groups, data, fallback_name)
 
