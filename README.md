@@ -98,6 +98,10 @@ python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --health
 # Compare two or more projects by content: shared logic, diverging forks
 python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups
 
+# Preview a semantic 3-way merge (values only; never writes files)
+python gnt_check.py --merge base/NodeGroups ours/NodeGroups theirs/NodeGroups
+python gnt_check.py --merge HEAD~1 HEAD theirs --repo . --subdir NodeGroups
+
 # Draw diagrams (needs Graphviz; SVG by default): whole project or the
 # neighborhood of one group, a single group, or a semantic diff
 python gnt_check.py --render deps NodeGroups/ --focus "My Group" --hops 2
@@ -153,6 +157,21 @@ revisions:
 ```bash
 python gnt_check.py --diff HEAD~1 HEAD --repo /path/to/project --subdir motor/NodeGroups
 ```
+
+`gnt_check.py --merge BASE OURS THEIRS` previews the semantic merge of
+the three sides without writing anything: the **values** (socket
+defaults, node labels/properties, custom properties, tree properties)
+merge per item with a base/ours/theirs decision, while the **structure**
+is never guessed — it is adopted whole from the side that changed it,
+and both-changed-differently cases are reported as per-element conflicts
+(an edit that cannot be placed on the adopted structure is an explicit
+conflict, never a silent drop). Sides are folders, JSON files or git
+revisions (`--repo`/`--subdir`; BASE is typically `git merge-base`);
+`--json` prints a machine-readable report. Geometry Nodes groups are
+covered; other tree types are reported as notices (`--strict` turns
+them into a failure). Conflicts exit `1`; any unreadable JSON in any
+side exits `2`. The decision core is `merge.py` (pure Python, the same
+canonical rules as the hasher).
 
 ### Building the release packages - repository tool
 

@@ -48,6 +48,33 @@ Optionally, `--impact "Group"` reports what depends on a group — directly
 and transitively — plus the objects using it as a modifier (from the
 `Modifiers/` exports): informational, handy for a review comment.
 
+## Preview the semantic merge (optional)
+
+A pull request that branched off is a three-way situation: the merge-base
+plus both tips. `gnt_check.py --merge` previews the semantic merge of the
+three sides on plain values (socket defaults, node properties, custom
+properties, tree properties) and reports, per item, what each side
+changed — without writing anything and without opening Blender:
+
+```
+BASE=$(git merge-base origin/main HEAD)
+python gnt_check.py --merge "$BASE" origin/main HEAD \
+    --repo . --subdir NodeGroups --json
+```
+
+Exit `1` means at least one real conflict (both sides changed the same
+item differently, or changed the structure differently); `0` with a
+`merged` hash per group means the JSON sides can be combined cleanly.
+The structure itself is never guessed: it is adopted whole from the side
+that changed it — only a both-sides-differs situation is a conflict.
+Other tree types (shader, materials) are reported as notices, not
+failures, so a mixed repository keeps passing (`--strict` makes them
+exit `1`). Unreadable JSON in any side is a hard error (`2`).
+
+This command needs a release whose checker includes it — the pin used
+above (`v0.4.0`) predates it. Bump the pin to the tag your team uses
+once it ships.
+
 ## Example — hosted CI workflow (GitHub Actions)
 
 Adjust the two paths (your folder of per-group JSONs, here `NodeGroups`, and

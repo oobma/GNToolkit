@@ -6,6 +6,23 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Semantic 3-way merge preview (`gnt_check --merge BASE OURS THEIRS`).**
+  The headless checker previews the merge of the three sides on values
+  only — socket defaults, node labels/properties, custom properties and
+  tree properties — with a per-item base/ours/theirs decision; the
+  decision core (`merge.py`, pure Python) compares the canonical forms,
+  so the same folds and exclusions as the hash apply. The structure is
+  never guessed: it is adopted whole from the side that changed it, and
+  both-changed-differently cases are reported as per-element conflicts —
+  an edit that cannot be placed on the adopted structure is an explicit
+  conflict, never a silent drop. Sides are folders, JSON files or git
+  revisions (`--repo`/`--subdir`; BASE is typically `git merge-base`);
+  added/removed/delete-modify group rules and a rename notice included.
+  Geometry Nodes groups are covered; other tree types are notices
+  (`--strict` turns them into a failure). Reports only — never writes
+  files; conflicts exit `1` and any unreadable JSON in any side exits
+  `2`. `--json` for machine output. `docs/CI_TEMPLATE.md` has a
+  pull-request merge-base recipe.
 - **Export JSON Package can filter by category.** The export dialog gains
   an "Include:" set of switches — Geometry Nodes groups, Shader groups,
   NODES modifiers, materials and worlds — all on by default (unchanged

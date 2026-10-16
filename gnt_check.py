@@ -17,6 +17,19 @@ Audit modes (same pure-Python core, no Blender):
 Cross-project identity (same pure-Python core, no Blender):
     python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups [--strict]
 
+Semantic merge preview (same pure-Python core, no Blender):
+    python gnt_check.py --merge BASE OURS THEIRS [--repo R] [--subdir D]
+                        [--json] [--strict]
+
+    A 3-way merge PREVIEW of Geometry Nodes group values (socket defaults,
+    node labels/properties, custom properties, tree properties).  The
+    structure is never guessed: it is adopted whole from the side that
+    changed it, and reported as a per-element conflict when both sides
+    changed it differently.  BASE/OURS/THEIRS are folders, JSON files or
+    git revisions (with --repo; use ``git merge-base`` for BASE).  Nothing
+    is ever written: the command only reports.  Any unreadable JSON in any
+    side is a hard error (exit 2), never a silent skip.
+
 Render modes (Graphviz diagrams — repo/documentation tool, NOT canonical):
     python gnt_check.py --render deps <folder> [--focus GROUP] [--hops N]
                         [--new <other_folder>] [--out DIR] [--png]
@@ -41,9 +54,13 @@ Baseline sources:
     (exit 3) and asks for matched versions instead.
 
 Exit codes:
-    0  all groups clean (or, without a baseline, everything parsed)
-    1  changes or missing groups detected
-    2  usage / IO / parse errors (with --strict, unparseable files also exit 2)
+    0  all groups clean (or, without a baseline, everything parsed; in
+       --merge mode: no conflicts)
+    1  changes or missing groups detected (in --merge mode: at least one
+       conflict — or an unsupported non-Geometry-Node tree type with
+       --strict)
+    2  usage / IO / parse errors (with --strict, unparseable files also exit 2;
+       in --merge mode any unreadable JSON in any side is always exit 2)
     3  baseline written by a different hash-algorithm version (update the
        checker to the add-on's release, or open the project once with the
        current add-on to re-stamp the baseline)
@@ -492,6 +509,157 @@ def _resolve_diff_side(side: str, repo: str | None, subdir: str) -> dict:
         return _git_diff_groups(repo, side, subdir)
     raise RuntimeError("'%s' is not an existing path; pass --repo to read "
                        "git revisions" % side)
+
+
+# ---------------------------------------------------------------------------
+# Semantic merge preview (pure, no file writes).  Unlike --diff, this mode
+# never skips unreadable JSON: a silent skip could hide content from the
+# merge, so any read/parse failure in any side is a hard error.
+# ---------------------------------------------------------------------------
+
+def _git_merge_groups(repo: str, rev: str, subdir: str):
+    """(groups, unreadable) from a git revision (JSONs under *subdir*)."""
+    def git(*args) -> bytes:
+        proc = subprocess.run(["git", "-C", repo] + list(args),
+                              capture_output=True)
+        if proc.returncode:
+            raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip()
+                               or "git failed")
+        return proc.stdout
+
+    prefix = subdir.strip("/\\").replace("\\", "/")
+    listing = git("ls-tree", "-r", "--name-only", rev,
+                  (prefix + "/") if prefix else ".")
+    groups = {}
+    unreadable = []
+    for name in listing.decode("utf-8", "replace").splitlines():
+        if not name.endswith(".json"):
+            continue
+        label = "%s:%s" % (rev, name)
+        try:
+            raw = git("show", "%s:%s" % (rev, name))
+            data = json.loads(raw.decode("utf-8-sig"))
+        except (RuntimeError, json.JSONDecodeError, UnicodeDecodeError):
+            unreadable.append(label)
+            continue
+        _add_diff_data(groups, data, os.path.basename(name)[:-5])
+    return groups, unreadable
+
+
+def _load_merge_groups(side: str, repo: str | None, subdir: str):
+    """({name: data}, unreadable) for one merge side — strict about reads."""
+    if os.path.exists(side):
+        files = []
+        if os.path.isdir(side):
+            for root, _dirs, names in os.walk(side):
+                for name in sorted(names):
+                    if name.endswith(".json"):
+                        files.append(os.path.join(root, name))
+        else:
+            files = [side]
+        groups = {}
+        unreadable = []
+        for file_path in files:
+            try:
+                with open(file_path, "r", encoding="utf-8-sig") as fh:
+                    data = json.load(fh)
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                unreadable.append(file_path)
+                continue
+            _add_diff_data(groups, data, os.path.basename(file_path)[:-5])
+        return groups, unreadable
+    if repo:
+        return _git_merge_groups(repo, side, subdir)
+    raise RuntimeError("'%s' is not an existing path; pass --repo to read "
+                       "git revisions" % side)
+
+
+_MERGE_STATUS_ORDER = ("unchanged", "merged", "added", "removed",
+                       "conflicted", "unsupported")
+
+
+def run_merge(base_side: str, ours_side: str, theirs_side: str,
+              repo: str | None = None, subdir: str = "",
+              as_json: bool = False, strict: bool = False) -> int:
+    """Print a 3-way merge preview of the three sides.  Never writes.
+
+    Folders, JSON files or git revisions (with *repo*).  Exit codes: 0 no
+    conflicts, 1 any conflict (or an unsupported tree type with *strict*),
+    2 usage/IO — including any unreadable JSON in any side.
+    """
+    merge = _load_merge()
+    maps = []
+    labels = []
+    for side in (base_side, ours_side, theirs_side):
+        try:
+            groups, unreadable = _load_merge_groups(side, repo, subdir)
+        except RuntimeError as exc:
+            print(f"error: {exc}")
+            return 2
+        if unreadable:
+            for item in unreadable:
+                print(f"error: cannot read JSON for merge: {item}")
+            return 2
+        maps.append(groups)
+        labels.append(side if os.path.exists(side) else "%s:%s" % (repo, side))
+
+    report = merge.merge_group_maps(maps[0], maps[1], maps[2])
+
+    if as_json:
+        payload = {
+            "mode": "merge",
+            "sides": {"base": labels[0], "ours": labels[1],
+                      "theirs": labels[2]},
+            "hash_version": _current_hash_version(),
+            "merge_version": report["merge_version"],
+            "groups": {
+                name: {
+                    "status": group["status"],
+                    "adopted_structure": group["adopted_structure"],
+                    "merged_hash": group["merged_hash"],
+                    "applied": group["applied"],
+                    "conflicts": group["conflicts"],
+                    "notices": group["notices"],
+                }
+                for name, group in report["groups"].items()
+            },
+            "summary": report["summary"],
+            "notices": report["notices"],
+            "ok": report["ok"],
+        }
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print("Semantic merge: base=%s ours=%s theirs=%s" % tuple(labels))
+        for name in sorted(report["groups"]):
+            group = report["groups"][name]
+            head = "== %s [%s]" % (name, group["status"])
+            if group["adopted_structure"]:
+                head += " adopted: %s" % group["adopted_structure"]
+            if group["merged_hash"]:
+                head += " hash %s" % group["merged_hash"][:12]
+            print(head)
+            for note in group["notices"]:
+                print("    note: %s" % note)
+            for item in group["applied"]:
+                print("    + %s <- %s (%s)"
+                      % (item["item"], item["from"], item["value"]))
+            for conflict in group["conflicts"]:
+                print("    ! %s: %s (base %s, ours %s, theirs %s)"
+                      % (conflict["kind"], conflict["item"],
+                         conflict["base"], conflict["ours"],
+                         conflict["theirs"]))
+        for note in report["notices"]:
+            print("notice: %s" % note)
+        print("--- " + ", ".join(
+            "%d %s" % (report["summary"][key], key)
+            for key in _MERGE_STATUS_ORDER))
+
+    if not report["ok"]:
+        return 1
+    if strict and report["summary"]["unsupported"]:
+        return 1
+    return 0
+
 
 
 def run_diff(path_a: str, path_b: str, repo: str | None = None,
@@ -1148,11 +1316,18 @@ def main(argv=None) -> int:
                     help="readable summary of what changed between two JSON "
                          "versions (folders, files, or git revisions with "
                          "--repo; ignores layout-only properties)")
+    ap.add_argument("--merge", nargs=3, metavar=("BASE", "OURS", "THEIRS"),
+                    help="3-way merge preview of Geometry Nodes group values "
+                         "(folders, files or git revisions with --repo; use "
+                         "git merge-base for BASE); reports only, never "
+                         "writes; conflicts exit 1, with --strict unsupported "
+                         "tree types exit 1 too")
     ap.add_argument("--repo",
-                    help="git repository for --diff when A/B are revisions")
+                    help="git repository for --diff/--merge when A/B or "
+                         "BASE/OURS/THEIRS are revisions")
     ap.add_argument("--subdir",
-                    help="folder inside the repo with the JSONs (--diff "
-                         "with git revisions)")
+                    help="folder inside the repo with the JSONs (--diff/"
+                         "--merge with git revisions)")
     ap.add_argument("--render", choices=["stats", "deps", "group", "diff"],
                     help="render a Graphviz diagram: whole project and/or "
                          "neighborhood (deps), single group, or semantic "
@@ -1191,6 +1366,10 @@ def main(argv=None) -> int:
         if problem:
             print(f"error: {problem}")
             return 3
+
+    if args.merge:
+        return run_merge(args.merge[0], args.merge[1], args.merge[2],
+                         args.repo, args.subdir or "", args.json, args.strict)
 
     if args.diff:
         return run_diff(args.diff[0], args.diff[1], args.repo,
