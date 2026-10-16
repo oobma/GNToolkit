@@ -158,9 +158,11 @@ def _canonicalize_interface_socket_entry(it: dict) -> None:
     it["bl_socket_idname"] = base
     if (dimensions is not None and dimensions != 3) or subtype is not None:
         props = it.get("properties")
-        if not isinstance(props, dict):
-            props = {}
-            it["properties"] = props
+        # Copy before mutating: the item dict alone is a shallow copy of
+        # the caller's data, so writing into the shared nested dict would
+        # silently modify the input (the function must not).
+        props = dict(props) if isinstance(props, dict) else {}
+        it["properties"] = props
         if dimensions is not None and dimensions != 3:
             props["dimensions"] = dimensions
         if subtype is not None:
@@ -175,7 +177,9 @@ def _canonicalize_interface_socket_entry(it: dict) -> None:
         dv = props.get("default_value")
         if (isinstance(dims, int) and not isinstance(dims, bool) and dims > 0
                 and isinstance(dv, list) and len(dv) > dims):
+            props = dict(props)
             props["default_value"] = dv[:dims]
+            it["properties"] = props
 
 
 _NO_DEFAULT = object()

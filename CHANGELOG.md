@@ -48,6 +48,13 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Canonicalizing no longer modifies the caller's data.** Folding a
+  variant socket class (e.g. `NodeSocketFloatAngle`) into its base class
+  plus subtype/dimensions wrote the folded properties into the nested
+  dict shared with the caller's JSON, so hashing a dict could silently
+  mutate it. The copy is now taken before the fold (variants and the 2D
+  default truncation alike); the canonical output — and therefore every
+  hash — is unchanged (no hash-version bump).
 - **The Script node's compiled `bytecode` is no longer stored.** It is a
   session cache whose listing embeds absolute temporary paths, so
   identical content hashed differently between processes (a permanent
