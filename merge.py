@@ -35,6 +35,8 @@ MERGE_VERSION = 1
 
 _ABSENT = object()
 
+_DROP = object()
+
 _DEFAULT_TREE_TYPE = "GeometryNodeTree"
 
 
@@ -667,4 +669,383 @@ def merge_group_maps(base_groups: dict, ours_groups: dict,
         "summary": summary,
         "ok": summary["conflicted"] == 0,
         "notices": report_notices,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Whole package files (F4: the git diverged-branch flow)
+# ---------------------------------------------------------------------------
+#
+# ``merge_package_dicts`` merges three package dicts the way the git flow
+# needs it: node groups through ``merge_group_maps`` (values only), the
+# ``modifiers`` task list per task with its ``inputs`` merged per key
+# (local modifier overrides ride along), and every other section
+# (materials, worlds, unknown fields) per entry with the one-side
+# adoption rule.  Anything that cannot be decided is an explicit
+# conflict: the caller aborts the whole operation and writes nothing.
+#
+# Inputs are normalized package dicts (see ``as_package_dict``); the
+# legacy standalone shape (``{"nodes": ..., "name": ...}``) is wrapped
+# automatically, mirroring the add-on's write-back policy.
+
+def as_package_dict(data):
+    """Normalize a JSON file dict to the unified package shape."""
+    if (isinstance(data, dict) and "node_groups" not in data
+            and "nodes" in data and data.get("name")):
+        return {
+            "type": "GN_UNIFIED_PACKAGE",
+            "node_groups": {data["name"]: data},
+            "modifiers": [],
+        }
+    return data
+
+
+def _canon_value(value):
+    """Float-stable comparison form (mirrors the serializer rounding)."""
+    if isinstance(value, float):
+        value = round(value, 6)
+        return 0.0 if value == 0.0 else value
+    if isinstance(value, list):
+        return [_canon_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _canon_value(v) for k, v in value.items()}
+    return value
+
+
+def _same(a, b) -> bool:
+    if a is _ABSENT or b is _ABSENT:
+        return a is b
+    try:
+        return _canon_value(a) == _canon_value(b)
+    except Exception:
+        return a == b
+
+
+def _entry_hash(obj):
+    """Canonical hash of a JSON entry, with a tolerant fallback."""
+    if obj is None:
+        return None
+    try:
+        return canonical_hash_from_json_data(obj)
+    except Exception:
+        return json.dumps(_canon_value(obj), sort_keys=True)
+
+
+def _task_key(task):
+    return (str(task.get("object", "")), str(task.get("modifier_name", "")))
+
+
+def _task_label(key):
+    return "modifier '%s' on '%s'" % (key[1], key[0])
+
+
+def _tasks_equal(a, b) -> bool:
+    return _same(a, b)
+
+
+def _task_structure(task):
+    """Everything but ``inputs`` (the mergeable values)."""
+    return {k: _canon_value(v) for k, v in task.items() if k != "inputs"}
+
+
+def _merge_task_inputs(adopted, adopted_side, b, o, t, label, conflicts,
+                       applied):
+    """Diff3 per input key over the adopted task; values only."""
+    v_b = (b or {}).get("inputs") or {}
+    v_o = (o or {}).get("inputs") or {}
+    v_t = (t or {}).get("inputs") or {}
+    inputs = dict(adopted.get("inputs") or {})
+    for key in sorted(set(v_o) | set(v_t), key=str):
+        bv = v_b.get(key, _ABSENT)
+        ov = v_o.get(key, _ABSENT)
+        tv = v_t.get(key, _ABSENT)
+        if _same(ov, tv):
+            continue
+        if _same(bv, ov):
+            winner, side = tv, "theirs"
+        elif _same(bv, tv):
+            winner, side = ov, "ours"
+        else:
+            conflicts.append({
+                "kind": "value",
+                "item": "%s input '%s'" % (label, key),
+                "base": _short(bv), "ours": _short(ov), "theirs": _short(tv)})
+            continue
+        if side == adopted_side:
+            continue
+        if winner is _ABSENT:
+            inputs.pop(key, None)
+            applied.append({"item": "%s input '%s'" % (label, key),
+                            "from": side, "value": "(removed)"})
+        else:
+            inputs[key] = deepcopy(winner)
+            applied.append({"item": "%s input '%s'" % (label, key),
+                            "from": side, "value": _short(winner)})
+    if inputs:
+        adopted["inputs"] = inputs
+    else:
+        adopted.pop("inputs", None)
+
+
+def _merge_task(b, o, t, label, conflicts, applied, notices):
+    """Decide one modifier task present and changed on both sides."""
+    s_b, s_o, s_t = (_task_structure(x) for x in (b, o, t))
+    if s_o == s_t:
+        adopted_side = "ours"
+        if s_b != s_o:
+            notices.append("%s stack settings changed identically on both "
+                           "sides; taken from ours" % label)
+    elif s_b == s_o:
+        adopted_side = "theirs"
+    elif s_b == s_t:
+        adopted_side = "ours"
+    else:
+        conflicts.append({
+            "kind": "structure",
+            "item": "%s stack settings changed on both sides" % label,
+            "base": _short(s_b), "ours": _short(s_o), "theirs": _short(s_t)})
+        return None
+    task = deepcopy(o if adopted_side == "ours" else t)
+    _merge_task_inputs(task, adopted_side, b, o, t, label, conflicts, applied)
+    return task
+
+
+def _merge_modifier_tasks(b_list, o_list, t_list, conflicts, applied, notices):
+    bd = {_task_key(task): task for task in b_list if isinstance(task, dict)}
+    od = {_task_key(task): task for task in o_list if isinstance(task, dict)}
+    td = {_task_key(task): task for task in t_list if isinstance(task, dict)}
+    out = []
+    for key in sorted(set(bd) | set(od) | set(td), key=repr):
+        eb, eo, et = bd.get(key), od.get(key), td.get(key)
+        label = _task_label(key)
+        if eo is not None and et is not None:
+            if _tasks_equal(eo, et):
+                out.append(deepcopy(eo))
+            elif eb is not None and _tasks_equal(eo, eb):
+                out.append(deepcopy(et))
+            elif eb is not None and _tasks_equal(et, eb):
+                out.append(deepcopy(eo))
+            else:
+                task = _merge_task(eb, eo, et, label, conflicts, applied,
+                                   notices)
+                if task is not None:
+                    out.append(task)
+        elif eo is not None:
+            if eb is None:
+                out.append(deepcopy(eo))
+            elif not _tasks_equal(eo, eb):
+                conflicts.append({
+                    "kind": "delete/modify",
+                    "item": "%s modified on ours while removed on theirs"
+                            % label,
+                    "base": _short(_task_structure(eb)), "ours": "modified",
+                    "theirs": "deleted"})
+        elif et is not None:
+            if eb is None:
+                out.append(deepcopy(et))
+            elif not _tasks_equal(et, eb):
+                conflicts.append({
+                    "kind": "delete/modify",
+                    "item": "%s modified on theirs while removed on ours"
+                            % label,
+                    "base": _short(_task_structure(eb)), "ours": "deleted",
+                    "theirs": "modified"})
+        # both absent: both removed (or never existed) - nothing to do
+    return out
+
+
+def _merge_named_entries(key, b, o, t, conflicts):
+    """Per-entry merge of a {name: entry} section (materials, worlds)."""
+    b = b if isinstance(b, dict) else {}
+    o = o if isinstance(o, dict) else {}
+    t = t if isinstance(t, dict) else {}
+    merged = {}
+    for name in sorted(set(b) | set(o) | set(t), key=str):
+        eb, eo, et = b.get(name), o.get(name), t.get(name)
+        hb, ho, ht = _entry_hash(eb), _entry_hash(eo), _entry_hash(et)
+        if eo is not None and et is not None and _same(eo, et):
+            merged[name] = deepcopy(eo)
+        elif eb is not None and hb is not None and ht == hb:
+            if eo is not None:
+                merged[name] = deepcopy(eo)
+        elif eb is not None and hb is not None and ho == hb:
+            if et is not None:
+                merged[name] = deepcopy(et)
+        elif eb is None:
+            if eo is None:
+                merged[name] = deepcopy(et)
+            elif et is None:
+                merged[name] = deepcopy(eo)
+            else:
+                conflicts.append({
+                    "kind": "both-added",
+                    "item": "%s '%s' added on both sides with different "
+                            "content" % (key, name),
+                    "base": "(absent)", "ours": (ho or "")[:12],
+                    "theirs": (ht or "")[:12]})
+        elif eo is None:
+            conflicts.append({
+                "kind": "delete/modify",
+                "item": "%s '%s' removed on ours while modified on theirs"
+                        % (key, name),
+                "base": (hb or "")[:12], "ours": "deleted",
+                "theirs": (ht or "")[:12]})
+        elif et is None:
+            conflicts.append({
+                "kind": "delete/modify",
+                "item": "%s '%s' removed on theirs while modified on ours"
+                        % (key, name),
+                "base": (hb or "")[:12], "ours": (ho or "")[:12],
+                "theirs": "deleted"})
+        elif ho == ht:
+            merged[name] = deepcopy(eo)
+        else:
+            conflicts.append({
+                "kind": "value",
+                "item": "%s '%s' changed on both sides differently"
+                        % (key, name),
+                "base": (hb or "")[:12], "ours": (ho or "")[:12],
+                "theirs": (ht or "")[:12]})
+    return merged
+
+
+def _merge_top_value(key, b, o, t, conflicts):
+    """One top-level field: dict sections per entry, scalars by diff3.
+
+    Returns the merged value or ``_DROP`` when the field must disappear.
+    """
+    if isinstance(o, dict) and isinstance(t, dict):
+        return _merge_named_entries(key, b, o, t, conflicts)
+    bv = _ABSENT if b is None else b
+    ov = _ABSENT if o is None else o
+    tv = _ABSENT if t is None else t
+    if _same(ov, tv):
+        return deepcopy(o) if o is not None else _DROP
+    if b is not None and _same(bv, ov):
+        return deepcopy(t) if t is not None else _DROP
+    if b is not None and _same(bv, tv):
+        return deepcopy(o) if o is not None else _DROP
+    conflicts.append({
+        "kind": "value", "item": "field '%s' changed on both sides" % key,
+        "base": _short(bv), "ours": _short(ov), "theirs": _short(tv)})
+    return deepcopy(o) if o is not None else _DROP
+
+
+def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
+    """Decide the 3-way merge of three whole package dicts.
+
+    Returns ``{"ok", "merged", "groups", "groups_summary", "conflicts",
+    "applied", "notices", "summary"}``.  ``merged`` is the package dict to
+    write only when ``ok`` is True; always deterministic and never
+    mutating the inputs.  ``node_groups`` go through the per-group core,
+    ``modifiers`` per task with per-key input decisions, every other
+    section per entry with the one-side adoption rule; a field that
+    cannot be decided is an explicit conflict.
+    """
+    base = as_package_dict(base) if isinstance(base, dict) else base
+    ours = as_package_dict(ours) if isinstance(ours, dict) else ours
+    theirs = as_package_dict(theirs) if isinstance(theirs, dict) else theirs
+    base = base if isinstance(base, dict) else {}
+    ours = ours if isinstance(ours, dict) else {}
+    theirs = theirs if isinstance(theirs, dict) else {}
+
+    conflicts = []
+    applied = []
+    notices = []
+
+    ours_type = ours.get("type")
+    theirs_type = theirs.get("type")
+    if ours_type and theirs_type and ours_type != theirs_type:
+        conflicts.append({
+            "kind": "identity",
+            "item": "file type mismatch - never fused",
+            "base": _short(base.get("type")),
+            "ours": _short(ours_type), "theirs": _short(theirs_type)})
+
+    merged = deepcopy(ours)
+
+    b_groups = base.get("node_groups") or {}
+    o_groups = ours.get("node_groups") or {}
+    t_groups = theirs.get("node_groups") or {}
+    groups_report = {}
+    if o_groups or t_groups or b_groups:
+        report = merge_group_maps(b_groups, o_groups, t_groups)
+        groups_report = report["groups"]
+        out_groups = {}
+        for name in sorted(groups_report, key=str):
+            entry_result = groups_report[name]
+            status = entry_result["status"]
+            if status in ("unchanged", "merged", "added"):
+                if entry_result.get("merged") is not None:
+                    out_groups[name] = entry_result["merged"]
+            elif status == "removed":
+                continue
+            elif status == "unsupported":
+                eo = o_groups.get(name)
+                et = t_groups.get(name)
+                eb = b_groups.get(name)
+                hb, ho, ht = _entry_hash(eb), _entry_hash(eo), _entry_hash(et)
+                if ho == ht:
+                    out_groups[name] = deepcopy(eo)
+                elif hb is not None and ht == hb:
+                    out_groups[name] = deepcopy(eo)
+                elif hb is not None and ho == hb:
+                    out_groups[name] = deepcopy(et)
+                else:
+                    conflicts.append({
+                        "kind": "value",
+                        "item": "group '%s': non-Geometry-Node tree changed "
+                                "on both sides differently" % name,
+                        "base": (hb or "(absent)")[:12],
+                        "ours": (ho or "(absent)")[:12],
+                        "theirs": (ht or "(absent)")[:12]})
+                    notices.append("group '%s' is not a Geometry Nodes tree "
+                                   "and merge v1 does not fuse it" % name)
+            else:
+                for conflict in entry_result.get("conflicts") or []:
+                    conflicts.append(dict(
+                        conflict,
+                        item="group '%s': %s" % (name, conflict["item"])))
+            for item in entry_result.get("applied") or []:
+                applied.append(dict(
+                    item, item="group '%s': %s" % (name, item["item"])))
+        merged["node_groups"] = out_groups
+
+    if "modifiers" in ours or "modifiers" in theirs or "modifiers" in base:
+        merged["modifiers"] = _merge_modifier_tasks(
+            base.get("modifiers") or [], ours.get("modifiers") or [],
+            theirs.get("modifiers") or [], conflicts, applied, notices)
+
+    for key in sorted(set(base) | set(ours) | set(theirs), key=str):
+        if key in ("node_groups", "modifiers", "type"):
+            continue
+        if key in ("version", "export_method"):
+            if key in ours:
+                merged[key] = deepcopy(ours[key])
+            elif key in theirs:
+                merged[key] = deepcopy(theirs[key])
+            elif key in base:
+                merged[key] = deepcopy(base[key])
+            continue
+        value = _merge_top_value(key, base.get(key), ours.get(key),
+                                 theirs.get(key), conflicts)
+        if value is _DROP:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+
+    summary = {status: 0 for status in
+               ("unchanged", "merged", "added", "removed", "conflicted",
+                "unsupported")}
+    for entry_result in groups_report.values():
+        summary[entry_result["status"]] += 1
+
+    return {
+        "ok": not conflicts,
+        "merged": merged if not conflicts else None,
+        "groups": groups_report,
+        "conflicts": conflicts,
+        "applied": applied,
+        "notices": notices,
+        "summary": summary,
     }
