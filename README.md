@@ -21,8 +21,10 @@ pipeline or a release gate.
 ![Blender](https://img.shields.io/badge/Blender-4.2%E2%80%935.2-orange)
 ![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
 
-<!-- Screenshot placeholder: docs/images/sync-panel.png — the GN Tools tab
-     with the Sync panel (per-group statuses) and the Collaboration panel. -->
+![The GN Tools sidebar in Blender's Geometry Nodes editor — the Changes
+list with one group edited locally and another changed in JSON, the
+status totals and the repository state in the Collaboration
+panel](docs/images/sync-panel.png)
 
 ## Why this exists
 
