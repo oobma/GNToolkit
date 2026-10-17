@@ -6,6 +6,17 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Time machine: browse and restore an entry's JSON history.** Every
+  tracked entry (node group, material, world) offers a **History** box
+  (button next to the active group and on every Changes row): the
+  revisions of its JSON file (date, author and commit message, newest
+  first, up to 50), a readable diff of the selected revision against the
+  current entry, and **Restore This Revision**, which writes that entry
+  back into the JSON. Only the JSON side is touched — the entry becomes
+  "Changed in JSON" and a Pull rebuilds the group; the rest of the
+  package and the .blend stay as they are. Works with both engines
+  (embedded and system Git); without a repository, or before the file
+  was ever committed, the box says so instead.
 - **Merge conflicts resolve item by item (in the add-on).** A conflicted
   group no longer stops at the report: every value conflict offers
   Ours / Base / JSON and, for simple scalars (float, int, bool, string),

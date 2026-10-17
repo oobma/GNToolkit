@@ -245,7 +245,10 @@ def git_log(repo_root, rel_path=None, count=10):
 
 
 def revisions_for_path(repo_root, rel_path, limit=50):
-    """Commit ids that touched *rel_path*, newest first (bounded)."""
+    """Revisions of *rel_path* with metadata, newest first (bounded).
+
+    Each entry is ``{"hash", "author", "date", "subject"}``.
+    """
     backend = _backend()
     if backend is None:
         return []

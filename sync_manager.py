@@ -91,6 +91,8 @@ _EMBEDDED_COLLECTIONS = {
 
 MERGE_BASE_SEARCH_LIMIT = 50
 
+HISTORY_REVISION_LIMIT = 50
+
 
 def entry_kind(info) -> str:
     """Kind of a tracked entry: 'group' (default) / 'material' / 'world'."""
@@ -2231,7 +2233,7 @@ class SyncManager:
             base_rev = ""
             for rev in revisions_for_path(repo_root, rel_path,
                                           MERGE_BASE_SEARCH_LIMIT):
-                blob = read_blob_at(repo_root, rev, rel_path)
+                blob = read_blob_at(repo_root, rev["hash"], rel_path)
                 if blob is None:
                     continue
                 try:
@@ -2297,6 +2299,165 @@ class SyncManager:
         self._status_cache[sync_uuid] = self.check_status(sync_uuid)
         self._dirty = True
         return report
+
+    # --- History (time machine) --------------------------------------------
+
+    def history_revisions(self, sync_uuid: str) -> dict:
+        """Revisions of a tracked entry's JSON file (newest first).
+
+        Read-only: locates the entry, its JSON file and its git repository
+        and lists the file's revisions with metadata.  Every outcome is a
+        status in the returned dict (never raises).
+        """
+        info = get_tracked_group(self.metadata, sync_uuid)
+        if info is None:
+            return {"status": "untracked", "name": "", "revisions": [],
+                    "reason": "this entry is not tracked"}
+        name = info.get("blend_name", "")
+        json_path = resolve_json_path(info.get("json_path", ""),
+                                      self._blend_dir())
+        if not json_path or not os.path.isfile(json_path):
+            return {"status": "no_path", "name": name, "revisions": [],
+                    "reason": "the JSON file was not found"}
+        from .git_integration import find_git_repo, revisions_for_path
+        repo_root = find_git_repo(json_path)
+        if not repo_root:
+            return {"status": "no_repo", "name": name, "revisions": [],
+                    "reason": "the JSON file is not in a git repository"}
+        rel_path = os.path.relpath(json_path,
+                                   repo_root).replace(os.sep, "/")
+        revisions = revisions_for_path(repo_root, rel_path,
+                                       HISTORY_REVISION_LIMIT)
+        if not revisions:
+            return {"status": "no_history", "name": name, "revisions": [],
+                    "reason": "no revisions recorded for this file yet"}
+        return {"status": "ok", "name": name, "kind": entry_kind(info),
+                "json_path": json_path, "repo_root": repo_root,
+                "revisions": revisions}
+
+    def history_restore(self, sync_uuid: str, rev: str) -> dict:
+        """Write the entry as it was in revision *rev* into the JSON file.
+
+        Only the JSON side is touched: the entry is extracted from the
+        package stored at *rev* and put into the current file (locked,
+        atomic write).  The .blend is left alone — the entry becomes
+        'Changed in JSON' and the user decides Pull / Keep JSON.  Never
+        raises; every outcome is a status in the returned dict.
+        """
+        info = get_tracked_group(self.metadata, sync_uuid)
+        if info is None:
+            return {"status": "untracked", "name": "",
+                    "reason": "this entry is not tracked"}
+        name = info.get("blend_name", "")
+        json_path = resolve_json_path(info.get("json_path", ""),
+                                      self._blend_dir())
+        if not json_path or not os.path.isfile(json_path):
+            return {"status": "no_path", "name": name,
+                    "reason": "the JSON file was not found"}
+        from .git_integration import find_git_repo, read_blob_at
+        repo_root = find_git_repo(json_path)
+        if not repo_root:
+            return {"status": "no_repo", "name": name,
+                    "reason": "the JSON file is not in a git repository"}
+        rel_path = os.path.relpath(json_path,
+                                   repo_root).replace(os.sep, "/")
+        blob = read_blob_at(repo_root, rev, rel_path)
+        if blob is None:
+            return {"status": "no_revision", "name": name,
+                    "reason": "the revision could not be read"}
+        try:
+            data = json.loads(blob.decode("utf-8-sig"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return {"status": "no_revision", "name": name,
+                    "reason": "the revision is not readable JSON"}
+        entry = package_entry(_ensure_package_shape(data), info)
+        if entry is None:
+            return {"status": "entry_absent", "name": name,
+                    "reason": "this entry does not exist in that revision"}
+
+        lock = JsonLock(json_path)
+        if not lock.acquire():
+            return {"status": "locked", "name": name,
+                    "reason": "the JSON file is locked by another session"}
+        try:
+            fresh = read_json_tolerant(json_path)
+            if fresh is None:
+                return {"status": "json_unreadable", "name": name,
+                        "reason": "could not read the current JSON file"}
+            fresh = _ensure_package_shape(fresh)
+            package_put(fresh, info, entry)
+            write_json_file(json_path, fresh)
+        except OSError:
+            return {"status": "write_failed", "name": name,
+                    "reason": "could not write the JSON file"}
+        finally:
+            lock.release()
+
+        self.invalidate_cache(sync_uuid)
+        self._status_cache[sync_uuid] = self.check_status(sync_uuid)
+        return {"status": "restored", "name": name, "rev": rev}
+
+    def history_preview(self, sync_uuid: str, rev: str) -> dict:
+        """Readable diff between revision *rev* and the current JSON entry.
+
+        Read-only.  Returns ``{"status", "name", "identical", "lines"}``;
+        the comparison is the same semantic diff used for commit messages
+        (layout-only changes do not count).
+        """
+        info = get_tracked_group(self.metadata, sync_uuid)
+        if info is None:
+            return {"status": "untracked", "name": "", "identical": False,
+                    "lines": [], "reason": "this entry is not tracked"}
+        name = info.get("blend_name", "")
+        json_path = resolve_json_path(info.get("json_path", ""),
+                                      self._blend_dir())
+        if not json_path or not os.path.isfile(json_path):
+            return {"status": "no_path", "name": name, "identical": False,
+                    "lines": [], "reason": "the JSON file was not found"}
+        from .git_integration import find_git_repo, read_blob_at
+        repo_root = find_git_repo(json_path)
+        if not repo_root:
+            return {"status": "no_repo", "name": name, "identical": False,
+                    "lines": [],
+                    "reason": "the JSON file is not in a git repository"}
+        rel_path = os.path.relpath(json_path,
+                                   repo_root).replace(os.sep, "/")
+        blob = read_blob_at(repo_root, rev, rel_path)
+        if blob is None:
+            return {"status": "no_revision", "name": name, "identical": False,
+                    "lines": [], "reason": "the revision could not be read"}
+        try:
+            data = json.loads(blob.decode("utf-8-sig"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return {"status": "no_revision", "name": name, "identical": False,
+                    "lines": [],
+                    "reason": "the revision is not readable JSON"}
+        old = package_entry(_ensure_package_shape(data), info)
+        if old is None:
+            return {"status": "entry_absent", "name": name, "identical": False,
+                    "lines": [],
+                    "reason": "this entry does not exist in that revision"}
+        current_data = read_json_tolerant(json_path)
+        current = (package_entry(_ensure_package_shape(current_data), info)
+                   if current_data is not None else None)
+        if current is None:
+            return {"status": "json_unreadable", "name": name,
+                    "identical": False, "lines": [],
+                    "reason": "could not read the current JSON file"}
+
+        identical = (canonical_hash_from_json_data(old)
+                     == canonical_hash_from_json_data(current))
+        lines = []
+        if not identical:
+            from . import semantic_diff
+            result = semantic_diff.compare_groups(current, old)
+            if result is not None:
+                lines = semantic_diff.format_group_report(name, result)
+            if entry_kind(info) != "group" and \
+                    old.get("owner_settings") != current.get("owner_settings"):
+                lines.append("(owner settings differ)")
+        return {"status": "ok", "name": name, "identical": identical,
+                "lines": lines}
 
     # --- Cache invalidation ------------------------------------------------
 

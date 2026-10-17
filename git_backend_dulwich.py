@@ -37,6 +37,7 @@ import os
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 
 import dulwich
 
@@ -360,7 +361,12 @@ def diff_names(repo_root, sha_a, sha_b):
 
 
 def revisions_for_path(repo_root, rel_path, limit=50):
-    """Commit ids that touched *rel_path*, newest first (bounded)."""
+    """Revisions of *rel_path* with metadata, newest first (bounded).
+
+    Each entry is ``{"hash", "author", "date", "subject"}`` (full hash;
+    author date as ``YYYY-MM-DD`` in the author's timezone; subject is the
+    first message line) — same contract as the git backend.
+    """
     if not available():
         return []
     try:
@@ -370,10 +376,27 @@ def revisions_for_path(repo_root, rel_path, limit=50):
             except KeyError:
                 return []
             path = rel_path.replace(os.sep, "/").encode("utf-8")
-            return [entry.commit.id.decode()
-                    for entry in repo.get_walker(include=include,
-                                                 max_entries=int(limit),
-                                                 paths=[path])]
+            entries = []
+            for entry in repo.get_walker(include=include,
+                                         max_entries=int(limit),
+                                         paths=[path]):
+                commit = entry.commit
+                author = commit.author.decode("utf-8", "replace")
+                name = author.split(" <", 1)[0].strip() or author
+                offset = timezone(timedelta(
+                    seconds=commit.author_timezone or 0))
+                date = datetime.fromtimestamp(
+                    commit.author_time, offset).strftime("%Y-%m-%d")
+                message = commit.message.decode("utf-8", "replace")
+                subject = (message.strip().splitlines()[0]
+                           if message.strip() else "")
+                entries.append({
+                    "hash": commit.id.decode(),
+                    "author": name,
+                    "date": date,
+                    "subject": subject,
+                })
+            return entries
     except Exception:
         return []
 

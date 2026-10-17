@@ -239,6 +239,9 @@ def _draw_changes_list(layout, context) -> None:
             row.label(text="", icon=_layout_icon('STATUS_WARNING', 'WARNING'))
         actions = row.row(align=True)
         actions.alignment = 'RIGHT'
+        hist_op = actions.operator("gn.sync_history_open", text="",
+                                   icon='TIME')
+        hist_op.sync_uuid = r["uid"]
         if r.get("mergeable"):
             op = actions.operator("gn.sync_merge_conflict", text="",
                                   icon='AUTOMERGE_ON')
@@ -355,6 +358,44 @@ def _draw_merge_report(layout, context) -> None:
                            icon='CHECKMARK')
 
 
+def _draw_history_box(layout, context) -> None:
+    """Draw the time-machine box (Scene.gnt_history_state)."""
+    state = getattr(context.scene, "gnt_history_state", None)
+    if state is None or not state.uid:
+        return
+    layout.separator()
+    box = layout.box()
+    head = box.row(align=True)
+    ok = state.status in ("ok", "restored")
+    head.label(text=f"History: {state.group_name}", icon='TIME')
+    if state.status:
+        head.label(text=state.status)
+    head.operator("gn.sync_history_close", text="", icon='X')
+    if state.message:
+        box.label(text=state.message, icon='INFO' if ok else 'ERROR')
+
+    for index, item in enumerate(state.items):
+        row = box.row(align=True)
+        text = f"{item.date} · {item.rev} · {item.subject}"
+        op = row.operator("gn.sync_history_select", text=text[:110],
+                          depress=item.selected)
+        op.index = index
+
+    if state.preview:
+        lines = state.preview.split("\n")
+        for line in lines[:15]:
+            box.label(text=line)
+        if len(lines) > 15:
+            box.label(text=f"... and {len(lines) - 15} more", icon='INFO')
+
+    if state.items:
+        restore_row = box.row()
+        restore_row.enabled = bool(state.selected_rev) \
+            and not state.selected_current
+        restore_row.operator("gn.sync_history_restore",
+                             text="Restore This Revision", icon='LOOP_BACK')
+
+
 # ---------------------------------------------------------------------------
 # Panel 1: Batch Operations
 # ---------------------------------------------------------------------------
@@ -390,6 +431,12 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                 copy_op = active_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
                 copy_op.json_path = json_path
                 active_tree = bpy.data.node_groups.get(tree_name)
+                if active_tree is not None:
+                    uid = find_uuid_for_tree(active_tree, metadata)
+                    if uid:
+                        hist_op = active_row.operator(
+                            "gn.sync_history_open", text="", icon='TIME')
+                        hist_op.sync_uuid = uid
                 if active_tree is not None and tree_has_animation(active_tree):
                     layout.label(text="Animation (keyframes/drivers) is not "
                                       "versioned",
@@ -634,6 +681,8 @@ class GN_PT_SyncPanel(bpy.types.Panel):
             _draw_merge_report(layout, context)
         else:
             layout.label(text="No status yet — click Refresh Status", icon='INFO')
+
+        _draw_history_box(layout, context)
 
         if sync_manager.has_pending_save():
             layout.separator()
@@ -930,6 +979,28 @@ class GN_MergeState(bpy.types.PropertyGroup):
                ("theirs", "JSON", "Take the structure from the JSON file")],
         default="none")
     items: bpy.props.CollectionProperty(type=GN_MergeItem)
+
+
+class GN_HistoryItem(bpy.types.PropertyGroup):
+    """One revision row of the time-machine box."""
+    rev: bpy.props.StringProperty()
+    rev_full: bpy.props.StringProperty()
+    date: bpy.props.StringProperty()
+    author: bpy.props.StringProperty()
+    subject: bpy.props.StringProperty()
+    selected: bpy.props.BoolProperty()
+
+
+class GN_HistoryState(bpy.types.PropertyGroup):
+    """Time-machine box state (Scene.gnt_history_state)."""
+    uid: bpy.props.StringProperty()
+    group_name: bpy.props.StringProperty()
+    status: bpy.props.StringProperty()
+    message: bpy.props.StringProperty()
+    preview: bpy.props.StringProperty()
+    selected_rev: bpy.props.StringProperty()
+    selected_current: bpy.props.BoolProperty()
+    items: bpy.props.CollectionProperty(type=GN_HistoryItem)
 
 
 def _store_merge_report(context, report) -> None:
@@ -1345,6 +1416,131 @@ class GN_OT_SyncMergeReportClear(bpy.types.Operator):
         state.status = ""
         state.summary = ""
         state.items.clear()
+        return {'FINISHED'}
+
+
+def _select_history_revision(context, index) -> None:
+    """Mark one revision row and refresh its preview (shared by operators)."""
+    state = context.scene.gnt_history_state
+    if index < 0 or index >= len(state.items):
+        return
+    for i, item in enumerate(state.items):
+        item.selected = (i == index)
+    selected = state.items[index]
+    state.selected_rev = selected.rev_full
+    report = sync_manager.history_preview(state.uid, selected.rev_full)
+    state.selected_current = bool(report.get("identical"))
+    lines = [f"{selected.date} · {selected.author} — {selected.subject}"]
+    if report.get("status") == "ok":
+        if report.get("identical"):
+            lines.append("(identical to the current JSON entry)")
+        else:
+            lines += list(report.get("lines") or [])
+    else:
+        lines.append(report.get("reason") or "no preview available")
+    state.preview = "\n".join(lines)
+
+
+class GN_OT_SyncHistoryOpen(bpy.types.Operator):
+    bl_idname = "gn.sync_history_open"
+    bl_label = "History"
+    bl_description = ("Browse this entry's JSON revisions (git history) and "
+                      "restore an old version into the JSON - the .blend is "
+                      "not touched")
+    bl_options = {'REGISTER'}
+
+    sync_uuid: bpy.props.StringProperty(name="UUID")
+
+    def execute(self, context):
+        state = context.scene.gnt_history_state
+        report = sync_manager.history_revisions(self.sync_uuid)
+        state.uid = self.sync_uuid
+        state.group_name = report.get("name", "")
+        state.status = report.get("status", "")
+        state.message = report.get("reason", "")
+        state.selected_rev = ""
+        state.selected_current = False
+        state.preview = ""
+        state.items.clear()
+        revisions = list(report.get("revisions") or [])
+        for rev in revisions:
+            item = state.items.add()
+            item.rev = rev.get("hash", "")[:10]
+            item.rev_full = rev.get("hash", "")
+            item.date = rev.get("date", "")
+            item.author = rev.get("author", "")
+            item.subject = rev.get("subject", "")
+            item.selected = False
+        if state.status == "ok" and len(state.items):
+            state.message = f"{len(state.items)} revision(s)"
+            _select_history_revision(context, 0)
+        from .sync_operators import _tag_ui_redraw
+        _tag_ui_redraw(context)
+        return {'FINISHED'}
+
+
+class GN_OT_SyncHistoryClose(bpy.types.Operator):
+    bl_idname = "gn.sync_history_close"
+    bl_label = "Close History"
+    bl_description = "Hide the history box"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        state = context.scene.gnt_history_state
+        state.uid = ""
+        state.group_name = ""
+        state.status = ""
+        state.message = ""
+        state.preview = ""
+        state.selected_rev = ""
+        state.selected_current = False
+        state.items.clear()
+        return {'FINISHED'}
+
+
+class GN_OT_SyncHistorySelect(bpy.types.Operator):
+    bl_idname = "gn.sync_history_select"
+    bl_label = "Select Revision"
+    bl_description = "Preview this revision against the current JSON entry"
+    bl_options = {'REGISTER'}
+
+    index: bpy.props.IntProperty(name="Index")
+
+    def execute(self, context):
+        _select_history_revision(context, int(self.index))
+        return {'FINISHED'}
+
+
+class GN_OT_SyncHistoryRestore(bpy.types.Operator):
+    bl_idname = "gn.sync_history_restore"
+    bl_label = "Restore This Revision"
+    bl_description = ("Write this entry as it was in the selected revision "
+                      "into the JSON file; the .blend is not touched - Pull "
+                      "rebuilds the group from the JSON")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        state = context.scene.gnt_history_state
+        if not state.uid or not state.selected_rev:
+            self.report({'ERROR'}, "Select a revision first")
+            return {'CANCELLED'}
+        report = sync_manager.history_restore(state.uid, state.selected_rev)
+        name = report.get("name") or "the entry"
+        short = state.selected_rev[:10]
+        if report.get("status") != "restored":
+            state.message = report.get("reason") or report.get("status", "")
+            self.report({'ERROR'}, "Restore failed: %s" % state.message)
+            return {'CANCELLED'}
+        state.status = "restored"
+        state.message = (f"Restored '{name}' from {short} - the JSON changed; "
+                         "Pull to rebuild the .blend")
+        selected = next((i for i, item in enumerate(state.items)
+                         if item.selected), -1)
+        if selected >= 0:
+            _select_history_revision(context, selected)
+        from .sync_operators import _tag_ui_redraw
+        _tag_ui_redraw(context)
+        self.report({'INFO'}, "Restored '%s' from %s" % (name, short))
         return {'FINISHED'}
 
 
@@ -1832,6 +2028,10 @@ classes = (
     GN_OT_SyncMergeConflict,
     GN_OT_SyncMergeApply,
     GN_OT_SyncMergeReportClear,
+    GN_OT_SyncHistoryOpen,
+    GN_OT_SyncHistoryClose,
+    GN_OT_SyncHistorySelect,
+    GN_OT_SyncHistoryRestore,
     GN_OT_CopyJSONPath,
     GN_OT_RevealJSONPath,
     GN_OT_ValidateGeometry,
@@ -1841,6 +2041,8 @@ classes = (
     GN_AuditState,
     GN_MergeItem,
     GN_MergeState,
+    GN_HistoryItem,
+    GN_HistoryState,
     GN_OT_AuditProject,
     GN_OT_AuditClear,
 )

@@ -191,6 +191,10 @@ def register():
     from .sync_ui import GN_MergeState
     bpy.types.Scene.gnt_merge_state = bpy.props.PointerProperty(type=GN_MergeState)
 
+    from .sync_ui import GN_HistoryState
+    bpy.types.Scene.gnt_history_state = bpy.props.PointerProperty(
+        type=GN_HistoryState)
+
     bpy.app.handlers.load_post.append(_on_load_post)
     bpy.app.handlers.save_post.append(_on_save_post)
     bpy.app.handlers.undo_post.append(_on_undo_post)
@@ -214,6 +218,7 @@ def unregister():
     del bpy.types.Scene.gnt_failed_imports
     del bpy.types.Scene.gnt_audit_state
     del bpy.types.Scene.gnt_merge_state
+    del bpy.types.Scene.gnt_history_state
 
     for cls in reversed(_all_classes):
         bpy.utils.unregister_class(cls)

@@ -307,6 +307,14 @@ extension zip.
   conflicting structure by picking one whole side; **Apply Chosen
   Merge** writes the merged package and rebuilds the group once every
   conflict is decided.
+- **Time machine**: the **History** button (next to the active group and
+  on every Changes row) opens the entry's JSON revisions (date, author
+  and commit message, newest first) with a readable diff against the
+  current entry and **Restore This Revision** — the old entry is written
+  back into the JSON (only the JSON: the .blend is left alone, so Pull
+  rebuilds it when you decide). The rest of the package is untouched,
+  and without a repository or before the file was committed the box
+  says so.
 - **JSON files visibility**: the Sync panel always shows where each
   group is tracked — the active group's JSON (`Active: name →
   file.json`) and a collapsible list of all tracked JSON files with
@@ -459,6 +467,9 @@ The **Changes** list in the Sync panel shows every out-of-sync group
 - **↩** discard the group's local edits and take the JSON version (asks
   for confirmation first),
 - **→** bring the JSON version into the .blend (Pull),
+- the **History** button (clock icon) opens the time machine for that
+  entry: its JSON revisions, a diff preview and Restore (see the Time
+  machine feature above),
 - one **Save N marked to JSON** button writes exactly the marked groups.
   A marked conflict is saved with the .blend version (an explicit
   choice); unmarked groups are left untouched.

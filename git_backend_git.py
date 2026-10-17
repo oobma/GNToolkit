@@ -167,14 +167,29 @@ def log(repo_root, rel_path=None, count=10):
 
 
 def revisions_for_path(repo_root, rel_path, limit=50):
-    """Commit ids that touched *rel_path*, newest first (bounded)."""
+    """Revisions of *rel_path* with metadata, newest first (bounded).
+
+    Each entry is ``{"hash", "author", "date", "subject"}`` (full hash;
+    author date as ``YYYY-MM-DD``; subject is the first message line) —
+    same contract as the dulwich backend.
+    """
     if not available():
         return []
-    rc, out, err = _git(["log", "--format=%H", f"-n{int(limit)}", "--",
-                         rel_path], repo_root)
+    rc, out, err = _git(["log", "--format=%H|%an|%ad|%s", "--date=short",
+                         f"-n{int(limit)}", "--", rel_path], repo_root)
     if rc != 0:
         return []
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    entries = []
+    for line in out.splitlines():
+        parts = line.split("|", 3)
+        if len(parts) == 4:
+            entries.append({
+                "hash": parts[0],
+                "author": parts[1],
+                "date": parts[2],
+                "subject": parts[3],
+            })
+    return entries
 
 
 def read_blob_at(repo_root, rev, rel_path):
