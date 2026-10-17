@@ -48,7 +48,8 @@ pipeline or a release gate.
    objects — not just isolated trees.
 3. **A collaboration loop inside Blender.** Track, save, pull and
    resolve conflicts per group, with a bundled Git transport that stages
-   only the tracked JSONs and never auto-merges.
+   only the tracked JSONs — a sync that finds a diverged branch merges
+   those files per item and never touches anything else.
 
 ## Not just another exporter
 
@@ -242,13 +243,14 @@ module or the repo copy next to the script).
 
 ### Reviewing node changes in CI
 
-`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.2.9` tag;
-until that tag exists, pin `v0.2.8` — the template's commands are unchanged
-between tags) that runs the status check and the audits on every proposed
-change touching `NodeGroups/` or the `.gntsync` sidecar — in the CI service
-of your choice. An accidental overwrite, a missing file or an unresolved
-merge conflict fails the change before anyone merges. It is part of this
-repository — never part of the extension zip.
+`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.4.0`
+tag, the current release — update the pin when your team updates the
+add-on, as the template explains) that runs the status check and the
+audits on every proposed change touching `NodeGroups/` or the `.gntsync`
+sidecar — in the CI service of your choice. An accidental overwrite, a
+missing file or an unresolved merge conflict fails the change before
+anyone merges. It is part of this repository — never part of the
+extension zip.
 
 ## Features
 
@@ -486,8 +488,10 @@ transport for them:
    share, a local bare repo, …).
 2. The **Collaboration** panel (GN Tools tab) shows the repository
    state, commits with **Git Commit…** (only the tracked JSONs are
-   staged) and synchronizes with **Sync Changes** (fast-forward only —
-   diverged versions are refused, never auto-merged).
+   staged) and synchronizes with **Sync Changes**: pull + push, and when
+   the branch diverged the tracked JSON files merge per item into a real
+   two-parent merge commit — if anything conflicts, nothing is written
+   and the per-item report lands in the merge report box.
 3. Conflict markers in a JSON are detected and reported; resolve them
    with your Git tooling.
 4. Full guide:
@@ -558,7 +562,7 @@ port required:
   NOT, Capture Attribute, Value to String, Subdivision Surface): the
   importer and the canonical hash share an *active-socket* rule so 5.1
   and 5.2 produce identical fingerprints (the rule shipped as
-  HASH_VERSION 5; the algorithm is versioned and currently at 21) and
+  HASH_VERSION 5; the algorithm is versioned and currently at 22) and
   projects track across versions without noise.
 - Version boundaries are explicit: representational differences between
   Blender versions (socket classes and subtypes, version-gated

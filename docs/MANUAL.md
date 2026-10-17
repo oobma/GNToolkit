@@ -374,7 +374,7 @@ file and modifiers in `Modifiers/*.json`.
    and the buttons:
    - **Git Commit…** — message dialog; stages only the tracked JSONs
      that changed and commits locally.
-   - **Git Sync** — `pull --ff-only` + `push`. Remote changes arrive
+   - **Sync Changes** — pull + push. Remote changes arrive
      only when your branch is simply behind; if versions diverged, the
      tracked JSON files merge per item (values, modifier inputs,
      materials/worlds) into a two-parent merge commit and are pushed —
@@ -387,7 +387,7 @@ file and modifiers in `Modifiers/*.json`.
 
 - Git Commit reports the number of committed files; the repository row
   returns to `clean`.
-- Git Sync on a behind branch fast-forwards and pushes; on divergent
+- **Sync Changes** on a behind branch fast-forwards and pushes; on divergent
   branches it merges the tracked JSONs and pushes the merge (or refuses
   without touching any file when an item or a non-tracked file
   conflicts).
@@ -397,7 +397,7 @@ file and modifiers in `Modifiers/*.json`.
 - Git operations run without freezing Blender: the row buttons are
   disabled while a job is queued and the final result is reported in the
   status bar (not in a popup — the operator already finished).
-- **Git Sync** and the fetch performed when opening a .blend respect
+- **Sync Changes** and the fetch performed when opening a .blend respect
   Blender's *Allow Online Access* setting (and the **Fetch remotes on
   open** toggle, on by default); `git status` and **Git Commit…** are
   local and work offline.

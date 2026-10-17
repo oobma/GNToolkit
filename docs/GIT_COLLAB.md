@@ -11,14 +11,15 @@ them. Two ways to work:
    state, commit, sync and history from inside the Sync area of the
    GN Tools tab.
 
-Git remains the authority for history, merging and credentials — the
-addon never reimplements version control and never runs its own server.
-Credentials are whatever the user already configured for git
-(credential manager, SSH keys, …).
+Git remains the authority for history and merging — the addon never
+reimplements version control and never runs its own server. With a
+system `git`, credentials are whatever you already configured for it
+(credential manager, SSH keys, …); the bundled engine resolves per-host
+credentials itself — entered from the panel, kept in the OS keyring.
 
 ## Local repo or web repo — same thing
 
-The addon never talks to a server: **Git Sync** and the manual flow
+The addon never talks to a server: **Sync Changes** and the manual flow
 just run `git pull` / `git push` against whatever remote the repository
 is configured with. That remote can be:
 
@@ -49,7 +50,7 @@ changes.
    sign in to your host once, authorize, and Windows stores the token —
    every later sync works without asking.
 
-From then on, the Collaboration panel's **Git Sync** pushes and pulls
+From then on, the Collaboration panel's **Sync Changes** pushes and pulls
 from the remote exactly as it did from the local one, and your
 colleagues just run:
 
@@ -104,8 +105,10 @@ git clone https://github.com/<user>/<repo>.git
 
 ## Collaboration panel (thin git transport)
 
-Appears in the **GN Tools** tab when groups are tracked. Requires `git`
-on the PATH.
+Appears in the **GN Tools** tab when groups are tracked. Nothing extra
+needs to be installed — the transport engine is bundled with the add-on
+(pure Python); the GitHub build additionally uses a system `git`
+automatically when one is present.
 
 - **One row per repository** detected from the tracked JSONs (a project
   can point at several repos), showing: the repository name, the state
@@ -113,7 +116,7 @@ on the PATH.
   - **Git Commit…** — opens a dialog for the commit message; stages
     **only the tracked JSON files that changed** (never `git add -A`,
     never the .blend) and commits locally.
-  - **Git Sync** — `git pull --ff-only` then `git push`. When the local
+  - **Sync Changes** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
     (values, modifier inputs, materials/worlds — `ours` = your HEAD,
@@ -137,7 +140,7 @@ on the PATH.
   - *Active: <group> — history* — the latest commits of the active
     group's JSON file.
 - `ahead`/`behind` reflect the last fetch (like `git status -b`) — run
-  **Git Sync** (or a fetch in your client) to see the latest remote
+  **Sync Changes** (or a fetch in your client) to see the latest remote
   state.
 - Git operations never freeze Blender: the row buttons are disabled
   while a job is queued/active and the final result (committed files,
@@ -149,9 +152,9 @@ on the PATH.
 - **Fetch remotes on open** (Collaboration panel, **on by default**):
   opening a .blend fetches every tracked repository's remote in the
   background so the row's `behind N` reflects the shared repository
-  without touching **Git Sync** first. Offline setups and repositories
+  without touching **Sync Changes** first. Offline setups and repositories
   without a remote are a silent no-op.
-- The on-open fetch and **Git Sync** (pull/push) require Blender's
+- The on-open fetch and **Sync Changes** (pull/push) require Blender's
   *Allow Online Access* setting. Without it the operations report that
   online access is disabled instead of failing halfway.
 - The local `git status` refresh, **Git Commit…** and the whole manual
@@ -164,7 +167,7 @@ on the PATH.
   in your client.
 - The .blend is never committed or pushed by the addon.
 - `Git Commit…` commits to the **local** repository; sharing happens
-  with `Git Sync` (push) or your client.
+  with **Sync Changes** (push) or your client.
 
 ## Merging conflicted groups (Sync panel)
 
