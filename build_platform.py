@@ -17,13 +17,15 @@ What it enforces (any problem fails the build):
     threading/queue imports, no ctypes, no OS-level calls, no direct
     network/browser access, no bpy monkey-patching, no system-Git use, no
     dynamic code execution, no funding/promotion links, no references to
-    other extensions;
+    other extensions, no absolute Windows paths or backslash separators,
+    no hard-coded data-block names, no ``__name__`` preference lookups;
   * manifest constraints beyond Blender's own validator: required fields
     non-empty, no "Blender" in the name, tagline and permission reasons
     within the terse-description limits, ``blender_version_min`` >= 4.2.0,
-    the reserved ``[build.generated]`` table not declared, and
-    ``git_backend_git.py`` listed in the exclusion pattern (the GitHub
-    box embeds the manifest with that one line removed);
+    the reserved ``[build.generated]`` table not declared, no ``platforms``
+    (the package is pure Python), and ``git_backend_git.py`` listed in the
+    exclusion pattern (the GitHub box embeds the manifest with that one
+    line removed);
   * every relative import is shipped (``git_backend_git`` is optional in
     the platform box and required in the GitHub box);
   * the wheels set is pure (``*-py3-none-any.whl``), complete, in sync with
@@ -103,6 +105,12 @@ FORBIDDEN = [
     (r"patreon|gumroad|paypal|ko-fi|buymeacoffee|donat|blendermarket"
      r"|superhive", "funding/promotion link (ToS 6.1)"),
     (r"bl_ext\.", "references another extension's namespace (ToS 5.3)"),
+    (r"\b[A-Za-z]:[\\/]", "absolute Windows path"),
+    (r"\\\\", "backslash path separator"),
+    (r"addons\s*\[\s*__name__\s*\]",
+     "preferences looked up by __name__ (use __package__)"),
+    (r'bpy\s*\.\s*data\s*\.\s*\w+\s*\[\s*["\']',
+     "hard-coded data-block name"),
 ]
 
 TERSE_MAX = 64
@@ -250,6 +258,10 @@ def check_manifest() -> None:
 
     if "build.generated" in manifest:
         fail("manifest declares the reserved [build.generated] table")
+
+    if re.search(r"(?m)^platforms\s*=", manifest):
+        fail("manifest declares platforms but the package is pure Python "
+             "(no platform-specific binaries)")
 
     if not re.search(r'(?m)^[ \t]*"git_backend_git\.py",?[^\S\r\n]*$',
                      manifest):
