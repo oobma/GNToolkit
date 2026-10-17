@@ -195,6 +195,9 @@ def register():
     bpy.types.Scene.gnt_history_state = bpy.props.PointerProperty(
         type=GN_HistoryState)
 
+    from .sync_ui import start_board_history_pump
+    start_board_history_pump()
+
     bpy.app.handlers.load_post.append(_on_load_post)
     bpy.app.handlers.save_post.append(_on_save_post)
     bpy.app.handlers.undo_post.append(_on_undo_post)
@@ -212,6 +215,8 @@ def unregister():
     from .sync_operators import stop_git_pump, stop_check_pump
     stop_check_pump()
     stop_git_pump()
+    from .sync_ui import stop_board_history_pump
+    stop_board_history_pump()
 
     del bpy.types.Scene.gnt_sync_prefs
     del bpy.types.Scene.gnt_import_state

@@ -1004,6 +1004,11 @@ def ensure_check_pump():
         # No timers in this context (background/script): run synchronously
         # so the caller still gets a complete result.
         sync_manager.step_check_all(10 ** 9)
+        try:
+            from .graph_view import recolor_board
+            recolor_board()
+        except Exception:
+            pass
         return
     _check_pump_handle = handle
 
@@ -1040,6 +1045,11 @@ def _check_pump_tick():
         _show_status_message(
             f"GNToolkit: {n_issues} of {len(statuses)} groups need attention")
     _tag_git_redraw()
+    try:
+        from .graph_view import recolor_board
+        recolor_board()
+    except Exception:
+        pass
     try:
         from .git_integration import queue_status_refresh
         queue_status_refresh()

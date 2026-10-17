@@ -2459,6 +2459,64 @@ class SyncManager:
         return {"status": "ok", "name": name, "identical": identical,
                 "lines": lines}
 
+    def history_revision_diff(self, sync_uuid: str, rev: str) -> dict:
+        """Names of tracked entries of the same JSON file whose content at
+        *rev* differs from the current JSON entry (read-only).
+
+        Used by the time machine to mark, on the GNT Graph board, which
+        groups of the file a revision would change.
+        """
+        info = get_tracked_group(self.metadata, sync_uuid)
+        if info is None:
+            return {"status": "untracked", "names": [],
+                    "reason": "this entry is not tracked"}
+        json_path = resolve_json_path(info.get("json_path", ""),
+                                      self._blend_dir())
+        if not json_path or not os.path.isfile(json_path):
+            return {"status": "no_path", "names": [],
+                    "reason": "the JSON file was not found"}
+        from .git_integration import find_git_repo, read_blob_at
+        repo_root = find_git_repo(json_path)
+        if not repo_root:
+            return {"status": "no_repo", "names": [],
+                    "reason": "the JSON file is not in a git repository"}
+        rel_path = os.path.relpath(json_path,
+                                   repo_root).replace(os.sep, "/")
+        blob = read_blob_at(repo_root, rev, rel_path)
+        if blob is None:
+            return {"status": "no_revision", "names": [],
+                    "reason": "the revision could not be read"}
+        try:
+            data = json.loads(blob.decode("utf-8-sig"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return {"status": "no_revision", "names": [],
+                    "reason": "the revision is not readable JSON"}
+        old_pkg = _ensure_package_shape(data)
+        current_data = read_json_tolerant(json_path)
+        if current_data is None:
+            return {"status": "json_unreadable", "names": [],
+                    "reason": "could not read the current JSON file"}
+        current_pkg = _ensure_package_shape(current_data)
+
+        names = []
+        for _uid, other in (self.metadata.get("tracked_groups")
+                            or {}).items():
+            other_path = resolve_json_path(other.get("json_path", ""),
+                                           self._blend_dir())
+            if other_path != json_path:
+                continue
+            old = package_entry(old_pkg, other)
+            cur = package_entry(current_pkg, other)
+            if old is None and cur is None:
+                continue
+            if old is None or cur is None or (
+                    canonical_hash_from_json_data(old)
+                    != canonical_hash_from_json_data(cur)):
+                name = other.get("blend_name", "")
+                if name:
+                    names.append(name)
+        return {"status": "ok", "names": sorted(names)}
+
     # --- Cache invalidation ------------------------------------------------
 
     def invalidate_cache(self, sync_uuid: str | None = None) -> None:

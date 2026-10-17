@@ -22,12 +22,15 @@ from .geometry_validator import (
     ValidationIssue,
     format_issue_report,
 )
-from .sync_manager import (sync_manager, SyncStatus, group_library_path,
-                           package_entry, read_json_tolerant)
+from .sync_manager import (sync_manager, SyncStatus, entry_kind,
+                           group_library_path, package_entry,
+                           read_json_tolerant)
 from .hash_utils import canonical_hash_from_json_data
 from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
 from .sync_operators import _get_active_tree
 from .serializer import tree_has_animation
+from .graph_view import (GRAPH_TREE_NAME, _raw_name, clear_history_diff,
+                         mark_history_diff)
 
 
 STATUS_ICONS = {
@@ -138,6 +141,129 @@ def _active_tracked_json(context):
         return None
     abs_path = resolve_json_path(jp, sync_manager._blend_dir())
     return tree.name, os.path.basename(abs_path), abs_path
+
+
+def _board_uid_for_name(name: str):
+    """uid of the tracked group shown with *name* on the board, or None."""
+    for uid, info in (sync_manager.metadata.get("tracked_groups")
+                      or {}).items():
+        if info.get("blend_name") == name and entry_kind(info) == "group":
+            return uid
+    return None
+
+
+def _board_selection(context):
+    """(name, uid) of the single tracked bar selected on the GNT board.
+
+    None unless the active editor shows the board and exactly one group
+    bar (not legend/reroute/frame) is selected and tracked.
+    """
+    space = getattr(context, "space_data", None)
+    tree = getattr(space, "node_tree", None) if space is not None else None
+    if tree is None or tree.name != GRAPH_TREE_NAME:
+        return None
+    selected = [n for n in (getattr(context, "selected_nodes", None) or ())
+                if n.type == 'GROUP' and n.label
+                and not n.name.startswith("legend_")]
+    if len(selected) != 1:
+        return None
+    name = _raw_name(selected[0].label)
+    uid = _board_uid_for_name(name)
+    return (name, uid) if uid else None
+
+
+# ---------------------------------------------------------------------------
+# Board → history auto-follow: while the GNT Graph board is visible, a
+# light timer watches the selected bar and opens its History box when the
+# selection changes.  Closing the box stops following that selection
+# until it changes.  Timers do not run in background contexts and
+# ``bpy.app.timers.register`` may return None there, so registration is
+# tracked with a flag (never with the handle).
+# ---------------------------------------------------------------------------
+
+_board_history_state: dict = {"last": None, "dismissed": None}
+_board_history_pump_on: bool = False
+
+
+def _board_history_step(state: dict, uid) -> bool:
+    """Selection-transition state machine (pure): True → auto-open *uid*."""
+    if uid == state.get("last"):
+        return False
+    state["last"] = uid
+    if uid is None:
+        state["dismissed"] = None
+        return False
+    if uid == state.get("dismissed"):
+        return False
+    state["dismissed"] = None
+    return True
+
+
+def _board_history_dismiss(uid) -> None:
+    """Closing the box stops following *uid* while it stays selected."""
+    if uid and _board_history_state.get("last") == uid:
+        _board_history_state["dismissed"] = uid
+
+
+def _board_history_tick():
+    """Timer body: auto-open the History box for the selected board bar."""
+    try:
+        board = bpy.data.node_groups.get(GRAPH_TREE_NAME)
+        if board is None:
+            _board_history_state["last"] = None
+            return 1.5
+        screen = getattr(bpy.context, "screen", None)
+        if screen is not None and not any(
+                a.type == 'NODE_EDITOR'
+                and getattr(a.spaces.active, "node_tree", None) is board
+                for a in screen.areas):
+            return 0.4
+        selected = [n for n in board.nodes
+                    if n.select and n.type == 'GROUP' and n.label
+                    and not n.name.startswith("legend_")]
+        if len(selected) > 1:
+            # multi-selection: the user is doing something else, leave
+            # the history state alone
+            return 0.4
+        uid = None
+        if len(selected) == 1:
+            uid = _board_uid_for_name(_raw_name(selected[0].label))
+        prev = _board_history_state.get("last")
+        if _board_history_step(_board_history_state, uid):
+            bpy.ops.gn.sync_history_open(sync_uuid=uid)
+        elif uid is None and prev is not None:
+            # clicked outside (selection cleared): leave the time machine
+            scene = getattr(bpy.context, "scene", None)
+            state = (getattr(scene, "gnt_history_state", None)
+                     if scene is not None else None)
+            if state is not None and state.uid:
+                bpy.ops.gn.sync_history_close()
+    except Exception:
+        pass
+    return 0.4
+
+
+def start_board_history_pump() -> None:
+    """Start (once) the board-selection auto-follow timer."""
+    global _board_history_pump_on
+    if _board_history_pump_on:
+        return
+    try:
+        bpy.app.timers.register(_board_history_tick, first_interval=1.0)
+        _board_history_pump_on = True
+    except Exception:
+        _board_history_pump_on = False
+
+
+def stop_board_history_pump() -> None:
+    """Stop the auto-follow timer (add-on unregister)."""
+    global _board_history_pump_on
+    _board_history_pump_on = False
+    try:
+        if bpy.app.timers.is_registered(_board_history_tick):
+            bpy.app.timers.unregister(_board_history_tick)
+    except Exception:
+        pass
 
 
 def _notify_external_changes(count: int) -> None:
@@ -442,6 +568,15 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                                       "versioned",
                                  icon=_layout_icon('STATUS_WARNING', 'WARNING'))
                 layout.separator()
+
+        board = _board_selection(context)
+        if board:
+            name, uid = board
+            board_row = layout.row(align=True)
+            board_row.label(text=f"Board selection: {name}", icon='NODETREE')
+            hist_op = board_row.operator("gn.sync_history_open", text="",
+                                         icon='TIME')
+            hist_op.sync_uuid = uid
 
         row = layout.row(align=True)
         row.operator("gn.sync_link", text="Track Group", icon='LINKED')
@@ -1438,6 +1573,23 @@ def _select_history_revision(context, index) -> None:
             lines += list(report.get("lines") or [])
     else:
         lines.append(report.get("reason") or "no preview available")
+    diff = sync_manager.history_revision_diff(state.uid, selected.rev_full)
+    note = ""
+    if diff.get("status") == "ok":
+        names = list(diff.get("names") or [])
+        marked = mark_history_diff(
+            names,
+            label=f"HISTORY MODE - {selected.rev} · {selected.date}")
+        if marked:
+            note = (f"{marked} group(s) of this file differ in this "
+                    "revision - marked on the board")
+        elif names:
+            note = (f"{len(names)} group(s) differ in this revision "
+                    "(none on the current board)")
+    else:
+        clear_history_diff()
+    if note:
+        lines.insert(1, note)
     state.preview = "\n".join(lines)
 
 
@@ -1453,6 +1605,7 @@ class GN_OT_SyncHistoryOpen(bpy.types.Operator):
 
     def execute(self, context):
         state = context.scene.gnt_history_state
+        clear_history_diff()
         report = sync_manager.history_revisions(self.sync_uuid)
         state.uid = self.sync_uuid
         state.group_name = report.get("name", "")
@@ -1487,6 +1640,8 @@ class GN_OT_SyncHistoryClose(bpy.types.Operator):
 
     def execute(self, context):
         state = context.scene.gnt_history_state
+        _board_history_dismiss(state.uid)
+        clear_history_diff()
         state.uid = ""
         state.group_name = ""
         state.status = ""

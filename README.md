@@ -290,7 +290,8 @@ extension zip.
   are hidden by default (the Ctrl+H state), and every cable that jumps
   over columns travels through its own **routing nodes** (tiny Reroutes)
   instead of sweeping across the drawing. Nothing is saved; "Clear
-  Graph" removes it.
+  Graph" removes it, and a completed **Refresh Status** repaints the
+  existing board in place (no rebuild needed).
 - **Graph poster**: the same board exports to a standalone **SVG poster**
   (no Graphviz needed; opens in any browser) with the status legend and
   per-status counts; routed cables are drawn as smooth polylines through
@@ -312,7 +313,14 @@ extension zip.
   and commit message, newest first) with a readable diff against the
   current entry and **Restore This Revision** — the old entry is written
   back into the JSON (only the JSON: the .blend is left alone, so Pull
-  rebuilds it when you decide). The rest of the package is untouched,
+  rebuilds it when you decide). On the GNT Graph board, **selecting a
+  group opens its History box automatically** (closing the box stops
+  following that selection until it changes; clicking outside the nodes
+  leaves the time machine too). Selecting a revision marks on the GNT
+  Graph board the groups of the same file that differ from today and
+  wraps the board in a labelled **HISTORY MODE** frame, so you can see
+  what that revision would bring back (marks and frame clear when the
+  box closes). The rest of the package is untouched,
   and without a repository or before the file was committed the box
   says so.
 - **JSON files visibility**: the Sync panel always shows where each

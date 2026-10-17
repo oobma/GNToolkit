@@ -8,15 +8,21 @@ All notable changes to this project are documented in this file.
 
 - **Time machine: browse and restore an entry's JSON history.** Every
   tracked entry (node group, material, world) offers a **History** box
-  (button next to the active group and on every Changes row): the
+  (button next to the active group, on every Changes row; on the GNT
+  Graph board, selecting a group opens the box automatically and
+  closing it stops following that selection until it changes): the
   revisions of its JSON file (date, author and commit message, newest
   first, up to 50), a readable diff of the selected revision against the
   current entry, and **Restore This Revision**, which writes that entry
-  back into the JSON. Only the JSON side is touched — the entry becomes
-  "Changed in JSON" and a Pull rebuilds the group; the rest of the
-  package and the .blend stay as they are. Works with both engines
-  (embedded and system Git); without a repository, or before the file
-  was ever committed, the box says so instead.
+  back into the JSON. Selecting a revision marks on the GNT Graph board
+  the groups of the same file that differ from the current JSON and
+  wraps the board in a labelled HISTORY MODE frame; closing the box (or
+  clicking outside the nodes) clears the marks and the frame. Only the
+  JSON side is touched — the
+  entry becomes "Changed in JSON" and a Pull rebuilds the group; the
+  rest of the package and the .blend stay as they are. Works with both
+  engines (embedded and system Git); without a repository, or before
+  the file was ever committed, the box says so instead.
 - **Merge conflicts resolve item by item (in the add-on).** A conflicted
   group no longer stops at the report: every value conflict offers
   Ours / Base / JSON and, for simple scalars (float, int, bool, string),
@@ -136,6 +142,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Refresh Status repaints the GNT Graph board in place.** The board
+  used to bake its status colors when it was built, so an edited group
+  kept its old color until the board was rebuilt; now a completed status
+  check recolors the existing bars (history-diff marks, when active,
+  are preserved).
 - **The merge report stays visible after applying.** A completed merge
   now refreshes that group's status immediately, so the Sync panel shows
   the "merged" report and the group as Synced instead of asking for

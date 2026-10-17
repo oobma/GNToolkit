@@ -120,7 +120,129 @@ def clear_graph_trees() -> int:
                 or tree.name.startswith(PORT_TREE_PREFIX)):
             bpy.data.node_groups.remove(tree)
             removed += 1
+    _history_diff_backup.clear()
     return removed
+
+
+_HISTORY_DIFF_COLOR = (0.05, 0.75, 0.70)
+_HISTORY_FRAME_COLOR = (0.008, 0.020, 0.165)  # #02052A, subtle frame
+_history_diff_backup: dict = {}
+_history_diff_frame: str = ""
+
+
+def _add_history_frame(tree, label: str) -> str:
+    """Frame the board content with a labelled history-mode banner."""
+    xs, xe, ys, ye = [], [], [], []
+    for node in tree.nodes:
+        if node.type == 'FRAME' or node.name.startswith("legend_"):
+            continue
+        xs.append(node.location[0])
+        xe.append(node.location[0] + node.width)
+        ye.append(node.location[1])
+        ys.append(node.location[1] - node.height)
+    if not xs:
+        return ""
+    pad = 60.0
+    frame = tree.nodes.new("NodeFrame")
+    frame.name = "history_frame"
+    frame.label = label or "HISTORY MODE"
+    frame.location = (min(xs) - pad, max(ye) + pad)
+    frame.width = (max(xe) - min(xs)) + 2 * pad
+    frame.height = (max(ye) - min(ys)) + 2 * pad
+    frame.use_custom_color = True
+    frame.color = _HISTORY_FRAME_COLOR
+    return frame.name
+
+
+def mark_history_diff(names, label: str = "") -> int:
+    """Recolor the board bars in *names* (time-machine revision diff).
+
+    Returns the number of marked bars; previous marks are restored
+    first, so repeated calls never stack.  With marks applied, a
+    labelled frame wraps the board so the history mode is evident.
+    ``clear_history_diff`` puts the original colors back and removes
+    the frame.
+    """
+    clear_history_diff()
+    tree = bpy.data.node_groups.get(GRAPH_TREE_NAME)
+    if tree is None or not names:
+        return 0
+    wanted = set(names)
+    marked = 0
+    for node in tree.nodes:
+        if (node.type != 'GROUP' or not node.label
+                or node.name.startswith("legend_")):
+            continue
+        if _raw_name(node.label) in wanted:
+            _history_diff_backup[node.name] = (bool(node.use_custom_color),
+                                               tuple(node.color))
+            node.use_custom_color = True
+            node.color = _HISTORY_DIFF_COLOR
+            marked += 1
+    if marked:
+        global _history_diff_frame
+        _history_diff_frame = _add_history_frame(tree, label)
+    return marked
+
+
+def clear_history_diff() -> None:
+    """Restore the colors of bars marked by ``mark_history_diff``."""
+    global _history_diff_frame
+    tree = bpy.data.node_groups.get(GRAPH_TREE_NAME)
+    if tree is not None:
+        for name, (use, color) in _history_diff_backup.items():
+            node = tree.nodes.get(name)
+            if node is not None:
+                node.use_custom_color = use
+                node.color = color
+        if _history_diff_frame:
+            frame = tree.nodes.get(_history_diff_frame)
+            if frame is not None:
+                tree.nodes.remove(frame)
+    _history_diff_backup.clear()
+    _history_diff_frame = ""
+
+
+def recolor_board() -> int:
+    """Repaint the existing board bars from the (cached) sync statuses.
+
+    The board bakes its colors when it is built; this refreshes them in
+    place (e.g. after Refresh Status) without rebuilding the layout.
+    Bars carrying an active history-diff mark are left alone.  Returns
+    the number of bars repainted.
+    """
+    tree = bpy.data.node_groups.get(GRAPH_TREE_NAME)
+    if tree is None:
+        return 0
+    statuses = sync_manager.check_all_statuses()
+    tracked = sync_manager.metadata.get("tracked_groups", {})
+    name_key = {}
+    for uid, info in tracked.items():
+        name = info.get("blend_name", "")
+        if not name:
+            continue
+        status = statuses.get(uid)
+        name_key[name] = status.value if status is not None else "untracked"
+    changed = 0
+    for node in tree.nodes:
+        if (node.type != 'GROUP' or not node.label
+                or node.name.startswith("legend_")):
+            continue
+        key = name_key.get(_raw_name(node.label))
+        if key is None:
+            continue
+        color = STATUS_COLORS.get(key, STATUS_COLORS["untracked"])
+        if node.name in _history_diff_backup:
+            # keep the mark visible, but let clearing restore the fresh
+            # color instead of the pre-refresh one
+            use, _old = _history_diff_backup[node.name]
+            _history_diff_backup[node.name] = (use, tuple(color))
+            continue
+        if tuple(node.color) != tuple(color):
+            node.use_custom_color = True
+            node.color = color
+            changed += 1
+    return changed
 
 
 def _fitted_width(label: str) -> float:
