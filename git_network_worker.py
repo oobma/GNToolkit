@@ -29,6 +29,7 @@ import io
 import json
 import os
 import re
+import stat
 import sys
 
 _SSH_REMOTE = re.compile(r"^(ssh|git\+ssh)://|^[^/\s@]+@[^/\s:]+:")
@@ -131,6 +132,75 @@ def _op_fetch(repo_path, info, creds):
             "head_after": _head(repo_path)}
 
 
+def _check_file_matches_fixed(repo_object_store, full_path, entry_sha,
+                              entry_mode, current_stat, honor_filemode,
+                              blob_normalizer=None, tree_path=None):
+    """Check a work-tree file against a blob with line-ending conversion.
+
+    Mirrors dulwich 1.2.18's ``_check_file_matches`` (upstream issue #2466,
+    commit 8a5738873c): the raw-size shortcut is skipped when a blob
+    normalizer is active and the work-tree bytes are cleaned before the
+    comparison, as git does.
+    """
+    from dulwich.objects import Blob
+
+    if honor_filemode:
+        current_mode = stat.S_IMODE(current_stat.st_mode)
+        expected_mode = stat.S_IMODE(entry_mode)
+        if stat.S_ISREG(current_stat.st_mode):
+            current_mode_normalized = current_mode & 0o755
+            expected_mode_normalized = expected_mode & 0o755
+            if expected_mode_normalized not in (0o644, 0o755):
+                expected_mode_normalized = 0o644
+            if current_mode_normalized not in (0o644, 0o755):
+                if current_mode & 0o100:
+                    current_mode_normalized = 0o755
+                else:
+                    current_mode_normalized = 0o644
+            if current_mode_normalized != expected_mode_normalized:
+                return False
+        else:
+            if current_mode != expected_mode:
+                return False
+
+    blob_obj = repo_object_store[entry_sha]
+    normalize = blob_normalizer is not None and tree_path is not None
+    if not normalize and current_stat.st_size != blob_obj.raw_length():
+        return False
+
+    try:
+        with open(full_path, "rb") as handle:
+            current_content = handle.read()
+    except (FileNotFoundError, PermissionError, IsADirectoryError):
+        return False
+
+    if normalize:
+        current_content = blob_normalizer.checkin_normalize(
+            Blob.from_string(current_content), tree_path).as_raw_string()
+    return current_content == blob_obj.as_raw_string()
+
+
+def _patch_check_file_matches():
+    """Install the fixed check on the bundled dulwich 1.2.17 wheel."""
+    import dulwich
+    from dulwich import index
+
+    version = getattr(dulwich, "__version__", ())
+    if isinstance(version, str):
+        version = tuple(int(part) for part in version.split(".")
+                        if part.isdigit())
+    try:
+        if tuple(version) >= (1, 2, 18):
+            return
+    except TypeError:
+        pass
+    current = getattr(index, "_check_file_matches", None)
+    if current is None or getattr(current, "__name__", "") \
+            == "_check_file_matches_fixed":
+        return
+    index._check_file_matches = _check_file_matches_fixed
+
+
 def _op_pull_ff(repo_path, info, creds):
     from dulwich import porcelain
     from dulwich.client import HTTPUnauthorized, HTTPProxyUnauthorized
@@ -138,6 +208,8 @@ def _op_pull_ff(repo_path, info, creds):
     from dulwich.errors import WorkingTreeModifiedError
     from dulwich.graph import can_fast_forward
     from dulwich.repo import Repo
+
+    _patch_check_file_matches()
 
     try:
         result = porcelain.fetch(repo_path, info["url"],

@@ -113,6 +113,13 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Fast-forward pulls no longer fail on clean CRLF worktrees.** With
+  `core.autocrlf` set to `true` or `input`, the embedded engine compared
+  the JSON file on disk (CRLF) against the raw repository blob (LF) and
+  reported "local modifications would be overwritten" even when the file
+  had no real edits. The check now normalizes the worktree content first,
+  as git does; genuine local edits are still refused. (The bundled
+  dulwich 1.2.17 predates the upstream fix for this.)
 - **Repositories that are both ahead and behind now report it.** The
   "Git status" parser only understood a leading `behind` inside the
   tracking bracket (`[behind N, ahead M]`); with git's usual
