@@ -247,7 +247,7 @@ module or the repo copy next to the script).
 
 ### Reviewing node changes in CI
 
-`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.4.0`
+`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.4.1`
 tag, the current release — update the pin when your team updates the
 add-on, as the template explains) that runs the status check and the
 audits on every proposed change touching `NodeGroups/` or the `.gntsync`

@@ -3,7 +3,7 @@
 This template lives in the repository (it is never shipped inside the
 extension zip). The workflow downloads `gnt_check.py` from a **tagged
 release** of this repository, so the pinned tag matters: it must be the tag
-of the add-on release your team uses — below it is pinned to `v0.4.0`, the
+of the add-on release your team uses — below it is pinned to `v0.4.1`, the
 current release. The template's commands are unchanged between tags, so the
 checks behave the same either way.
 
@@ -72,8 +72,7 @@ failures, so a mixed repository keeps passing (`--strict` makes them
 exit `1`). Unreadable JSON in any side is a hard error (`2`).
 
 This command needs a release whose checker includes it — the pin used
-above (`v0.4.0`) predates it. Bump the pin to the tag your team uses
-once it ships.
+above (`v0.4.1`) includes it; older pins predate it.
 
 ## Example — hosted CI workflow (GitHub Actions)
 
@@ -102,9 +101,9 @@ jobs:
 
       - name: Fetch GNToolkit (pinned to the addon tag)
         run: |
-          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.4.0.zip
+          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.4.1.zip
           unzip -q gnt.zip
-          mv GNToolkit-0.4.0 gnt
+          mv GNToolkit-0.4.1 gnt
 
       - name: JSON-side status check
         run: python gnt/gnt_check.py NodeGroups --baseline project.blend.gntsync --strict
