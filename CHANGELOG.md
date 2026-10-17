@@ -45,12 +45,26 @@ All notable changes to this project are documented in this file.
   an edit that cannot be placed on the adopted structure is an explicit
   conflict, never a silent drop. Sides are folders, JSON files or git
   revisions (`--repo`/`--subdir`; BASE is typically `git merge-base`);
-  added/removed/delete-modify group rules and a rename notice included.
+  added/removed/delete-modify group rules and exact-content rename
+  handling included.
   Geometry Nodes groups are covered; other tree types are notices
   (`--strict` turns them into a failure). Reports only — never writes
   files; conflicts exit `1` and any unreadable JSON in any side exits
   `2`. `--json` for machine output. `docs/CI_TEMPLATE.md` has a
   pull-request merge-base recipe.
+- **Exact-content renames are merged, not guessed (merge v2).** A group
+  removed on one side and added under a new name on that same side with
+  an identical content fingerprint (the group name is not part of it) is
+  a rename: the other side's value edits merge onto the renamed entry,
+  the report carries a `renamed` status (old name removed, notice
+  "renamed from ..."), and a rename while the other side deleted the old
+  name keeps the rename with a notice. The same group renamed to two
+  different names on both sides is now an explicit `rename/rename`
+  conflict — before, both copies silently landed in the package. Pairs
+  form only on unique 1-to-1 fingerprint matches (ambiguity never
+  guesses) and only for Geometry Nodes trees; `MERGE_VERSION` is now 2.
+  The generic "possible renames" notice fires only for leftovers without
+  an exact-content match.
 - **Export JSON Package can filter by category.** The export dialog gains
   an "Include:" set of switches — Geometry Nodes groups, Shader groups,
   NODES modifiers, materials and worlds — all on by default (unchanged

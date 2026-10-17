@@ -194,5 +194,7 @@ v1 covers Geometry Nodes groups; shader and material/world entries
 report "not covered by merge v1". Merges are values only — socket
 defaults, node labels/properties, custom properties, tree properties;
 the structure is adopted whole from the side that changed it and never
-guessed. Renames are not detected (they read as delete + add), and
-animated groups are flagged but not merged specially.
+guessed. Exact-content renames (same logic under a new name) are paired
+and merged under the new name; a rename that also edited values on the
+same side still reads as delete + add, and animated groups are flagged
+but not merged specially.

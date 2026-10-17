@@ -460,9 +460,11 @@ def _load_semantic_diff():
 
 
 def _load_merge():
-    """Load merge.py (pure) after the synthetic package exists."""
+    """Load merge.py (pure) after its pure dependencies exist."""
     if "gnt_core.hash_utils" not in sys.modules:
         _load_hash_utils()
+    if "gnt_core.audit" not in sys.modules:
+        _load_audit()
     if "gnt_core.merge" not in sys.modules:
         _load_pure("gnt_core.merge", os.path.join(_ROOT, "merge.py"))
     return sys.modules["gnt_core.merge"]
@@ -575,7 +577,7 @@ def _load_merge_groups(side: str, repo: str | None, subdir: str):
 
 
 _MERGE_STATUS_ORDER = ("unchanged", "merged", "added", "removed",
-                       "conflicted", "unsupported")
+                       "renamed", "conflicted", "unsupported")
 
 
 def run_merge(base_side: str, ours_side: str, theirs_side: str,

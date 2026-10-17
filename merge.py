@@ -29,9 +29,10 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 
+from .audit import content_hash_from_json_data
 from .hash_utils import canonical_hash_from_json_data, canonicalize_node_tree_data
 
-MERGE_VERSION = 1
+MERGE_VERSION = 2
 
 _ABSENT = object()
 
@@ -581,9 +582,105 @@ def _simple(name, status, entry=None, notices=None, conflicts=None):
                    notices=notices, conflicts=conflicts)
 
 
+# ---------------------------------------------------------------------------
+# Exact-content renames (v2): one side removed a group and added it under
+# a new name with an identical content fingerprint.  Values decide as
+# usual; the pair is only recognized when the match is 1-to-1.
+# ---------------------------------------------------------------------------
+
+def _content_fingerprint(entry):
+    """Identity-free content hash (the group name is not part of it).
+
+    ``None`` when the entry cannot be canonicalized; callers skip it.
+    """
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return content_hash_from_json_data(entry)
+    except Exception:
+        return None
+
+
+def _rename_pairings(base_groups: dict, ours_groups: dict,
+                     theirs_groups: dict) -> dict:
+    """``{old_name: [(side, new_name), ...]}`` rename candidates.
+
+    A side *removed* a name when it is present in base and absent there,
+    *added* one when the name is absent from base, absent from the other
+    side and present there.  A removed and an added candidate pair up
+    only when their fingerprints match exactly and the match is 1-to-1 -
+    ambiguity never guesses.  Geometry Nodes trees only, mirroring the
+    values-merge scope.  Deterministic: per-old entries sort by side.
+    """
+    pairs = {}
+    for side, own, other in (("ours", ours_groups, theirs_groups),
+                             ("theirs", theirs_groups, ours_groups)):
+        removed = {}
+        for name, entry in base_groups.items():
+            if name in own or _tree_type(entry) != _DEFAULT_TREE_TYPE:
+                continue
+            fingerprint = _content_fingerprint(entry)
+            if fingerprint:
+                removed.setdefault(fingerprint, []).append(name)
+        added = {}
+        for name, entry in own.items():
+            if name in base_groups or name in other:
+                continue
+            if _tree_type(entry) != _DEFAULT_TREE_TYPE:
+                continue
+            fingerprint = _content_fingerprint(entry)
+            if fingerprint:
+                added.setdefault(fingerprint, []).append(name)
+        for fingerprint, olds in removed.items():
+            news = added.get(fingerprint) or []
+            if len(olds) == 1 and len(news) == 1:
+                pairs.setdefault(olds[0], []).append((side, news[0]))
+    for old in pairs:
+        pairs[old].sort(key=lambda item: item[0])
+    return pairs
+
+
+def _merge_rename_pair(old, side, new, base_groups, ours_groups,
+                       theirs_groups):
+    """Decide the entry of a rename pair; the result lives under *new*.
+
+    *side* renamed *old* to *new* with identical content; the other side
+    modified *old* (values merge normally), left it alone, or removed it
+    (the kept rename is reported with a notice).
+    """
+    ours_entry = ours_groups.get(new if side == "ours" else old)
+    theirs_entry = theirs_groups.get(new if side == "theirs" else old)
+    if ours_entry is None or theirs_entry is None:
+        kept = ours_entry if ours_entry is not None else theirs_entry
+        return _result(
+            new, "renamed", merged=deepcopy(kept),
+            merged_hash=canonical_hash_from_json_data(kept),
+            notices=["renamed from '%s' on %s - the other side removed "
+                     "the old name; the rename was kept" % (old, side)])
+    inner = merge_group_entries(base_groups.get(old), ours_entry,
+                                theirs_entry, name=new)
+    notices = ["renamed from '%s' on %s" % (old, side)]
+    notices.extend(inner.get("notices") or [])
+    if inner["status"] == "conflicted":
+        return _result(new, "conflicted", applied=inner.get("applied"),
+                       conflicts=inner.get("conflicts"), notices=notices)
+    return _result(new, "renamed",
+                   adopted_structure=inner.get("adopted_structure"),
+                   merged=inner.get("merged"),
+                   merged_hash=inner.get("merged_hash"),
+                   applied=inner.get("applied"), notices=notices)
+
+
 def merge_group_maps(base_groups: dict, ours_groups: dict,
                      theirs_groups: dict) -> dict:
     """Decide the 3-way merge of three ``{name: entry}`` maps.
+
+    Exact-content renames (v2) are decided first: a group removed from
+    one side and added under a new name on that same side with an
+    identical content fingerprint is a rename - the old name reports as
+    removed and the new one carries the merged entry with a ``renamed``
+    status.  The same group renamed to different names on both sides is a
+    ``rename/rename`` conflict.
 
     Returns ``{"merge_version", "groups", "summary", "ok", "notices"}``;
     ``ok`` is True when no group is conflicted (``unsupported`` groups are
@@ -591,7 +688,31 @@ def merge_group_maps(base_groups: dict, ours_groups: dict,
     failure).  Nothing is written to disk.
     """
     groups = {}
+    pairs = _rename_pairings(base_groups, ours_groups, theirs_groups)
+    paired_new = {new for entries in pairs.values()
+                  for _side, new in entries}
     for name in sorted(set(base_groups) | set(ours_groups) | set(theirs_groups)):
+        if name in paired_new:
+            continue
+        pairing = pairs.get(name)
+        if pairing and len(pairing) > 1:
+            digest = _entry_hash(base_groups.get(name)) or ""
+            groups[name] = _result(name, "conflicted", conflicts=[{
+                "kind": "rename/rename",
+                "item": "group renamed to '%s' on ours and to '%s' on "
+                        "theirs" % (pairing[0][1], pairing[1][1]),
+                "base": digest[:12], "ours": "-> '%s'" % pairing[0][1],
+                "theirs": "-> '%s'" % pairing[1][1]}])
+            continue
+        if pairing:
+            side, new = pairing[0]
+            groups[name] = _result(
+                name, "removed",
+                notices=["renamed to '%s' on %s" % (new, side)])
+            groups[new] = _merge_rename_pair(
+                name, side, new, base_groups, ours_groups, theirs_groups)
+            continue
+
         b = base_groups.get(name)
         o = ours_groups.get(name)
         t = theirs_groups.get(name)
@@ -651,17 +772,18 @@ def merge_group_maps(base_groups: dict, ours_groups: dict,
         groups[name] = result
 
     summary = {status: 0 for status in
-               ("unchanged", "merged", "added", "removed", "conflicted",
-                "unsupported")}
+               ("unchanged", "merged", "added", "removed", "renamed",
+                "conflicted", "unsupported")}
     for result in groups.values():
         summary[result["status"]] += 1
 
     report_notices = []
-    if summary["added"] and summary["removed"]:
+    if summary["added"] and any(
+            result["status"] == "removed" and name not in pairs
+            for name, result in groups.items()):
         report_notices.append(
             "removed and added groups in the same merge - possible "
-            "renames or double materialization (v1 has no rename "
-            "detection)")
+            "renames or double materialization (no exact-content match)")
 
     return {
         "merge_version": MERGE_VERSION,
@@ -937,9 +1059,9 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
     Returns ``{"ok", "merged", "groups", "groups_summary", "conflicts",
     "applied", "notices", "summary"}``.  ``merged`` is the package dict to
     write only when ``ok`` is True; always deterministic and never
-    mutating the inputs.  ``node_groups`` go through the per-group core,
-    ``modifiers`` per task with per-key input decisions, every other
-    section per entry with the one-side adoption rule; a field that
+    mutating the inputs.      ``node_groups`` go through the per-group core (exact-content renames
+    included), ``modifiers`` per task with per-key input decisions, every
+    other section per entry with the one-side adoption rule; a field that
     cannot be decided is an explicit conflict.
     """
     base = as_package_dict(base) if isinstance(base, dict) else base
@@ -975,7 +1097,7 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
         for name in sorted(groups_report, key=str):
             entry_result = groups_report[name]
             status = entry_result["status"]
-            if status in ("unchanged", "merged", "added"):
+            if status in ("unchanged", "merged", "added", "renamed"):
                 if entry_result.get("merged") is not None:
                     out_groups[name] = entry_result["merged"]
             elif status == "removed":
@@ -1035,8 +1157,8 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
             merged[key] = value
 
     summary = {status: 0 for status in
-               ("unchanged", "merged", "added", "removed", "conflicted",
-                "unsupported")}
+               ("unchanged", "merged", "added", "removed", "renamed",
+                "conflicted", "unsupported")}
     for entry_result in groups_report.values():
         summary[entry_result["status"]] += 1
 

@@ -166,7 +166,9 @@ merge per item with a base/ours/theirs decision, while the **structure**
 is never guessed — it is adopted whole from the side that changed it,
 and both-changed-differently cases are reported as per-element conflicts
 (an edit that cannot be placed on the adopted structure is an explicit
-conflict, never a silent drop). Sides are folders, JSON files or git
+conflict, never a silent drop); exact-content renames (same logic under
+a new name) are matched and merged under the new name. Sides are
+folders, JSON files or git
 revisions (`--repo`/`--subdir`; BASE is typically `git merge-base`);
 `--json` prints a machine-readable report. Geometry Nodes groups are
 covered; other tree types are reported as notices (`--strict` turns
@@ -336,11 +338,12 @@ extension zip.
   bundled with the add-on; nothing extra needs to be installed.
 - **Git Commit…** stages only the tracked JSONs; **Sync Changes** pulls,
   pushes, and when the branch diverged it **merges the tracked JSON
-  files per item** (values, modifier input overrides, materials/worlds)
-  and pushes a real two-parent merge commit. Anything that cannot be
-  decided — a conflicting item, or a file outside the tracked JSONs
-  changed on both sides — aborts the operation with a per-item report
-  and nothing is written; commit your JSONs first (the messages say so).
+  files per item** (values, modifier input overrides, exact-content
+  renames, materials/worlds) and pushes a real two-parent merge commit.
+  Anything that cannot be decided — a conflicting item, or a file
+  outside the tracked JSONs changed on both sides — aborts the operation
+  with a per-item report and nothing is written; commit your JSONs first
+  (the messages say so).
 - Merge-conflict markers in a JSON are detected and reported; per-group
   and repository history is available. The JSONs are plain files, so the
   repository also works with any external Git tooling — see
