@@ -294,9 +294,15 @@ issues.
    - **Merge** (merge icon): decide per item — your local edits are
      kept and the JSON changes applied on top; the common base is
      recovered from the JSON file's git history. A clean merge writes
-     the merged entry and rebuilds the group (Synced); if any item
+     the merged entry and rebuilds the group (Synced). If any item
      changed differently on both sides, **nothing is written** and the
-     merge report box lists every item (base / ours / theirs).
+     merge report box lists every item (base / ours / theirs) with an
+     **Ours / Base / JSON** choice (plus a custom value for simple
+     scalars); a structural conflict asks for one whole side. **Apply
+     Chosen Merge** writes the merged package and rebuilds the group
+     once every conflict has a decision. The editor works on the sides
+     captured when Merge was pressed: if the group changed after that,
+     Apply asks for a new Merge.
 
 **What should happen**
 

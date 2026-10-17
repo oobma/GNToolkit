@@ -295,20 +295,64 @@ def _draw_merge_report(layout, context) -> None:
     head.operator("gn.sync_merge_report_clear", text="", icon='X')
     if state.summary:
         box.label(text=state.summary, icon='INFO')
-    total = len(state.items)
-    for index, item in enumerate(state.items):
-        if index >= 20:
-            box.label(text=f"... and {total - index} more", icon='INFO')
-            break
-        if item.kind == "applied":
-            box.label(text=f"from JSON: {item.item} = {item.theirs}",
-                      icon='IMPORT')
-        elif item.kind == "notice":
-            box.label(text=item.item,
-                      icon=_layout_icon('STATUS_WARNING', 'WARNING'))
-        else:
+    editable = bool(state.uid)
+
+    undecided = 0
+    has_structure = False
+    has_identity = False
+    drawn_values = 0
+    drawn_others = 0
+    skipped = 0
+    for item in state.items:
+        kind = item.kind
+        if kind == "structure":
+            has_structure = True
+        elif kind == "identity":
+            has_identity = True
+        if kind == "value":
+            if drawn_values >= 20:
+                skipped += 1
+                continue
+            drawn_values += 1
             box.label(text=f"{item.item}: base {item.base}, ours {item.ours}, "
                            f"JSON {item.theirs}", icon='ERROR')
+            if editable:
+                box.row(align=True).prop(item, "decision", expand=True)
+                if item.decision == "custom" and item.value_type in (
+                        "float", "int", "bool", "string"):
+                    box.prop(item, "value_" + item.value_type)
+                if item.decision == "none":
+                    undecided += 1
+            continue
+        if drawn_others >= 20:
+            skipped += 1
+            continue
+        drawn_others += 1
+        if kind in ("structure", "identity"):
+            box.label(text=item.item, icon='ERROR')
+        elif kind == "applied":
+            box.label(text=f"from JSON: {item.item} = {item.theirs}",
+                      icon='IMPORT')
+        else:
+            box.label(text=item.item,
+                      icon=_layout_icon('STATUS_WARNING', 'WARNING'))
+    if skipped:
+        box.label(text=f"... and {skipped} more", icon='INFO')
+
+    if has_structure and editable:
+        box.label(text="Structure changed on both sides - pick one side",
+                  icon='ERROR')
+        box.prop(state, "structure_decision", expand=True)
+        if state.structure_decision == "none":
+            undecided += 1
+    if has_identity:
+        box.label(text="Tree type mismatch: not mergeable - use Keep JSON "
+                       "or Keep Blend", icon='ERROR')
+    if status == "conflicted" and editable:
+        apply_row = box.row()
+        apply_row.enabled = not has_identity and undecided == 0
+        apply_row.operator("gn.sync_merge_apply", text="Apply Chosen Merge",
+                           icon='CHECKMARK')
 
 
 # ---------------------------------------------------------------------------
@@ -847,6 +891,16 @@ class GN_AuditState(bpy.types.PropertyGroup):
     details: bpy.props.CollectionProperty(type=GN_AuditItem)
 
 
+def _merge_decision_items(self, context):
+    items = [("none", "...", "Not decided yet"),
+             ("ours", "Ours", "Keep the local .blend value"),
+             ("base", "Base", "Restore the pre-edit value"),
+             ("theirs", "JSON", "Take the value from the JSON file")]
+    if self.value_type in ("float", "int", "bool", "string"):
+        items.append(("custom", "Custom", "Type your own value"))
+    return items
+
+
 class GN_MergeItem(bpy.types.PropertyGroup):
     """One line of the last in-addon merge report."""
     kind: bpy.props.StringProperty()
@@ -854,6 +908,14 @@ class GN_MergeItem(bpy.types.PropertyGroup):
     base: bpy.props.StringProperty()
     ours: bpy.props.StringProperty()
     theirs: bpy.props.StringProperty()
+    key: bpy.props.StringProperty()
+    value_type: bpy.props.StringProperty()
+    decision: bpy.props.EnumProperty(items=_merge_decision_items,
+                                     default=0)
+    value_float: bpy.props.FloatProperty(name="Value")
+    value_int: bpy.props.IntProperty(name="Value")
+    value_bool: bpy.props.BoolProperty(name="Value")
+    value_str: bpy.props.StringProperty(name="Value")
 
 
 class GN_MergeState(bpy.types.PropertyGroup):
@@ -861,6 +923,12 @@ class GN_MergeState(bpy.types.PropertyGroup):
     group_name: bpy.props.StringProperty()
     status: bpy.props.StringProperty()
     summary: bpy.props.StringProperty()
+    uid: bpy.props.StringProperty()
+    structure_decision: bpy.props.EnumProperty(
+        items=[("none", "...", "Not decided yet"),
+               ("ours", "Ours", "Keep the local .blend structure"),
+               ("theirs", "JSON", "Take the structure from the JSON file")],
+        default="none")
     items: bpy.props.CollectionProperty(type=GN_MergeItem)
 
 
@@ -869,6 +937,8 @@ def _store_merge_report(context, report) -> None:
     state = context.scene.gnt_merge_state
     state.group_name = report.get("name", "")
     state.status = report.get("status", "")
+    state.uid = str(report.get("uid", ""))
+    state.structure_decision = "none"
     applied = list(report.get("applied") or [])
     conflicts = list(report.get("conflicts") or [])
     state.summary = (f"{len(applied)} item(s) from JSON, "
@@ -894,6 +964,13 @@ def _store_merge_report(context, report) -> None:
         row.base = str(conflict.get("base", ""))
         row.ours = str(conflict.get("ours", ""))
         row.theirs = str(conflict.get("theirs", ""))
+        row.key = str(conflict.get("key", ""))
+        row.value_type = str(conflict.get("value_type", "other"))
+        row.decision = "none"
+        row.value_float = 0.0
+        row.value_int = 0
+        row.value_bool = False
+        row.value_str = ""
 
 
 def _audit_add(state, kind: str, text: str) -> None:
@@ -1172,9 +1249,84 @@ class GN_OT_SyncMergeConflict(bpy.types.Operator):
         if status == "conflicted":
             self.report(
                 {'WARNING'},
-                "Merge conflicts in '%s' (%d) - nothing was written, see the "
-                "merge report"
+                "Merge conflicts in '%s' (%d) - decide them in the merge "
+                "report (nothing was written yet)"
                 % (name, len(report.get("conflicts") or [])))
+            return {'FINISHED'}
+        reason = report.get("reason") or "; ".join(report.get("notices") or [])
+        self.report({'ERROR'}, "Merge not applied: %s" % (reason or status))
+        return {'CANCELLED'}
+
+
+def _merge_custom_value(item):
+    if item.value_type == "float":
+        return float(item.value_float)
+    if item.value_type == "int":
+        return int(item.value_int)
+    if item.value_type == "bool":
+        return bool(item.value_bool)
+    return str(item.value_str)
+
+
+class GN_OT_SyncMergeApply(bpy.types.Operator):
+    bl_idname = "gn.sync_merge_apply"
+    bl_label = "Apply Chosen Merge"
+    bl_description = ("Write the merged package with the per-item decisions "
+                      "chosen in the merge report, rebuild the group in the "
+                      ".blend and mark it Synced; nothing is written while "
+                      "any conflict is undecided")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        state = context.scene.gnt_merge_state
+        if not state.uid:
+            self.report({'ERROR'}, "No editable merge report - press Merge "
+                                   "in the group row first")
+            return {'CANCELLED'}
+        values = {}
+        undecided = 0
+        has_structure = False
+        for item in state.items:
+            if item.kind == "value":
+                if item.key and item.decision in ("ours", "base", "theirs"):
+                    values[item.key] = item.decision
+                elif item.key and item.decision == "custom":
+                    values[item.key] = {"custom": _merge_custom_value(item)}
+                else:
+                    undecided += 1
+            elif item.kind == "structure":
+                has_structure = True
+            elif item.kind == "identity":
+                self.report({'ERROR'}, "A tree type mismatch cannot be "
+                                       "merged - use Keep JSON or Keep Blend")
+                return {'CANCELLED'}
+        overrides = {"values": values}
+        if has_structure:
+            if state.structure_decision in ("ours", "theirs"):
+                overrides["structure"] = state.structure_decision
+            else:
+                undecided += 1
+        if undecided:
+            self.report({'WARNING'},
+                        "%d conflict(s) still have no decision" % undecided)
+            return {'CANCELLED'}
+        report = sync_manager.merge_conflict(state.uid, overrides=overrides)
+        _store_merge_report(context, report)
+        sync_manager.save()
+        from .sync_operators import _tag_ui_redraw
+        _tag_ui_redraw(context)
+        status = report.get("status")
+        name = report.get("name") or "the group"
+        if status == "merged":
+            self.report({'INFO'},
+                        "Merged '%s': %d item(s) applied"
+                        % (name, len(report.get("applied") or [])))
+            return {'FINISHED'}
+        if status == "conflicted":
+            self.report({'WARNING'},
+                        "Still %d unresolved conflict(s) in '%s' - nothing "
+                        "was written"
+                        % (len(report.get("conflicts") or []), name))
             return {'FINISHED'}
         reason = report.get("reason") or "; ".join(report.get("notices") or [])
         self.report({'ERROR'}, "Merge not applied: %s" % (reason or status))
@@ -1678,6 +1830,7 @@ classes = (
     GN_OT_SyncResolveBlend,
     GN_OT_SyncResolveJSON,
     GN_OT_SyncMergeConflict,
+    GN_OT_SyncMergeApply,
     GN_OT_SyncMergeReportClear,
     GN_OT_CopyJSONPath,
     GN_OT_RevealJSONPath,

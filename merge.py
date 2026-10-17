@@ -18,6 +18,10 @@ Implements the v1 merge semantics (spec 2026-10-16):
   re-implemented.
 * Never lose work silently: an edit that cannot be placed on the adopted
   structure becomes an explicit conflict, never a silent drop.
+* MANUAL RESOLUTION (editor, spec 2026-10-17): an optional ``overrides``
+  argument resolves conflicted items per value key (ours/theirs/base or a
+  custom scalar) and a conflicted structure as one whole side.  Without
+  it the output is byte-identical to the automatic merge.
 
 Preview only: nothing here writes to disk.  ``merge_group_entries``
 decides one entry, ``merge_group_maps`` decides a whole name -> entry map
@@ -137,6 +141,56 @@ def _item_label(key) -> str:
     if kind == "treecustom":
         return "tree custom property '%s'" % key[1]
     return repr(key)
+
+
+def value_key_id(key) -> str:
+    """Deterministic id for a value item key (the ``key`` report field)."""
+    return json.dumps(list(key), ensure_ascii=True)
+
+
+def _value_type(*values) -> str:
+    """Common scalar type of a conflict's raw values (for custom editing)."""
+    kinds = set()
+    for value in values:
+        if value is _ABSENT:
+            continue
+        if isinstance(value, bool):
+            kinds.add("bool")
+        elif isinstance(value, int):
+            kinds.add("int")
+        elif isinstance(value, float):
+            kinds.add("float")
+        elif isinstance(value, str):
+            kinds.add("string")
+        else:
+            return "other"
+    if len(kinds) == 1:
+        return kinds.pop()
+    return "other"
+
+
+def _add_value_conflict(conflicts, key, v_adopted, b, o, t) -> None:
+    msg = _item_label(key)
+    if key not in v_adopted:
+        msg += " - item not present in the adopted structure"
+    conflicts.append({"kind": "value", "item": msg,
+                      "key": value_key_id(key),
+                      "value_type": _value_type(b, o, t),
+                      "base": _short(b), "ours": _short(o),
+                      "theirs": _short(t)})
+
+
+def _apply_override_choice(decision, b, o, t):
+    """Map one override decision to (resolved, winner, winner_side)."""
+    if decision == "ours":
+        return True, o, "ours"
+    if decision == "theirs":
+        return True, t, "theirs"
+    if decision == "base":
+        return True, b, "base"
+    if isinstance(decision, dict) and "custom" in decision:
+        return True, decision["custom"], "custom"
+    return False, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -473,12 +527,19 @@ def _structure_conflicts(s_base: dict, s_ours: dict, s_theirs: dict,
 # ---------------------------------------------------------------------------
 
 def merge_group_entries(base: dict, ours: dict, theirs: dict,
-                        name: str | None = None) -> dict:
+                        name: str | None = None,
+                        overrides: dict | None = None) -> dict:
     """Decide the 3-way merge of one group entry.
 
     Returns a result dict with ``status`` one of ``unchanged``, ``merged``,
     ``conflicted``, ``unsupported``; ``merged`` (the new entry) only when
     the merge is clean; ``conflicts``/``applied``/``notices`` for reports.
+
+    ``overrides`` (manual editor, spec 2026-10-17) resolves conflicted
+    items: ``{"structure": "ours"|"theirs", "values": {key: choice}}``
+    with ``choice`` one of ``"ours"``, ``"theirs"``, ``"base"`` or
+    ``{"custom": value}``.  Only keys that were in conflict are honoured;
+    anything that still cannot be placed stays an explicit conflict.
     """
     group_name = name or ours.get("name") or base.get("name") \
         or theirs.get("name") or ""
@@ -510,6 +571,7 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
     v_b, v_o, v_t = (_extract_values(c) for c in canon)
 
     notices = []
+    manual_structure = False
     if s_o == s_t:
         adopted_side, adopted = "ours", ours
         if s_o != s_b:
@@ -520,12 +582,28 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
     elif s_o == s_b:
         adopted_side, adopted = "theirs", theirs
     else:
-        return _result(group_name, "conflicted",
-                       conflicts=_structure_conflicts(s_b, s_o, s_t))
+        structure_choice = (overrides.get("structure")
+                            if isinstance(overrides, dict) else None)
+        if structure_choice in ("ours", "theirs"):
+            adopted_side = structure_choice
+            adopted = ours if adopted_side == "ours" else theirs
+            manual_structure = True
+            notices.append("conflicting structure resolved manually: "
+                           "taken from %s" % adopted_side)
+        else:
+            return _result(group_name, "conflicted",
+                           conflicts=_structure_conflicts(s_b, s_o, s_t))
+
+    value_overrides = {}
+    if isinstance(overrides, dict):
+        raw_values = overrides.get("values")
+        if isinstance(raw_values, dict):
+            value_overrides = raw_values
 
     merged = deepcopy(adopted)
     applied = []
     conflicts = []
+    dropped = 0
     v_adopted = v_o if adopted_side == "ours" else v_t
 
     for key in sorted(set(v_o) | set(v_t)):
@@ -534,19 +612,28 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
         t = v_t.get(key, _ABSENT)
         if o == t:
             continue
-        if b == o:
-            winner, winner_side = t, "theirs"
-        elif b == t:
-            winner, winner_side = o, "ours"
-        else:
-            msg = _item_label(key)
-            if key not in v_adopted:
-                msg += " - item not present in the adopted structure"
-            conflicts.append({"kind": "value", "item": msg,
-                              "base": _short(b), "ours": _short(o),
-                              "theirs": _short(t)})
+        if manual_structure and key not in v_adopted:
+            # the user explicitly kept the other side's structure: values
+            # that only lived in the discarded structure go with it
+            dropped += 1
             continue
-        if winner_side == adopted_side:
+        decision = value_overrides.get(value_key_id(key))
+        manual = decision is not None
+        if not manual:
+            if b == o:
+                winner, winner_side = t, "theirs"
+            elif b == t:
+                winner, winner_side = o, "ours"
+            else:
+                _add_value_conflict(conflicts, key, v_adopted, b, o, t)
+                continue
+        else:
+            resolved, winner, winner_side = _apply_override_choice(
+                decision, b, o, t)
+            if not resolved:
+                _add_value_conflict(conflicts, key, v_adopted, b, o, t)
+                continue
+        if not manual and winner_side == adopted_side:
             continue
         if winner is _ABSENT:
             _apply_value(merged, key, _ABSENT)
@@ -556,15 +643,14 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
             applied.append({"item": _item_label(key), "from": winner_side,
                             "value": _short(winner)})
         else:
-            conflicts.append({
-                "kind": "value",
-                "item": _item_label(key)
-                + " - item not present in the adopted structure",
-                "base": _short(b), "ours": _short(o), "theirs": _short(t)})
+            _add_value_conflict(conflicts, key, v_adopted, b, o, t)
 
+    if dropped:
+        notices.append("%d value(s) of the discarded structure were dropped"
+                       % dropped)
     if conflicts:
         return _result(group_name, "conflicted", conflicts=conflicts,
-                       notices=notices)
+                       applied=applied, notices=notices)
     return _result(group_name, "merged", adopted_structure=adopted_side,
                    merged=merged,
                    merged_hash=canonical_hash_from_json_data(merged),

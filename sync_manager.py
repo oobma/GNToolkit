@@ -398,6 +398,7 @@ class SyncManager:
         self._check_total: int = 0
         self.commit_suggestion: str = ""
         self._staged: set = set()
+        self._merge_sessions: dict[str, dict] = {}
 
     # --- Load / save -------------------------------------------------------
 
@@ -2140,7 +2141,8 @@ class SyncManager:
             return self.import_from_json(sync_uuid)
         return None
 
-    def merge_conflict(self, sync_uuid: str) -> dict:
+    def merge_conflict(self, sync_uuid: str,
+                       overrides: dict | None = None) -> dict:
         """Resolve a CONFLICT by merging values per item (spec 2026-10-16).
 
         Sides: ours = the live .blend group, theirs = the JSON entry on
@@ -2150,6 +2152,11 @@ class SyncManager:
         the package and rebuilds the group in the .blend; conflicts or an
         unrecoverable base change nothing and come back as a report.
         Never raises; every outcome is a status in the returned dict.
+
+        Manual editor (spec 2026-10-17): the first call captures the three
+        sides in a session; a later call with ``overrides`` re-merges the
+        *captured* sides (the group must be unchanged, checked by hash) and
+        writes the result when the resolution is complete.
         """
         info = get_tracked_group(self.metadata, sync_uuid)
         if info is None:
@@ -2178,56 +2185,81 @@ class SyncManager:
             return {"status": "unavailable", "name": name,
                     "reason": "the JSON file was not found"}
 
-        last_json_hash = info.get("last_json_hash", "")
-        if not last_json_hash:
-            return {"status": "no_base", "name": name,
-                    "reason": "no recorded baseline hash to look up in git"}
+        session = self._merge_sessions.get(sync_uuid)
+        if overrides is not None:
+            if session is None:
+                return {"status": "unavailable", "name": name,
+                        "reason": "press Merge first - the conflict editor "
+                                  "works on the captured sides"}
+            current = serialize_node_tree(tree)
+            if canonical_hash_from_json_data(current) != \
+                    canonical_hash_from_json_data(session["ours"]):
+                return {"status": "stale", "name": name,
+                        "reason": "the group changed since Merge was "
+                                  "pressed - press Merge again"}
+            base = session["base"]
+            ours = session["ours"]
+            theirs = session["theirs"]
+            base_rev = session.get("base_rev", "")
+        else:
+            last_json_hash = info.get("last_json_hash", "")
+            if not last_json_hash:
+                return {"status": "no_base", "name": name,
+                        "reason": "no recorded baseline hash to look up "
+                                  "in git"}
 
-        from .git_integration import (find_git_repo, read_blob_at,
-                                      revisions_for_path)
-        repo_root = find_git_repo(json_path)
-        if not repo_root:
-            return {"status": "no_base", "name": name,
-                    "reason": "the JSON file is not in a git repository - "
-                              "the merge base comes from git history"}
+            from .git_integration import (find_git_repo, read_blob_at,
+                                          revisions_for_path)
+            repo_root = find_git_repo(json_path)
+            if not repo_root:
+                return {"status": "no_base", "name": name,
+                        "reason": "the JSON file is not in a git repository "
+                                  "- the merge base comes from git history"}
 
-        json_data = read_json_tolerant(json_path)
-        theirs = (package_entry(_ensure_package_shape(json_data), info)
-                  if json_data is not None else None)
-        if theirs is None:
-            return {"status": "unavailable", "name": name,
-                    "reason": "the JSON file has no entry for this group"}
+            json_data = read_json_tolerant(json_path)
+            theirs = (package_entry(_ensure_package_shape(json_data), info)
+                      if json_data is not None else None)
+            if theirs is None:
+                return {"status": "unavailable", "name": name,
+                        "reason": "the JSON file has no entry for this group"}
 
-        ours = serialize_node_tree(tree)
+            ours = serialize_node_tree(tree)
 
-        rel_path = os.path.relpath(json_path, repo_root).replace(os.sep, "/")
-        base = None
-        base_rev = ""
-        for rev in revisions_for_path(repo_root, rel_path,
-                                      MERGE_BASE_SEARCH_LIMIT):
-            blob = read_blob_at(repo_root, rev, rel_path)
-            if blob is None:
-                continue
-            try:
-                data = json.loads(blob.decode("utf-8-sig"))
-            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-                continue
-            entry = package_entry(_ensure_package_shape(data), info)
-            if entry is None:
-                continue
-            if canonical_hash_from_json_data(entry) == last_json_hash:
-                base, base_rev = entry, rev
-                break
-        if base is None:
-            return {"status": "no_base", "name": name,
-                    "reason": "the baseline content was not found in the "
-                              "JSON file's git history - commit the JSON "
-                              "with each save so merges can find it"}
+            rel_path = os.path.relpath(json_path,
+                                       repo_root).replace(os.sep, "/")
+            base = None
+            base_rev = ""
+            for rev in revisions_for_path(repo_root, rel_path,
+                                          MERGE_BASE_SEARCH_LIMIT):
+                blob = read_blob_at(repo_root, rev, rel_path)
+                if blob is None:
+                    continue
+                try:
+                    data = json.loads(blob.decode("utf-8-sig"))
+                except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                    continue
+                entry = package_entry(_ensure_package_shape(data), info)
+                if entry is None:
+                    continue
+                if canonical_hash_from_json_data(entry) == last_json_hash:
+                    base, base_rev = entry, rev
+                    break
+            if base is None:
+                return {"status": "no_base", "name": name,
+                        "reason": "the baseline content was not found in the "
+                                  "JSON file's git history - commit the JSON "
+                                  "with each save so merges can find it"}
 
-        result = merge_group_entries(base, ours, theirs, name=name)
+            self._merge_sessions[sync_uuid] = {"base": base, "ours": ours,
+                                               "theirs": theirs,
+                                               "base_rev": base_rev}
+
+        result = merge_group_entries(base, ours, theirs, name=name,
+                                     overrides=overrides)
         report = {
             "status": result["status"],
             "name": name,
+            "uid": sync_uuid,
             "base_rev": base_rev,
             "adopted_structure": result.get("adopted_structure"),
             "merged_hash": result.get("merged_hash"),
@@ -2260,6 +2292,7 @@ class SyncManager:
             report["notices"].append(
                 "the merged JSON was written but the .blend rebuild "
                 "reported %d error(s)" % tracker.error_count)
+        self._merge_sessions.pop(sync_uuid, None)
         self._dirty = True
         return report
 

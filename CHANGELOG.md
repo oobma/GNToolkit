@@ -6,6 +6,18 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Merge conflicts resolve item by item (in the add-on).** A conflicted
+  group no longer stops at the report: every value conflict offers
+  Ours / Base / JSON and, for simple scalars (float, int, bool, string),
+  a custom value typed in place; a structure that changed differently on
+  both sides asks for one whole side. **Apply Chosen Merge** writes the
+  merged package, rebuilds the group in the .blend and ends Synced - only
+  when every conflict has a decision; nothing is written before that. The
+  editor works on the sides captured when Merge was pressed (if the
+  group changed after that, Apply asks for a new Merge), and a partial
+  decision stays visible in the report. The git-sync conflict report
+  remains informative: those merges abort as before and are resolved in
+  the add-on or with your Git client.
 - **A diverged Sync merges the tracked JSON files instead of stopping.**
   When "Git Sync" cannot fast-forward because local and remote commits
   both moved, the tracked package files are now merged 3-way per item:

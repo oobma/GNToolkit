@@ -299,10 +299,14 @@ extension zip.
   board"** to reproduce whatever arrangement the node editor shows
   (e.g. after an external node arrangement).
 - **Conflict resolution**: keep the .blend or the JSON version with a
-  single click — or **Merge**: the per-item value merge keeps your local
+  single click - or **Merge**: the per-item value merge keeps your local
   edits, applies the JSON changes on top (the common base is recovered
-  from the JSON file's git history) and reports every item the two sides
-  changed differently; nothing is written in that case.
+  from the JSON file's git history). If items changed differently on
+  both sides, the merge report lists each one with an Ours / Base / JSON
+  choice (plus a custom value for simple scalars) and resolves a
+  conflicting structure by picking one whole side; **Apply Chosen
+  Merge** writes the merged package and rebuilds the group once every
+  conflict is decided.
 - **JSON files visibility**: the Sync panel always shows where each
   group is tracked — the active group's JSON (`Active: name →
   file.json`) and a collapsible list of all tracked JSON files with
@@ -412,8 +416,11 @@ extension zip.
      JSON.
    - **Pull** (JSON → .blend): overwrite the .blend version with the
      JSON.
-   - **Keep JSON / Keep Blend**: resolve a conflict by choosing a side.
-   - **Ignore**: hide the issue without changing any data.
+    - **Merge**: decide a conflict item by item (Ours / Base / JSON, or a
+      custom simple scalar) and apply the result; a structure conflict
+      asks for one whole side.
+    - **Keep JSON / Keep Blend**: resolve a conflict by choosing a side.
+    - **Ignore**: hide the issue without changing any data.
    - **Stop Tracking**: remove tracking; the JSON file and the node tree
      are kept.
 
@@ -496,7 +503,8 @@ transport for them:
    staged) and synchronizes with **Sync Changes**: pull + push, and when
    the branch diverged the tracked JSON files merge per item into a real
    two-parent merge commit — if anything conflicts, nothing is written
-   and the per-item report lands in the merge report box.
+   and the per-item report lands in the merge report box (resolve those
+   with each group's **Merge** or with your Git client).
 3. Conflict markers in a JSON are detected and reported; resolve them
    with your Git tooling.
 4. Full guide:
@@ -539,7 +547,7 @@ and the .blend hash against the stored hash:
 | Synced | Both sides match | — |
 | Edited Locally | Only the .blend changed | Save to JSON |
 | Changed in JSON | Only the JSON changed | Pull |
-| Conflict | Both sides changed | Keep JSON or Keep Blend |
+| Conflict | Both sides changed | Merge (item by item), Keep JSON or Keep Blend |
 | Missing in Blend | The node tree no longer exists in the .blend | Restore from JSON or Stop Tracking |
 | Untracked | Not tracked against any JSON | Track |
 | JSON File Missing | The JSON file is gone | Re-create JSON or Stop Tracking |

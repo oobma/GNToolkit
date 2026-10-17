@@ -126,7 +126,9 @@ automatically when one is present.
     that cannot be decided aborts the whole operation with a per-item
     report in the merge report box and **nothing is written**; files that
     are not tracked JSON changed on both sides also abort (they are never
-    merged blindly). Tracked files must be committed first — the refusal
+    merged blindly). That sync report is informative: conflict items are
+    resolved in the add-on (per-group Merge) or with your Git client, not
+    from the report box itself. Tracked files must be committed first — the refusal
     message says so. After a clean sync the sync status cache is
     refreshed so a changed JSON shows up as "Changed in JSON"
     immediately. When the pull brought changes, the tracked groups of
@@ -184,7 +186,12 @@ row shows as **Conflict** and offers three exits:
   the group, ending Synced. If any item changed differently on both
   sides (or both restructured the group differently), **nothing is
   written** and the merge report box lists every item with its
-  base/ours/theirs values.
+  base/ours/theirs values and an **Ours / Base / JSON** choice (plus a
+  custom value for simple scalars); a conflicting structure asks for one
+  whole side. **Apply Chosen Merge** writes the merged package and
+  rebuilds the group once every conflict has a decision. The decisions
+  apply to the sides captured when Merge was pressed — if the group
+  changed after that, apply asks for a new Merge.
 - **Keep JSON** / **Keep Blend** — the one-sided resolutions, unchanged.
 
 `git merge-base`/history is required: merging needs the JSON file to be
