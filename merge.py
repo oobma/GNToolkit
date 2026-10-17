@@ -671,6 +671,50 @@ def _merge_rename_pair(old, side, new, base_groups, ours_groups,
                    applied=inner.get("applied"), notices=notices)
 
 
+def pair_renamed_files(deletions: dict, additions: dict) -> dict:
+    """``{old_rel: new_rel}`` exact-content renames between two file sets.
+
+    *deletions* / *additions* map repo-relative paths to their parsed
+    JSON data (a deletion uses its base content, an addition its new
+    content; ``None`` entries are skipped).  A pair forms when both sides
+    parse as packages, every ``node_groups`` entry is a Geometry Nodes
+    tree, the entry-set fingerprints match exactly and the match is
+    1-to-1 on both sides - ambiguity never guesses.
+    """
+    def fingerprint(data):
+        if not isinstance(data, dict):
+            return None
+        pkg = as_package_dict(data)
+        groups = pkg.get("node_groups") if isinstance(pkg, dict) else None
+        if not isinstance(groups, dict) or not groups:
+            return None
+        hashes = []
+        for entry in groups.values():
+            if _tree_type(entry) != _DEFAULT_TREE_TYPE:
+                return None
+            value = _content_fingerprint(entry)
+            if value is None:
+                return None
+            hashes.append(value)
+        return tuple(sorted(hashes))
+
+    olds, news = {}, {}
+    for rel, data in deletions.items():
+        value = fingerprint(data)
+        if value:
+            olds.setdefault(value, []).append(rel)
+    for rel, data in additions.items():
+        value = fingerprint(data)
+        if value:
+            news.setdefault(value, []).append(rel)
+    pairs = {}
+    for value, old_rels in olds.items():
+        new_rels = news.get(value) or []
+        if len(old_rels) == 1 and len(new_rels) == 1:
+            pairs[old_rels[0]] = new_rels[0]
+    return pairs
+
+
 def merge_group_maps(base_groups: dict, ours_groups: dict,
                      theirs_groups: dict) -> dict:
     """Decide the 3-way merge of three ``{name: entry}`` maps.

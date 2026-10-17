@@ -344,7 +344,14 @@ def diff_names(repo_root, sha_a, sha_b):
             new = repo[sha_b.encode()].tree
             names = set()
             for change in tree_changes(repo.object_store, old, new):
-                path = change.new.path or change.old.path
+                # TreeChange.new is None for deletions (and .old for
+                # additions), so the fallback chain must be explicit.
+                if change.new is not None:
+                    path = change.new.path
+                elif change.old is not None:
+                    path = change.old.path
+                else:
+                    path = None
                 if path:
                     names.add(_fs_rel(path))
             return sorted(names)
@@ -486,7 +493,12 @@ def commit_merge(repo_root, message, rel_paths, second_parent):
             if adds:
                 porcelain.add(repo, paths=adds)
             if removals:
-                porcelain.remove(repo, paths=removals)
+                index = repo.open_index()
+                staged = [rel for rel in removals
+                          if rel.replace(os.sep, "/").encode("utf-8")
+                          in index]
+                if staged:
+                    porcelain.remove(repo, paths=staged)
             identity = _identity(repo)
             try:
                 sha = repo.get_worktree().commit(
@@ -546,9 +558,16 @@ def restore_paths(repo_root, blobs):
 
 
 class _Task:
-    """poll() -> None while pending, final payload once done."""
+    """poll() -> None while pending, final payload once done.
+
+    ``done()`` disambiguates a finished task whose payload is ``None``
+    (reading a missing blob, a restore pass) from a task still pending.
+    """
 
     def poll(self):
+        raise NotImplementedError
+
+    def done(self):
         raise NotImplementedError
 
     def kill(self):
@@ -566,6 +585,9 @@ class _CallTask(_Task):
             self._value = self._fn()
             self._done = True
         return self._value
+
+    def done(self):
+        return self._done
 
 
 _bundled_python_cache = None
@@ -684,6 +706,9 @@ class _WorkerTask(_Task):
         self._close_files()
         self._done = True
         return self._value
+
+    def done(self):
+        return self._done
 
     def kill(self):
         self._kill_process()

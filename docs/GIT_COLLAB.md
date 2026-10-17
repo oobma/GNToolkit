@@ -119,7 +119,8 @@ automatically when one is present.
   - **Sync Changes** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
-    (values, modifier inputs, materials/worlds — `ours` = your HEAD,
+    (values, modifier inputs, materials/worlds, and exact-content
+    renames per entry or per renamed file — `ours` = your HEAD,
     `theirs` = the upstream branch, `base` = their merge-base), written,
     committed as a real two-parent merge commit and pushed. Any item
     that cannot be decided aborts the whole operation with a per-item

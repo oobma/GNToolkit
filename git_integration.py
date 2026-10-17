@@ -31,7 +31,7 @@ import logging
 import os
 
 from .file_utils import write_file_bytes, write_json_file
-from .merge import merge_package_dicts
+from .merge import merge_package_dicts, pair_renamed_files
 
 _log = logging.getLogger("GNToolkit.git")
 
@@ -527,9 +527,12 @@ def _merge_remote_changes(repo, payload, backend):
     """Generator: semantic continuation of a diverged sync (F4).
 
     ours = HEAD, theirs = upstream, base = merge-base.  Tracked JSON
-    files changed on both sides merge per item; any other file changed on
-    both sides aborts.  A clean result is written, staged and committed
-    as a real two-parent merge commit, then pushed.
+    files changed on both sides merge per item; a tracked file deleted on
+    one side and re-added under a new name on that same side with
+    identical content is a file-level rename and merges onto the new
+    name; any other file changed on both sides aborts.  A file deleted on
+    both sides stays deleted.  A clean result is written, staged and
+    committed as a real two-parent merge commit, then pushed.
     """
     tracked_paths = repos_for_tracked(payload.get("metadata"),
                                       payload.get("blend_dir")).get(repo, [])
@@ -579,29 +582,138 @@ def _merge_remote_changes(repo, payload, backend):
     ours_changed = yield ("task", backend.diff_names_task(repo, base, head))
     theirs_changed = yield ("task", backend.diff_names_task(repo, base,
                                                             upstream))
+    ours_only = sorted(set(ours_changed) - set(theirs_changed))
     both = sorted(set(ours_changed) & set(theirs_changed))
     theirs_only = sorted(set(theirs_changed) - set(ours_changed))
+
+    # File-level renames (v2): a tracked JSON deleted on one side and
+    # re-added under a new name on that same side with identical content
+    # pairs up and the other side's edits land on the new file.  Exact
+    # 1-to-1 content matches only; anything else falls back to v1 rules.
+    def _soft_json(blob):
+        try:
+            return _json_load_bytes(blob)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
+    both_blobs = {}
+    for rel in both:
+        ours_blob = yield ("task", backend.read_blob_task(repo, head, rel))
+        theirs_blob = yield ("task", backend.read_blob_task(repo, upstream,
+                                                           rel))
+        base_blob = yield ("task", backend.read_blob_task(repo, base, rel))
+        both_blobs[rel] = (ours_blob, theirs_blob, base_blob)
+    deletions = {"ours": {}, "theirs": {}}
+    for rel, (ours_blob, theirs_blob, base_blob) in both_blobs.items():
+        if ours_blob is None and theirs_blob is not None:
+            deletions["ours"][rel] = _soft_json(base_blob)
+        elif theirs_blob is None and ours_blob is not None:
+            deletions["theirs"][rel] = _soft_json(base_blob)
+    additions = {"ours": {}, "theirs": {}}
+    for side, names, sha in (("ours", ours_only, head),
+                             ("theirs", theirs_only, upstream)):
+        for rel in names:
+            base_blob = yield ("task",
+                               backend.read_blob_task(repo, base, rel))
+            if base_blob is not None:
+                continue
+            added_blob = yield ("task",
+                                backend.read_blob_task(repo, sha, rel))
+            additions[side][rel] = _soft_json(added_blob)
+    renamed_ours = pair_renamed_files(deletions["ours"], additions["ours"])
+    renamed_theirs = pair_renamed_files(deletions["theirs"],
+                                        additions["theirs"])
+    clashes = sorted(set(renamed_ours) & set(renamed_theirs))
+    if clashes:
+        old_rel = clashes[0]
+        report = {
+            "conflicts": [{
+                "kind": "rename/rename",
+                "item": "file renamed to '%s' on ours and to '%s' on theirs"
+                        % (renamed_ours[old_rel], renamed_theirs[old_rel]),
+                "base": "(same content)",
+                "ours": "-> '%s'" % renamed_ours[old_rel],
+                "theirs": "-> '%s'" % renamed_theirs[old_rel]}],
+            "applied": [], "notices": []}
+        return {"status": "merge_conflict",
+                "detail": "file '%s' was renamed on both sides - resolve "
+                          "it with your Git client" % old_rel,
+                "files": [], "report": _file_merge_report(old_rel, report)}
 
     merged_files = {}
     plan_writes = {}
     plan_deletes = set()
+    paired_new = set(renamed_theirs.values())
     for rel in theirs_only:
+        if rel in paired_new:
+            continue  # the pair merge below writes the new file
         blob = yield ("task", backend.read_blob_task(repo, upstream, rel))
         if blob is None:
             plan_deletes.add(rel)
         else:
             plan_writes[rel] = blob
+
+    for old_rel in sorted(renamed_ours):
+        new_rel = renamed_ours[old_rel]
+        _ours_blob, theirs_blob, base_blob = both_blobs[old_rel]
+        new_blob = yield ("task", backend.read_blob_task(repo, head,
+                                                         new_rel))
+        try:
+            ours_data = _json_load_bytes(new_blob)
+            theirs_data = _json_load_bytes(theirs_blob)
+            base_data = _json_load_bytes(base_blob)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return {"status": "merge_blocked",
+                    "detail": "cannot read '%s': %s" % (old_rel, exc),
+                    "files": []}
+        report = merge_package_dicts(base_data, ours_data, theirs_data)
+        if not report["ok"]:
+            return {"status": "merge_conflict",
+                    "detail": "merge conflicts in '%s' (renamed to '%s') - "
+                              "nothing was written" % (old_rel, new_rel),
+                    "files": [],
+                    "report": _file_merge_report(old_rel, report)}
+        merged_files[new_rel] = report["merged"]
+        plan_deletes.add(old_rel)
+
+    for old_rel in sorted(renamed_theirs):
+        new_rel = renamed_theirs[old_rel]
+        ours_blob, _theirs_blob, base_blob = both_blobs[old_rel]
+        new_blob = yield ("task", backend.read_blob_task(repo, upstream,
+                                                         new_rel))
+        try:
+            ours_data = _json_load_bytes(ours_blob)
+            theirs_data = _json_load_bytes(new_blob)
+            base_data = _json_load_bytes(base_blob)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return {"status": "merge_blocked",
+                    "detail": "cannot read '%s': %s" % (old_rel, exc),
+                    "files": []}
+        report = merge_package_dicts(base_data, ours_data, theirs_data)
+        if not report["ok"]:
+            return {"status": "merge_conflict",
+                    "detail": "merge conflicts in '%s' (renamed to '%s') - "
+                              "nothing was written" % (old_rel, new_rel),
+                    "files": [],
+                    "report": _file_merge_report(old_rel, report)}
+        merged_files[new_rel] = report["merged"]
+        plan_deletes.add(old_rel)
+
     for rel in both:
+        ours_blob, theirs_blob, base_blob = both_blobs[rel]
+        if rel in renamed_ours or rel in renamed_theirs:
+            continue  # handled as a rename pair above
+        if ours_blob is None and theirs_blob is None:
+            # deleted on both sides: it stays deleted (it used to be
+            # rewritten as an empty package)
+            plan_deletes.add(rel)
+            continue
         if os.path.normcase(rel) not in tracked_norm:
             return {"status": "merge_blocked",
                     "detail": "file '%s' changed on both sides; only tracked "
                               "JSON files can merge - resolve it with your "
                               "Git client" % rel,
                     "files": []}
-        ours_blob = yield ("task", backend.read_blob_task(repo, head, rel))
-        theirs_blob = yield ("task", backend.read_blob_task(repo, upstream,
-                                                            rel))
-        base_blob = yield ("task", backend.read_blob_task(repo, base, rel))
         try:
             ours_data = _json_load_bytes(ours_blob)
             theirs_data = _json_load_bytes(theirs_blob)
@@ -726,7 +838,7 @@ def advance_git_jobs():
             except Exception as exc:
                 _finish_job(job, _job_failure(exc))
                 continue
-            if result is None:
+            if result is None and not job["task"].done():
                 return True
             _close_task(job["task"])
             job["task"] = None

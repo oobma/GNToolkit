@@ -64,7 +64,13 @@ All notable changes to this project are documented in this file.
   form only on unique 1-to-1 fingerprint matches (ambiguity never
   guesses) and only for Geometry Nodes trees; `MERGE_VERSION` is now 2.
   The generic "possible renames" notice fires only for leftovers without
-  an exact-content match.
+  an exact-content match. The diverged **Sync applies the same rule to
+  whole JSON files** in folder layouts: a tracked file renamed on one
+  side (deleted and re-added with identical content) pairs up and the
+  other side's edits land on the new file — both directions; both sides
+  renaming the same file to different names refuses with a per-file
+  `rename/rename` conflict, and a file deleted on both sides now stays
+  deleted (it used to be rewritten as an empty package).
 - **Export JSON Package can filter by category.** The export dialog gains
   an "Include:" set of switches — Geometry Nodes groups, Shader groups,
   NODES modifiers, materials and worlds — all on by default (unchanged
@@ -128,6 +134,25 @@ All notable changes to this project are documented in this file.
   committed JSON. With it excluded, the canonical hash of an identical
   OSL material is the same across separate Blender processes (verified
   in the gate).
+- **The diverged sync no longer hangs on deleted files.** The job pump
+  treated a finished task whose payload was `None` as still pending, so
+  any merge step that legitimately reads a missing blob — a file deleted
+  on one side, or a deleted-on-both path — waited forever (latent since
+  the diverged-sync merge shipped); completion now comes from an
+  explicit task flag.
+- **The Dulwich engine's diff hid deletions.** Tree-change entries carry
+  no `new` side for a deletion; the path fallback crashed and the diff
+  came back empty, so deleted files were invisible to the merge
+  planning.
+- **The system-Git engine's diff hid deletions behind rename
+  detection.** `git diff --name-only` collapses a delete + add into a
+  single new path; the engine now diffs with `--no-renames` so both
+  halves reach the rename pairing.
+- **Merge commits tolerate paths already deleted.** Staging a path gone
+  from both the worktree and the index (the old half of a rename, or a
+  file deleted on both sides) made `git add` refuse the pathspec and
+  `porcelain.remove` abort; both engines stage only what exists or is
+  tracked.
 
 `HASH_VERSION` 22 — stored baselines re-stamp automatically; entries
 containing custom group nodes re-sync once.

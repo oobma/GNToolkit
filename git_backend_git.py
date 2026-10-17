@@ -226,9 +226,20 @@ def commit_merge(repo_root, message, rel_paths, second_parent):
                        "then restart Blender")
     rel = list(rel_paths)
     if rel:
-        rc, out, err = _git(["add", "-A", "--"] + rel, repo_root)
-        if rc != 0:
-            return False, (err or out).strip() or "git add failed"
+        stageable = []
+        for path in rel:
+            abs_path = os.path.join(repo_root, path.replace("/", os.sep))
+            if os.path.isfile(abs_path):
+                stageable.append(path)
+                continue
+            rc, _out, _err = _git(["ls-files", "--error-unmatch", "--",
+                                   path], repo_root)
+            if rc == 0:
+                stageable.append(path)
+        if stageable:
+            rc, out, err = _git(["add", "-A", "--"] + stageable, repo_root)
+            if rc != 0:
+                return False, (err or out).strip() or "git add failed"
     old_head = head_sha(repo_root)
     if not old_head:
         return False, "no HEAD in this repository"
@@ -320,7 +331,10 @@ def remote_url(repo_root):
 
 
 def diff_names(repo_root, sha_a, sha_b):
-    rc, out, _ = _git(["diff", "--name-only", sha_a, sha_b], repo_root)
+    # --no-renames: rename detection would collapse a delete + add into a
+    # single new path and hide the deletion from the merge planning.
+    rc, out, _ = _git(["diff", "--no-renames", "--name-only", sha_a, sha_b],
+                      repo_root)
     if rc != 0:
         return []
     return [line.strip() for line in out.splitlines() if line.strip()]
@@ -392,9 +406,16 @@ def fetch(repo_root):
 # ---------------------------------------------------------------------------
 
 class _Task:
-    """poll() -> None while pending, final payload once done."""
+    """poll() -> None while pending, final payload once done.
+
+    ``done()`` disambiguates a finished task whose payload is ``None``
+    (reading a missing blob, a restore pass) from a task still pending.
+    """
 
     def poll(self):
+        raise NotImplementedError
+
+    def done(self):
         raise NotImplementedError
 
     def kill(self):
@@ -411,6 +432,9 @@ class _CallTask(_Task):
             self._value = self._fn()
         return self._value
 
+    def done(self):
+        return self._value is not _UNSET
+
 
 class _MapTask(_Task):
     def __init__(self, inner, transform):
@@ -422,6 +446,9 @@ class _MapTask(_Task):
         if value is None:
             return None
         return self._transform(value)
+
+    def done(self):
+        return self._inner.done()
 
     def kill(self):
         self._inner.kill()
@@ -473,6 +500,9 @@ class _SpawnTask(_Task):
             self._value = (rc, self._read(self._out), self._read(self._err))
         self._close()
         return self._value
+
+    def done(self):
+        return self._value is not _UNSET
 
     def kill(self):
         if self._proc is not None:
@@ -558,7 +588,8 @@ def restore_paths_task(repo_root, blobs):
 
 def diff_names_task(repo_root, sha_a, sha_b):
     return _MapTask(
-        _CallTask(lambda: _git(["diff", "--name-only", sha_a, sha_b], repo_root)),
+        _CallTask(lambda: _git(["diff", "--no-renames", "--name-only",
+                                sha_a, sha_b], repo_root)),
         lambda result: [line.strip() for line in result[1].splitlines()
                         if line.strip()] if result[0] == 0 else [])
 
