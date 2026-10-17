@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.4.1] - 2026-10-17
 
 ### Added
 
@@ -132,6 +132,10 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- **The Export JSON Package dialog defaults to Use Folder Structure**:
+  it opens exporting one file per group (`NodeGroups/` + `Modifiers/`
+  folders) — the layout the folder workflow and the collaboration loop
+  use — and the single-file package is one untick away.
 - **Sync-status decisions come from a single shared rule.** The
   comparison that turns the stored/current hashes into "Synced",
   "Edited Locally", "Changed in JSON" or "Conflict" now lives in one

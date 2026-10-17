@@ -533,9 +533,9 @@ transport for them:
 
 1. In the Node Editor sidebar → **GN Tools**, use:
    - **Export Package** — writes every trackable node group (Geometry
-     Nodes and Shader) and modifier setup to a single JSON package, or
-     one file per group when **Use Folder Structure** is enabled
-     (`NodeGroups/` + `Modifiers/` folders).
+     Nodes and Shader) and modifier setup, one file per group in
+     `NodeGroups/` + `Modifiers/` folders (**Use Folder Structure**,
+     on by default) or a single JSON package when unticked.
    - **Export Active Group** — exports the active group plus its
      dependencies.
    - **Import Package/Folder** — reconstructs all groups (and modifiers)

@@ -213,7 +213,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
-    use_folder_structure: BoolProperty(name="Use Folder Structure", default=False)
+    use_folder_structure: BoolProperty(name="Use Folder Structure", default=True)
     use_minify: BoolProperty(name="Minify JSON", default=False)
     exclude_libraries: StringProperty(
         name="Exclude Libraries",
