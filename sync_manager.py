@@ -2293,6 +2293,8 @@ class SyncManager:
                 "the merged JSON was written but the .blend rebuild "
                 "reported %d error(s)" % tracker.error_count)
         self._merge_sessions.pop(sync_uuid, None)
+        self.invalidate_cache(sync_uuid)
+        self._status_cache[sync_uuid] = self.check_status(sync_uuid)
         self._dirty = True
         return report
 

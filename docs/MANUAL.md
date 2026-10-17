@@ -300,7 +300,8 @@ issues.
      **Ours / Base / JSON** choice (plus a custom value for simple
      scalars); a structural conflict asks for one whole side. **Apply
      Chosen Merge** writes the merged package and rebuilds the group
-     once every conflict has a decision. The editor works on the sides
+     once every conflict has a decision. The report stays visible after
+     applying (Refresh Status clears it). The editor works on the sides
      captured when Merge was pressed: if the group changed after that,
      Apply asks for a new Merge.
 

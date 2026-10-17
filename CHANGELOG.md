@@ -125,6 +125,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **The merge report stays visible after applying.** A completed merge
+  now refreshes that group's status immediately, so the Sync panel shows
+  the "merged" report and the group as Synced instead of asking for
+  Refresh Status first. Refresh Status still clears the report.
 - **Fast-forward pulls no longer fail on clean CRLF worktrees.** With
   `core.autocrlf` set to `true` or `input`, the embedded engine compared
   the JSON file on disk (CRLF) against the raw repository blob (LF) and
