@@ -1,0 +1,20 @@
+name: pure-tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pure-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Run the pure-Python suite (no Blender)
+        run: python pure-tests/run_all.py

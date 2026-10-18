@@ -20,6 +20,7 @@ pipeline or a release gate.
 
 ![Blender](https://img.shields.io/badge/Blender-4.2%E2%80%935.2-orange)
 ![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
+![pure tests](https://github.com/oobma/GNToolkit/actions/workflows/pure-tests.yml/badge.svg)
 
 ![The GN Tools sidebar in Blender's Geometry Nodes editor — the Changes
 list with one group edited locally and another changed in JSON, the
@@ -177,6 +178,25 @@ covered; other tree types are reported as notices (`--strict` turns
 them into a failure). Conflicts exit `1`; any unreadable JSON in any
 side exits `2`. The decision core is `merge.py` (pure Python, the same
 canonical rules as the hasher).
+
+### Test suite
+
+The JSON-side logic is covered by a public, Blender-free suite in
+[`pure-tests/`](pure-tests/): canonical hashes (including the 4.2→5.x
+normalization), merge values/package/overrides, the audit helpers, the
+`gnt_check.py` modes (diff, merge, render in dot-only mode, version
+guard) and the exclusion tables — 300+ checks. Every test builds its own
+tiny fixtures in a temporary folder, so it runs anywhere Python 3.10+
+exists:
+
+```bash
+python pure-tests/run_all.py
+```
+
+The suite runs on every push and pull request (Linux and Windows) via
+GitHub Actions, and it is wired into the maintainer's release gate. The
+Blender-side suites (import fidelity, real-project round trips, UI
+panels) use local fixtures and are not part of the repository.
 
 ### Building the release packages - repository tool
 

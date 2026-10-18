@@ -46,6 +46,7 @@ network = "Fetch, pull and push to the remotes you configure"
 [build]
 paths_exclude_pattern = [
     ".git/**",
+    ".github/**",
     "__pycache__/**",
     "dist/**",
     "docs/**",
@@ -53,6 +54,7 @@ paths_exclude_pattern = [
     "tests/**",
     "tools/**",
     "internal-docs/**",
+    "pure-tests/**",
     "AGENTS.md",
     "gnt_check.py",
     "git_backend_git.py",
