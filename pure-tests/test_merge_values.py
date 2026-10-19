@@ -452,19 +452,44 @@ check("39: added on both sides differently -> both-added conflict",
       and not r["ok"])
 
 
-def _shader(value):
+def _shader(value, other=1.0):
     return {"name": "S", "tree_type": "ShaderNodeTree",
-            "nodes": [_math_node("Math", value=value)], "links": [],
-            "interface_items": [], "tree_properties": {},
+            "nodes": [_math_node("Math", value=value),
+                      _math_node("Math2", value=other)],
+            "links": [], "interface_items": [], "tree_properties": {},
             "inputs": [], "outputs": []}
 
 
-r = merge.merge_group_maps({"S": _shader(1)}, {"S": _shader(2)},
-                           {"S": _shader(3)})
-check("40: non-GN three-way -> unsupported notice, not a failure",
-      r["groups"]["S"]["status"] == "unsupported"
+r = merge.merge_group_maps({"S": _shader(1.0, 1.0)},
+                           {"S": _shader(2.0, 1.0)},
+                           {"S": _shader(1.0, 3.0)})
+check("40: shader groups merge per item (disjoint values survive)",
+      r["ok"] and r["groups"]["S"]["status"] == "merged"
+      and r["groups"]["S"]["merged"]["nodes"][0]["inputs"][0]
+      ["default_value"] == 2.0
+      and r["groups"]["S"]["merged"]["nodes"][1]["inputs"][0]
+      ["default_value"] == 3.0)
+
+r = merge.merge_group_maps({"S": _shader(1.0)}, {"S": _shader(2.0)},
+                           {"S": _shader(3.0)})
+check("40b: shader same value changed on both sides -> conflict",
+      not r["ok"] and r["groups"]["S"]["status"] == "conflicted"
       and r["groups"]["S"]["merged"] is None
-      and r["groups"]["S"]["notices"] and r["ok"])
+      and r["groups"]["S"]["conflicts"][0]["kind"] == "value")
+
+
+def _compositor(value):
+    entry = _shader(value)
+    entry["tree_type"] = "CompositorNodeTree"
+    return entry
+
+
+r = merge.merge_group_maps({"C": _compositor(1)}, {"C": _compositor(2)},
+                           {"C": _compositor(3)})
+check("40c: a non-mergeable tree type stays unsupported",
+      r["groups"]["C"]["status"] == "unsupported"
+      and r["groups"]["C"]["merged"] is None
+      and r["groups"]["C"]["notices"] and r["ok"])
 
 ours_shader = deepcopy(E)
 ours_shader["tree_type"] = "ShaderNodeTree"
@@ -607,7 +632,7 @@ check("50: rename that also edited values on the same side is not paired",
       and r["groups"]["A"]["conflicts"][0]["kind"] == "delete/modify"
       and r["groups"]["B"]["status"] == "added")
 
-# Non-GN entries stay out of rename detection (GN-only scope).
+# Shader renames use the same exact-content pairing as Geometry Nodes.
 def _shader_entry(value):
     shader = _entry(nodes=[_math_node("Math", value=value)])
     shader["tree_type"] = "ShaderNodeTree"
@@ -617,9 +642,11 @@ def _shader_entry(value):
 r = merge.merge_group_maps(
     {"S": _shader_entry(1.0)}, {"S2": _shader_entry(1.0)},
     {"S": _shader_entry(5.0)})
-check("51: non-GN renames are not detected (delete/modify stands)",
-      not r["ok"] and r["groups"]["S"]["status"] == "conflicted"
-      and all(g["status"] != "renamed" for g in r["groups"].values()))
+check("51: shader renames are detected and merged under the new name",
+      r["ok"] and r["groups"]["S"]["status"] == "removed"
+      and r["groups"]["S2"]["status"] == "renamed"
+      and r["groups"]["S2"]["merged"]["nodes"][0]["inputs"][0]
+      ["default_value"] == 5.0)
 
 # Residual notice: only unmatched adds/removes trigger it.
 r = merge.merge_group_maps(

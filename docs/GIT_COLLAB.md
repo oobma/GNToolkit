@@ -119,8 +119,9 @@ automatically when one is present.
   - **Sync Changes** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
-    (values, modifier inputs, materials/worlds, and exact-content
-    renames per entry or per renamed file — `ours` = your HEAD,
+    (values, modifier inputs, Geometry Nodes and Shader groups,
+    materials/worlds per entry, and exact-content renames per entry or
+    per renamed file — `ours` = your HEAD,
     `theirs` = the upstream branch, `base` = their merge-base), written,
     committed as a real two-parent merge commit and pushed. Any item
     that cannot be decided aborts the whole operation with a per-item
@@ -198,11 +199,12 @@ row shows as **Conflict** and offers three exits:
 committed in a git repository. Without a repository (or without the
 baseline revision in history) the Merge action reports why.
 
-v1 covers Geometry Nodes groups; shader and material/world entries
-report "not covered by merge v1". Merges are values only — socket
-defaults, node labels/properties, custom properties, tree properties;
-the structure is adopted whole from the side that changed it and never
-guessed. Exact-content renames (same logic under a new name) are paired
-and merged under the new name; a rename that also edited values on the
-same side still reads as delete + add, and animated groups are flagged
-but not merged specially.
+Merge covers Geometry Nodes and Shader node groups; material/world
+entries (embedded trees) are not covered and report why. Merges are
+values only — socket defaults, node labels/properties, custom
+properties, tree properties; the structure is adopted whole from the
+side that changed it and never guessed. Exact-content renames (same
+logic under a new name) are paired and merged under the new name for
+Geometry Nodes and Shader groups; a rename that also edited values on
+the same side still reads as delete + add, and animated groups are
+flagged but not merged specially.

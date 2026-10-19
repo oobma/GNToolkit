@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """Semantic 3-way merge of GNToolkit group JSON data (pure Python, no bpy).
 
-Implements the v1 merge semantics (spec 2026-10-16):
+Implements the merge semantics (specs 2026-10-16 and 2026-10-19):
 
 * VALUES ONLY: socket defaults, node labels/properties, custom properties
   (node and tree) and tree properties, decided per item with a diff3 table
   over base/ours/theirs.  ABSENT is a value of its own.
-* GEOMETRY NODES ONLY: other tree types report ``unsupported`` (a notice,
-  not a conflict) so a mixed repository does not fail the preview.
+* NODE GROUPS: Geometry Nodes and Shader trees (spec 2026-10-19); any
+  other tree type reports ``unsupported`` (a notice, not a conflict) so
+  a mixed repository does not fail the preview.
 * Anything STRUCTURAL (nodes, links, interface presence, zones, menus,
   inner trees, texts, derived groups, owner settings) is never fused: it
   is adopted whole from the side that changed it, or reported as a
@@ -43,6 +44,8 @@ _ABSENT = object()
 _DROP = object()
 
 _DEFAULT_TREE_TYPE = "GeometryNodeTree"
+
+_MERGE_TREE_TYPES = frozenset(("GeometryNodeTree", "ShaderNodeTree"))
 
 
 # ---------------------------------------------------------------------------
@@ -560,10 +563,10 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
                        merged_hash=hash_o)
 
     tree_type = types[0]
-    if tree_type != _DEFAULT_TREE_TYPE:
+    if tree_type not in _MERGE_TREE_TYPES:
         return _result(group_name, "unsupported", notices=[
-            "tree type '%s' is not covered by merge v1 "
-            "(Geometry Nodes only)" % tree_type])
+            "tree type '%s' is not covered by merge "
+            "(Geometry Nodes and Shader trees only)" % tree_type])
 
     canon = [canonicalize_node_tree_data(entry)
              for entry in (base, ours, theirs)]
@@ -695,15 +698,16 @@ def _rename_pairings(base_groups: dict, ours_groups: dict,
     *added* one when the name is absent from base, absent from the other
     side and present there.  A removed and an added candidate pair up
     only when their fingerprints match exactly and the match is 1-to-1 -
-    ambiguity never guesses.  Geometry Nodes trees only, mirroring the
-    values-merge scope.  Deterministic: per-old entries sort by side.
+    ambiguity never guesses.  Mergeable tree types only (Geometry Nodes
+    and Shader), mirroring the values-merge scope.  Deterministic:
+    per-old entries sort by side.
     """
     pairs = {}
     for side, own, other in (("ours", ours_groups, theirs_groups),
                              ("theirs", theirs_groups, ours_groups)):
         removed = {}
         for name, entry in base_groups.items():
-            if name in own or _tree_type(entry) != _DEFAULT_TREE_TYPE:
+            if name in own or _tree_type(entry) not in _MERGE_TREE_TYPES:
                 continue
             fingerprint = _content_fingerprint(entry)
             if fingerprint:
@@ -712,7 +716,7 @@ def _rename_pairings(base_groups: dict, ours_groups: dict,
         for name, entry in own.items():
             if name in base_groups or name in other:
                 continue
-            if _tree_type(entry) != _DEFAULT_TREE_TYPE:
+            if _tree_type(entry) not in _MERGE_TREE_TYPES:
                 continue
             fingerprint = _content_fingerprint(entry)
             if fingerprint:
@@ -763,9 +767,9 @@ def pair_renamed_files(deletions: dict, additions: dict) -> dict:
     *deletions* / *additions* map repo-relative paths to their parsed
     JSON data (a deletion uses its base content, an addition its new
     content; ``None`` entries are skipped).  A pair forms when both sides
-    parse as packages, every ``node_groups`` entry is a Geometry Nodes
-    tree, the entry-set fingerprints match exactly and the match is
-    1-to-1 on both sides - ambiguity never guesses.
+    parse as packages, every ``node_groups`` entry is a mergeable tree
+    (Geometry Nodes or Shader), the entry-set fingerprints match exactly
+    and the match is 1-to-1 on both sides - ambiguity never guesses.
     """
     def fingerprint(data):
         if not isinstance(data, dict):
@@ -776,7 +780,7 @@ def pair_renamed_files(deletions: dict, additions: dict) -> dict:
             return None
         hashes = []
         for entry in groups.values():
-            if _tree_type(entry) != _DEFAULT_TREE_TYPE:
+            if _tree_type(entry) not in _MERGE_TREE_TYPES:
                 return None
             value = _content_fingerprint(entry)
             if value is None:
@@ -1246,13 +1250,15 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
                 else:
                     conflicts.append({
                         "kind": "value",
-                        "item": "group '%s': non-Geometry-Node tree changed "
-                                "on both sides differently" % name,
+                        "item": "group '%s': tree type not covered by "
+                                "merge changed on both sides differently"
+                                % name,
                         "base": (hb or "(absent)")[:12],
                         "ours": (ho or "(absent)")[:12],
                         "theirs": (ht or "(absent)")[:12]})
-                    notices.append("group '%s' is not a Geometry Nodes tree "
-                                   "and merge v1 does not fuse it" % name)
+                    notices.append("group '%s' is not a Geometry Nodes or "
+                                   "Shader tree and merge does not fuse it"
+                                   % name)
             else:
                 for conflict in entry_result.get("conflicts") or []:
                     conflicts.append(dict(

@@ -309,7 +309,8 @@ issues.
 
 - The row leaves the Changes list once resolved.
 - Merge requires the JSON file to be committed in a git repository and
-  covers Geometry Nodes groups in v1; otherwise the action reports why.
+  covers Geometry Nodes and Shader groups; otherwise the action reports
+  why. Material/world entries are not covered.
 
 ---
 
@@ -384,7 +385,8 @@ file and modifiers in `Modifiers/*.json`.
    - **Sync Changes** — pull + push. Remote changes arrive
      only when your branch is simply behind; if versions diverged, the
      tracked JSON files merge per item (values, modifier inputs,
-     materials/worlds) into a two-parent merge commit and are pushed —
+     Geometry Nodes and Shader groups, materials/worlds per entry) into
+     a two-parent merge commit and are pushed —
      unless anything conflicts, in which case nothing is written and the
      per-item report lands in the merge report box.
 3. Use **Pull from JSON** (Sync panel) after a sync to apply changed

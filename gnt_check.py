@@ -68,8 +68,8 @@ Exit codes:
     0  all groups clean (or, without a baseline, everything parsed; in
        --merge mode: no conflicts)
     1  changes or missing groups detected (in --merge mode: at least one
-       conflict — or an unsupported non-Geometry-Node tree type with
-       --strict)
+       conflict — or an unsupported tree type with --strict; only
+       Geometry Nodes and Shader are covered)
     2  usage / IO / parse errors (with --strict, unparseable files also exit 2;
        in --merge mode any unreadable JSON in any side is always exit 2)
     3  baseline written by a different hash-algorithm version (update the
@@ -632,9 +632,10 @@ def run_merge(base_side: str, ours_side: str, theirs_side: str,
               as_json: bool = False, strict: bool = False) -> int:
     """Print a 3-way merge preview of the three sides.  Never writes.
 
-    Folders, JSON files or git revisions (with *repo*).  Exit codes: 0 no
-    conflicts, 1 any conflict (or an unsupported tree type with *strict*),
-    2 usage/IO — including any unreadable JSON in any side.
+    Folders, JSON files or git revisions (with *repo*).  Geometry Nodes
+    and Shader groups are covered.  Exit codes: 0 no conflicts, 1 any
+    conflict (or an unsupported tree type with *strict*), 2 usage/IO —
+    including any unreadable JSON in any side.
     """
     merge = _load_merge()
     maps = []

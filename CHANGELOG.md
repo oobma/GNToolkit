@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Merge covers Shader node groups.** A three-way merge now fuses Shader
+  groups per item exactly like Geometry Nodes: socket defaults, node
+  labels/properties, custom properties and tree/interface properties
+  use the base/ours/theirs decision, the structure is adopted whole, and
+  exact-content renames are paired (group and file level). The add-on's
+  **Merge** action and the diverged **Sync Changes** flow use the same
+  path; material/world entries stay outside (adopted whole per entry in
+  sync, `unsupported` in the merge editor). No hash or merge-format
+  change (`HASH_VERSION` 23, `MERGE_VERSION` 2). Covered by the pure
+  merge suites and the external shader corpus (31 checks).
 - **`gnt_check --cross-version OLD NEW`.** Compares two exports of the same
   project made with different Blender versions, matching nodes and sockets
   by name. Sockets added by the newer version are reported as additive

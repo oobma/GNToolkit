@@ -2145,7 +2145,8 @@ class SyncManager:
 
     def merge_conflict(self, sync_uuid: str,
                        overrides: dict | None = None) -> dict:
-        """Resolve a CONFLICT by merging values per item (spec 2026-10-16).
+        """Resolve a CONFLICT by merging values per item (Geometry Nodes
+        and Shader; spec 2026-10-16, extended 2026-10-19).
 
         Sides: ours = the live .blend group, theirs = the JSON entry on
         disk, base = the entry recovered from the JSON file's git history
@@ -2167,7 +2168,7 @@ class SyncManager:
         name = info.get("blend_name", "")
         if entry_kind(info) != "group":
             return {"status": "unsupported", "name": name,
-                    "notices": ["merge v1 covers tracked node groups only "
+                    "notices": ["merge covers tracked node groups only "
                                 "(%s entries are not covered)"
                                 % entry_kind(info)],
                     "conflicts": [], "applied": []}
@@ -2175,10 +2176,10 @@ class SyncManager:
         if tree is None:
             return {"status": "unavailable", "name": name,
                     "reason": "the group is not in the .blend (orphan)"}
-        if getattr(tree, "bl_idname", "") != "GeometryNodeTree":
+        if not is_trackable_tree_type(getattr(tree, "type", "")):
             return {"status": "unsupported", "name": name,
-                    "notices": ["tree type '%s' is not covered by merge v1 "
-                                "(Geometry Nodes only)"
+                    "notices": ["tree type '%s' is not covered by merge "
+                                "(Geometry Nodes and Shader trees only)"
                                 % getattr(tree, "bl_idname", "?")],
                     "conflicts": [], "applied": []}
         json_path = resolve_json_path(info.get("json_path", ""),

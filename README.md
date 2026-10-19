@@ -190,11 +190,11 @@ conflict, never a silent drop); exact-content renames (same logic under
 a new name) are matched and merged under the new name. Sides are
 folders, JSON files or git
 revisions (`--repo`/`--subdir`; BASE is typically `git merge-base`);
-`--json` prints a machine-readable report. Geometry Nodes groups are
-covered; other tree types are reported as notices (`--strict` turns
-them into a failure). Conflicts exit `1`; any unreadable JSON in any
-side exits `2`. The decision core is `merge.py` (pure Python, the same
-canonical rules as the hasher).
+`--json` prints a machine-readable report. Geometry Nodes and Shader
+groups are covered; other tree types (for example compositor trees) are
+reported as notices (`--strict` turns them into a failure). Conflicts
+exit `1`; any unreadable JSON in any side exits `2`. The decision core
+is `merge.py` (pure Python, the same canonical rules as the hasher).
 
 ### Test suite
 
@@ -337,8 +337,9 @@ extension zip.
   board"** to reproduce whatever arrangement the node editor shows
   (e.g. after an external node arrangement).
 - **Conflict resolution**: keep the .blend or the JSON version with a
-  single click - or **Merge**: the per-item value merge keeps your local
-  edits, applies the JSON changes on top (the common base is recovered
+  single click - or **Merge**: the per-item value merge (Geometry Nodes
+  and Shader groups) keeps your local edits, applies the JSON changes on
+  top (the common base is recovered
   from the JSON file's git history). If items changed differently on
   both sides, the merge report lists each one with an Ours / Base / JSON
   choice (plus a custom value for simple scalars) and resolves a
@@ -398,7 +399,8 @@ extension zip.
 - **Git Commit…** stages only the tracked JSONs; **Sync Changes** pulls,
   pushes, and when the branch diverged it **merges the tracked JSON
   files per item** (values, modifier input overrides, exact-content
-  renames, materials/worlds) and pushes a real two-parent merge commit.
+  renames; Geometry Nodes and Shader groups; materials/worlds per entry)
+  and pushes a real two-parent merge commit.
   Anything that cannot be decided — a conflicting item, or a file
   outside the tracked JSONs changed on both sides — aborts the operation
   with a per-item report and nothing is written; commit your JSONs first

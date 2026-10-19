@@ -118,33 +118,55 @@ try:
 except Exception as exc:
     check("A: node_groups", False, f"-> {exc!r}")
 
-# --- B. non-GN groups: one-side adoption, both-changed conflict -------------
+# --- B. shader groups: per-item values --------------------------------------
 try:
-    def _shader(value):
-        entry = _entry(value)
+    def _shader(value, other=1.0):
+        entry = _entry(nodes=[_math_node("Math", value),
+                              _math_node("Math2", other)])
         entry["tree_type"] = "ShaderNodeTree"
         return entry
 
-    base = _pkg(groups={"S": _shader(1.0)})
-    ours = _pkg(groups={"S": _shader(2.0)})
-    theirs = _pkg(groups={"S": _shader(1.0)})
+    base = _pkg(groups={"S": _shader(1.0, 1.0)})
+    ours = _pkg(groups={"S": _shader(2.0, 1.0)})
+    theirs = _pkg(groups={"S": _shader(1.0, 3.0)})
     result = merge.merge_package_dicts(base, ours, theirs)
-    check("B1: non-GN changed on ours only is adopted",
+    check("B1: shader disjoint values merge per item",
           result["ok"]
           and result["merged"]["node_groups"]["S"]["nodes"][0]["inputs"][0]
-          ["default_value"] == 2.0)
+          ["default_value"] == 2.0
+          and result["merged"]["node_groups"]["S"]["nodes"][1]["inputs"][0]
+          ["default_value"] == 3.0)
 
-    theirs_b = _pkg(groups={"S": _shader(3.0)})
+    theirs_b = _pkg(groups={"S": _shader(3.0, 1.0)})
     result_b = merge.merge_package_dicts(base, ours, theirs_b)
-    check("B2: non-GN changed on both sides differently conflicts",
+    check("B2: shader same value changed on both sides conflicts",
           not result_b["ok"] and result_b["merged"] is None
-          and any(c["kind"] == "value" and "non-Geometry-Node" in c["item"]
-                  for c in result_b["conflicts"])
-          and any("not a Geometry Nodes tree" in n
-                  for n in result_b["notices"]),
+          and any(c["kind"] == "value" and "group 'S'" in c["item"]
+                  for c in result_b["conflicts"]),
           str(result_b["conflicts"]))
+
+    def _compositor(value):
+        entry = _entry(value)
+        entry["tree_type"] = "CompositorNodeTree"
+        return entry
+
+    base_c = _pkg(groups={"C": _compositor(1.0)})
+    ours_c = _pkg(groups={"C": _compositor(2.0)})
+    result_c1 = merge.merge_package_dicts(base_c, ours_c, base_c)
+    check("B3: a non-mergeable type changed on one side is adopted",
+          result_c1["ok"]
+          and result_c1["merged"]["node_groups"]["C"]["nodes"][0]
+          ["inputs"][0]["default_value"] == 2.0)
+
+    theirs_c = _pkg(groups={"C": _compositor(3.0)})
+    result_c2 = merge.merge_package_dicts(base_c, ours_c, theirs_c)
+    check("B4: a non-mergeable type changed on both sides conflicts",
+          not result_c2["ok"] and result_c2["merged"] is None
+          and any("not a Geometry Nodes or Shader tree" in n
+                  for n in result_c2["notices"]),
+          str(result_c2["conflicts"]))
 except Exception as exc:
-    check("B: non-GN groups", False, f"-> {exc!r}")
+    check("B: shader groups", False, f"-> {exc!r}")
 
 # --- C. modifiers: per-task, per-input --------------------------------------
 try:
@@ -358,7 +380,16 @@ try:
     pairs = merge.pair_renamed_files(
         {"NodeGroups/S.json": shader},
         {"NodeGroups/T.json": deepcopy(shader)})
-    check("I3: non-GN file renames are not paired", pairs == {}, str(pairs))
+    check("I3: shader file renames are paired",
+          pairs == {"NodeGroups/S.json": "NodeGroups/T.json"}, str(pairs))
+
+    unsupported = _entry(1.0)
+    unsupported["tree_type"] = "CompositorNodeTree"
+    pairs = merge.pair_renamed_files(
+        {"NodeGroups/C.json": unsupported},
+        {"NodeGroups/D.json": deepcopy(unsupported)})
+    check("I4: a non-mergeable file type is not paired", pairs == {},
+          str(pairs))
 except Exception as exc:
     check("I: file renames", False, f"-> {exc!r}")
 

@@ -195,17 +195,25 @@ check("9: same group renamed to two names -> rename/rename conflict",
       and "-> 'New2'" in out, out.strip()[-160:])
 
 # ---------------------------------------------------------------------------
-# 5. Unsupported tree types and --strict
+# 5. Shader merge and unsupported tree types
 # ---------------------------------------------------------------------------
 sh_base = side(work, "sh_base", 1.0, tree_type="ShaderNodeTree")
 sh_ours = side(work, "sh_ours", 2.0, tree_type="ShaderNodeTree")
-sh_theirs = side(work, "sh_theirs", 3.0, tree_type="ShaderNodeTree")
+sh_theirs = side(work, "sh_theirs", 1.0, tree_type="ShaderNodeTree")
 code, out = run_merge(sh_base, sh_ours, sh_theirs)
-check("10: non-GN merge is an unsupported notice (not a failure)",
+check("10: shader groups merge per item (one-side change)",
+      code == 0 and "== G [merged]" in out and "adopted: ours" in out,
+      out.strip().splitlines()[-1])
+
+un_base = side(work, "un_base", 1.0, tree_type="CompositorNodeTree")
+un_ours = side(work, "un_ours", 2.0, tree_type="CompositorNodeTree")
+un_theirs = side(work, "un_theirs", 3.0, tree_type="CompositorNodeTree")
+code, out = run_merge(un_base, un_ours, un_theirs)
+check("11: a non-mergeable tree type is an unsupported notice",
       code == 0 and "[unsupported]" in out and "not covered" in out,
       out.strip().splitlines()[-1])
-code, out = run_merge(sh_base, sh_ours, sh_theirs, "--strict")
-check("11: --strict turns unsupported entries into exit 1",
+code, out = run_merge(un_base, un_ours, un_theirs, "--strict")
+check("11b: --strict turns unsupported entries into exit 1",
       code == 1, f"exit={code}")
 
 # ---------------------------------------------------------------------------
