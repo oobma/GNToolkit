@@ -123,7 +123,7 @@ check("4: --json reports the documented schema",
       code_json == 1 and payload["mode"] == "merge"
       and payload["sides"]["base"] == base_dir
       and payload["hash_version"] == gnt_check._current_hash_version()
-      and payload["merge_version"] == 2
+      and payload["merge_version"] == 3
       and payload["groups"]["G"]["status"] == "conflicted"
       and payload["groups"]["G"]["conflicts"][0]["kind"] == "value"
       and payload["summary"]["conflicted"] == 1 and payload["ok"] is False)
@@ -215,6 +215,54 @@ check("11: a non-mergeable tree type is an unsupported notice",
 code, out = run_merge(un_base, un_ours, un_theirs, "--strict")
 check("11b: --strict turns unsupported entries into exit 1",
       code == 1, f"exit={code}")
+
+
+def side_embedded(root, name, section, value=1.0, metallic=0.1):
+    path = os.path.join(root, name, "M.json")
+    data = {"name": "Mat", "inputs": [], "outputs": [],
+            "nodes": [math_node("Math", value)], "links": [],
+            "interface_items": [], "tree_properties": {},
+            "tree_type": "ShaderNodeTree",
+            "owner_settings": {"properties": {"metallic": metallic}}}
+    write_json(path, {"type": "GN_UNIFIED_PACKAGE", section: {"Mat": data}})
+    return os.path.dirname(path)
+
+
+em_base = side_embedded(work, "em_base", "materials", 1.0, 0.1)
+em_ours = side_embedded(work, "em_ours", "materials", 2.0, 0.1)
+em_theirs = side_embedded(work, "em_theirs", "materials", 1.0, 0.1)
+code, out = run_merge(em_base, em_ours, em_theirs)
+check("11c: material one-side merge is reported",
+      code == 0 and "== material 'Mat' [merged]" in out,
+      out.strip().splitlines()[-1])
+
+em_conflict = side_embedded(work, "em_conflict", "materials", 1.0, 0.9)
+em_conflict_ours = side_embedded(work, "em_conflict_ours", "materials",
+                                 1.0, 0.5)
+code, out = run_merge(em_base, em_conflict_ours, em_conflict)
+check("11d: material owner-setting conflict exits 1",
+      code == 1 and "== material 'Mat' [conflicted]" in out
+      and "owner setting 'metallic'" in out,
+      out.strip().splitlines()[-1])
+
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    code_json = gnt_check.main(["--merge", em_base, em_ours, em_theirs,
+                                "--json"])
+payload = json.loads(out.getvalue())
+check("11e: --json reports embedded entries",
+      code_json == 0
+      and payload["embedded"]["materials"]["Mat"]["status"] == "merged"
+      and payload["embedded_summary"]["merged"] == 1,
+      str(payload.get("embedded_summary")))
+
+w_base = side_embedded(work, "w_base", "worlds", 1.0, 0.1)
+w_ours = side_embedded(work, "w_ours", "worlds", 2.0, 0.1)
+w_theirs = side_embedded(work, "w_theirs", "worlds", 1.0, 0.1)
+code, out = run_merge(w_base, w_ours, w_theirs)
+check("11f: world one-side merge is reported",
+      code == 0 and "== world 'Mat' [merged]" in out,
+      out.strip().splitlines()[-1])
 
 # ---------------------------------------------------------------------------
 # 6. Git revisions, determinism and the no-write guarantee

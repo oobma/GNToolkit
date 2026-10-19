@@ -4,15 +4,19 @@
 Implements the merge semantics (specs 2026-10-16 and 2026-10-19):
 
 * VALUES ONLY: socket defaults, node labels/properties, custom properties
-  (node and tree) and tree properties, decided per item with a diff3 table
+  (node and tree), tree properties and the curated owner settings of
+  embedded trees (materials/worlds), decided per item with a diff3 table
   over base/ours/theirs.  ABSENT is a value of its own.
 * NODE GROUPS: Geometry Nodes and Shader trees (spec 2026-10-19); any
   other tree type reports ``unsupported`` (a notice, not a conflict) so
   a mixed repository does not fail the preview.
+* EMBEDDED ENTRIES: ``materials`` and ``worlds`` merge the tree and the
+  owner settings per item (spec 2026-10-19, second extension); adds and
+  removals follow the same one-side rules as node groups.
 * Anything STRUCTURAL (nodes, links, interface presence, zones, menus,
-  inner trees, texts, derived groups, owner settings) is never fused: it
-  is adopted whole from the side that changed it, or reported as a
-  conflict when both sides changed it differently.
+  inner trees, texts, derived groups) is never fused: it is adopted
+  whole from the side that changed it, or reported as a conflict when
+  both sides changed it differently.
 * Single source of truth: decisions compare the canonical forms produced
   by ``hash_utils.canonicalize_node_tree_data``, so every fold, exclusion
   and normalization of the hash algorithm applies here too.  Nothing is
@@ -37,7 +41,7 @@ import json
 from .audit import content_hash_from_json_data
 from .hash_utils import canonical_hash_from_json_data, canonicalize_node_tree_data
 
-MERGE_VERSION = 2
+MERGE_VERSION = 3
 
 _ABSENT = object()
 
@@ -143,6 +147,10 @@ def _item_label(key) -> str:
         return "tree property '%s'" % key[1]
     if kind == "treecustom":
         return "tree custom property '%s'" % key[1]
+    if kind == "ownerprop":
+        return "owner setting '%s'" % key[1]
+    if kind == "ownercustom":
+        return "owner custom property '%s'" % key[1]
     return repr(key)
 
 
@@ -176,9 +184,13 @@ def _add_value_conflict(conflicts, key, v_adopted, b, o, t) -> None:
     msg = _item_label(key)
     if key not in v_adopted:
         msg += " - item not present in the adopted structure"
+    value_type = _value_type(b, o, t)
+    if key[0] == "ownerprop" and value_type == "string":
+        # Owner enums/identifiers are not free-form: side choice only.
+        value_type = "other"
     conflicts.append({"kind": "value", "item": msg,
                       "key": value_key_id(key),
-                      "value_type": _value_type(b, o, t),
+                      "value_type": value_type,
                       "base": _short(b), "ours": _short(o),
                       "theirs": _short(t)})
 
@@ -258,13 +270,24 @@ def _extract_values(canonical: dict) -> dict:
     if isinstance(tree_custom, dict):
         for key, val in tree_custom.items():
             values[("treecustom", str(key))] = val
+    settings = canonical.get("owner_settings")
+    if isinstance(settings, dict):
+        props = settings.get("properties")
+        if isinstance(props, dict):
+            for prop, val in props.items():
+                values[("ownerprop", str(prop))] = val
+        custom = settings.get("custom_properties")
+        if isinstance(custom, dict):
+            for key, val in custom.items():
+                values[("ownercustom", str(key))] = val
     return values
 
 
 def _extract_structure(canonical: dict) -> dict:
     """Canonical entry with every value field removed."""
     structure = {k: v for k, v in canonical.items()
-                 if k not in ("tree_properties", "custom_properties")}
+                 if k not in ("tree_properties", "custom_properties",
+                              "owner_settings")}
     items = structure.get("interface_items")
     if isinstance(items, list):
         structure["interface_items"] = [
@@ -411,6 +434,37 @@ def _apply_value(raw_entry: dict, key, value) -> bool:
         if not isinstance(custom, dict):
             custom = {}
             raw_entry["custom_properties"] = custom
+        custom[key[1]] = value
+        return True
+    if kind == "ownerprop":
+        settings = raw_entry.get("owner_settings")
+        if not isinstance(settings, dict):
+            settings = {}
+            raw_entry["owner_settings"] = settings
+        props = settings.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            settings["properties"] = props
+        if value is _ABSENT:
+            props.pop(key[1], None)
+        else:
+            props[key[1]] = value
+        return True
+    if kind == "ownercustom":
+        settings = raw_entry.get("owner_settings")
+        if not isinstance(settings, dict):
+            settings = {}
+            raw_entry["owner_settings"] = settings
+        custom = settings.get("custom_properties")
+        if value is _ABSENT:
+            if isinstance(custom, dict):
+                custom.pop(key[1], None)
+                if not custom:
+                    settings.pop("custom_properties", None)
+            return True
+        if not isinstance(custom, dict):
+            custom = {}
+            settings["custom_properties"] = custom
         custom[key[1]] = value
         return True
     return False
@@ -929,6 +983,123 @@ def merge_group_maps(base_groups: dict, ours_groups: dict,
 
 
 # ---------------------------------------------------------------------------
+# Core: embedded entries (materials/worlds) - tree + owner settings
+# ---------------------------------------------------------------------------
+
+def _embedded_merged(kind, name, status, entry, notices=None):
+    result = _simple(name, status, entry, notices=notices)
+    result["kind"] = kind
+    return result
+
+
+def _embedded_conflict(kind, name, conflict):
+    result = _result(name, "conflicted", conflicts=[conflict])
+    result["kind"] = kind
+    return result
+
+
+def _embedded_entry(kind, name, eb, eo, et):
+    """One material/world entry: tree and owner settings through the core."""
+    if eo is not None and et is not None and eb is not None:
+        result = merge_group_entries(eb, eo, et, name=name)
+        result["kind"] = kind
+        if result["status"] != "unsupported":
+            return result
+        # Non-mergeable tree content: keep the whole-entry adoption rule.
+        hb, ho, ht = _entry_hash(eb), _entry_hash(eo), _entry_hash(et)
+        if ho == ht:
+            return _embedded_merged(kind, name, "unchanged", eo,
+                                    notices=result.get("notices"))
+        if hb == ht:
+            return _embedded_merged(kind, name, "merged", eo,
+                                    notices=result.get("notices"))
+        if hb == ho:
+            return _embedded_merged(kind, name, "merged", et,
+                                    notices=result.get("notices"))
+        return _embedded_conflict(kind, name, {
+            "kind": "value",
+            "item": "%s '%s': tree type not covered by merge changed on "
+                    "both sides differently" % (kind, name),
+            "base": (hb or "(absent)")[:12],
+            "ours": (ho or "(absent)")[:12],
+            "theirs": (ht or "(absent)")[:12]})
+
+    if eo is not None and et is not None:
+        if _same(eo, et):
+            return _embedded_merged(kind, name, "added", eo)
+        return _embedded_conflict(kind, name, {
+            "kind": "both-added",
+            "item": "%s '%s' added on both sides with different content"
+                    % (kind, name),
+            "base": "(absent)", "ours": (_entry_hash(eo) or "")[:12],
+            "theirs": (_entry_hash(et) or "")[:12]})
+
+    if eb is not None and eo is None and et is None:
+        return _embedded_merged(kind, name, "removed", None)
+    if eb is not None and eo is None:
+        if _entry_hash(et) == _entry_hash(eb):
+            return _embedded_merged(kind, name, "removed", None)
+        return _embedded_conflict(kind, name, {
+            "kind": "delete/modify",
+            "item": "%s '%s' removed on ours while modified on theirs"
+                    % (kind, name),
+            "base": (_entry_hash(eb) or "")[:12], "ours": "deleted",
+            "theirs": (_entry_hash(et) or "")[:12]})
+    if eb is not None and et is None:
+        if _entry_hash(eo) == _entry_hash(eb):
+            return _embedded_merged(kind, name, "removed", None)
+        return _embedded_conflict(kind, name, {
+            "kind": "delete/modify",
+            "item": "%s '%s' removed on theirs while modified on ours"
+                    % (kind, name),
+            "base": (_entry_hash(eb) or "")[:12],
+            "ours": (_entry_hash(eo) or "")[:12], "theirs": "deleted"})
+
+    if eo is not None:
+        return _embedded_merged(kind, name, "added", eo)
+    if et is not None:
+        return _embedded_merged(kind, name, "added", et)
+    return _embedded_merged(kind, name, "removed", None)
+
+
+def merge_embedded_maps(kind: str, base: dict, ours: dict, theirs: dict) -> dict:
+    """Decide a ``{name: entry}`` map of materials or worlds, per item.
+
+    ``kind`` is ``"material"`` or ``"world"`` (used in reports).  Each
+    entry goes through ``merge_group_entries`` (tree values + structure)
+    and ``owner_settings`` merge per property/custom property.  Adds,
+    removals, both-added and delete/modify follow the same one-side rules
+    as node groups.  Never mutates the inputs.
+    """
+    base = base if isinstance(base, dict) else {}
+    ours = ours if isinstance(ours, dict) else {}
+    theirs = theirs if isinstance(theirs, dict) else {}
+    entries = {}
+    merged = {}
+    for name in sorted(set(base) | set(ours) | set(theirs), key=str):
+        result = _embedded_entry(kind, name, base.get(name), ours.get(name),
+                                 theirs.get(name))
+        entries[name] = result
+        if result["status"] in ("unchanged", "merged", "added", "renamed"):
+            if result.get("merged") is not None:
+                merged[name] = result["merged"]
+    summary = {status: 0 for status in
+               ("unchanged", "merged", "added", "removed", "renamed",
+                "conflicted", "unsupported")}
+    for result in entries.values():
+        summary[result["status"]] += 1
+    return {
+        "merge_version": MERGE_VERSION,
+        "kind": kind,
+        "entries": entries,
+        "merged": merged,
+        "summary": summary,
+        "ok": summary["conflicted"] == 0,
+        "notices": [],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Whole package files (F4: the git diverged-branch flow)
 # ---------------------------------------------------------------------------
 #
@@ -1111,7 +1282,7 @@ def _merge_modifier_tasks(b_list, o_list, t_list, conflicts, applied, notices):
 
 
 def _merge_named_entries(key, b, o, t, conflicts):
-    """Per-entry merge of a {name: entry} section (materials, worlds)."""
+    """Per-entry merge of an unknown ``{name: entry}`` section."""
     b = b if isinstance(b, dict) else {}
     o = o if isinstance(o, dict) else {}
     t = t if isinstance(t, dict) else {}
@@ -1190,12 +1361,14 @@ def _merge_top_value(key, b, o, t, conflicts):
 def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
     """Decide the 3-way merge of three whole package dicts.
 
-    Returns ``{"ok", "merged", "groups", "groups_summary", "conflicts",
-    "applied", "notices", "summary"}``.  ``merged`` is the package dict to
-    write only when ``ok`` is True; always deterministic and never
-    mutating the inputs.      ``node_groups`` go through the per-group core (exact-content renames
-    included), ``modifiers`` per task with per-key input decisions, every
-    other section per entry with the one-side adoption rule; a field that
+    Returns ``{"ok", "merged", "groups", "conflicts", "applied",
+    "notices", "summary", "embedded", "embedded_summary"}``.  ``merged``
+    is the package dict to write only when ``ok`` is True; always
+    deterministic and never mutating the inputs.  ``node_groups`` go
+    through the per-group core (exact-content renames included),
+    ``materials``/``worlds`` per item (tree + owner settings),
+    ``modifiers`` per task with per-key input decisions, and every other
+    section per entry with the one-side adoption rule; a field that
     cannot be decided is an explicit conflict.
     """
     base = as_package_dict(base) if isinstance(base, dict) else base
@@ -1269,13 +1442,42 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
                     item, item="group '%s': %s" % (name, item["item"])))
         merged["node_groups"] = out_groups
 
+    embedded = {}
+    embedded_summary = {status: 0 for status in
+                        ("unchanged", "merged", "added", "removed",
+                         "renamed", "conflicted", "unsupported")}
+    for section, kind in (("materials", "material"), ("worlds", "world")):
+        if section not in base and section not in ours \
+                and section not in theirs:
+            continue
+        result = merge_embedded_maps(kind, base.get(section) or {},
+                                     ours.get(section) or {},
+                                     theirs.get(section) or {})
+        embedded[section] = result["entries"]
+        merged[section] = result["merged"]
+        for name in sorted(result["entries"], key=str):
+            entry_result = result["entries"][name]
+            for conflict in entry_result.get("conflicts") or []:
+                conflicts.append(dict(
+                    conflict,
+                    item="%s '%s': %s"
+                         % (section, name, conflict["item"])))
+            for item in entry_result.get("applied") or []:
+                applied.append(dict(
+                    item, item="%s '%s': %s"
+                                % (section, name, item["item"])))
+            for note in entry_result.get("notices") or []:
+                notices.append("%s '%s': %s" % (section, name, note))
+        for status, count in result["summary"].items():
+            embedded_summary[status] += count
+
     if "modifiers" in ours or "modifiers" in theirs or "modifiers" in base:
         merged["modifiers"] = _merge_modifier_tasks(
             base.get("modifiers") or [], ours.get("modifiers") or [],
             theirs.get("modifiers") or [], conflicts, applied, notices)
 
     for key in sorted(set(base) | set(ours) | set(theirs), key=str):
-        if key in ("node_groups", "modifiers", "type"):
+        if key in ("node_groups", "modifiers", "materials", "worlds", "type"):
             continue
         if key in ("version", "export_method"):
             if key in ours:
@@ -1306,4 +1508,6 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
         "applied": applied,
         "notices": notices,
         "summary": summary,
+        "embedded": embedded,
+        "embedded_summary": embedded_summary,
     }

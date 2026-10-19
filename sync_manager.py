@@ -371,6 +371,27 @@ def _ensure_package_shape(data: dict) -> dict:
     return data
 
 
+def _ensure_entry_package_shape(data: dict, kind: str) -> dict:
+    """Kind-aware package wrapping for a merge side.
+
+    Standalone group exports wrap into ``node_groups``; standalone
+    material/world entries wrap into their own section so the per-item
+    merge can find them (the standard folder export is package-shaped).
+    """
+    if kind == "group":
+        return _ensure_package_shape(data)
+    section = EMBEDDED_KINDS.get(kind)
+    if (isinstance(data, dict) and section and section not in data
+            and "nodes" in data and data.get("name")):
+        return {
+            "version": ADDON_VERSION,
+            "type": "GN_UNIFIED_PACKAGE",
+            "export_method": PACKAGE_EXPORT_METHOD,
+            section: {data["name"]: data},
+        }
+    return data
+
+
 def group_library_path(tree) -> str | None:
     """Return the library filepath for a node tree linked from a .blend
     library, or None for a local tree.  Library-linked trees cannot be
@@ -2145,43 +2166,65 @@ class SyncManager:
 
     def merge_conflict(self, sync_uuid: str,
                        overrides: dict | None = None) -> dict:
-        """Resolve a CONFLICT by merging values per item (Geometry Nodes
-        and Shader; spec 2026-10-16, extended 2026-10-19).
+        """Resolve a CONFLICT by merging values per item (Geometry Nodes,
+        Shader, materials and worlds; specs 2026-10-16/19).
 
-        Sides: ours = the live .blend group, theirs = the JSON entry on
+        Sides: ours = the live .blend entry, theirs = the JSON entry on
         disk, base = the entry recovered from the JSON file's git history
         (the newest revision whose canonical hash matches the recorded
         baseline hash).  A clean merge writes the merged entry back into
-        the package and rebuilds the group in the .blend; conflicts or an
+        the package and rebuilds it in the .blend; conflicts or an
         unrecoverable base change nothing and come back as a report.
         Never raises; every outcome is a status in the returned dict.
 
         Manual editor (spec 2026-10-17): the first call captures the three
         sides in a session; a later call with ``overrides`` re-merges the
-        *captured* sides (the group must be unchanged, checked by hash) and
+        *captured* sides (the entry must be unchanged, checked by hash) and
         writes the result when the resolution is complete.
         """
         info = get_tracked_group(self.metadata, sync_uuid)
         if info is None:
             return {"status": "unavailable", "name": "",
-                    "reason": "this group is not tracked"}
+                    "reason": "this entry is not tracked"}
         name = info.get("blend_name", "")
-        if entry_kind(info) != "group":
+        kind = entry_kind(info)
+        if kind not in ("group", "material", "world"):
             return {"status": "unsupported", "name": name,
-                    "notices": ["merge covers tracked node groups only "
-                                "(%s entries are not covered)"
-                                % entry_kind(info)],
+                    "notices": ["unknown entry kind '%s'" % kind],
                     "conflicts": [], "applied": []}
-        tree = resolve_entry_tree(sync_uuid, info)
-        if tree is None:
-            return {"status": "unavailable", "name": name,
-                    "reason": "the group is not in the .blend (orphan)"}
+        owner = None
+        if kind == "group":
+            tree = resolve_entry_tree(sync_uuid, info)
+            if tree is None:
+                return {"status": "unavailable", "name": name,
+                        "reason": "the group is not in the .blend (orphan)"}
+        else:
+            owner = resolve_owner(kind, name, sync_uuid)
+            if owner is None:
+                return {"status": "unavailable", "name": name,
+                        "reason": "the %s is not in the .blend (orphan)"
+                                  % kind}
+            if getattr(owner, "library", None) is not None:
+                return {"status": "unavailable", "name": name,
+                        "reason": "the %s is linked from a library - make "
+                                  "it local to merge" % kind}
+            if (not getattr(owner, "use_nodes", False)
+                    or getattr(owner, "node_tree", None) is None):
+                return {"status": "unavailable", "name": name,
+                        "reason": "the %s has no node tree" % kind}
+            tree = owner.node_tree
         if not is_trackable_tree_type(getattr(tree, "type", "")):
             return {"status": "unsupported", "name": name,
                     "notices": ["tree type '%s' is not covered by merge "
                                 "(Geometry Nodes and Shader trees only)"
                                 % getattr(tree, "bl_idname", "?")],
                     "conflicts": [], "applied": []}
+
+        def _serialize_ours():
+            if kind == "group":
+                return serialize_node_tree(tree)
+            return serialize_embedded_entry(owner, kind)
+
         json_path = resolve_json_path(info.get("json_path", ""),
                                       self._blend_dir())
         if not json_path or not os.path.isfile(json_path):
@@ -2194,12 +2237,12 @@ class SyncManager:
                 return {"status": "unavailable", "name": name,
                         "reason": "press Merge first - the conflict editor "
                                   "works on the captured sides"}
-            current = serialize_node_tree(tree)
+            current = _serialize_ours()
             if canonical_hash_from_json_data(current) != \
                     canonical_hash_from_json_data(session["ours"]):
                 return {"status": "stale", "name": name,
-                        "reason": "the group changed since Merge was "
-                                  "pressed - press Merge again"}
+                        "reason": "the %s changed since Merge was "
+                                  "pressed - press Merge again" % kind}
             base = session["base"]
             ours = session["ours"]
             theirs = session["theirs"]
@@ -2220,13 +2263,15 @@ class SyncManager:
                                   "- the merge base comes from git history"}
 
             json_data = read_json_tolerant(json_path)
-            theirs = (package_entry(_ensure_package_shape(json_data), info)
-                      if json_data is not None else None)
+            theirs = (package_entry(
+                _ensure_entry_package_shape(json_data, kind), info)
+                if json_data is not None else None)
             if theirs is None:
                 return {"status": "unavailable", "name": name,
-                        "reason": "the JSON file has no entry for this group"}
+                        "reason": "the JSON file has no entry for this %s"
+                                  % kind}
 
-            ours = serialize_node_tree(tree)
+            ours = _serialize_ours()
 
             rel_path = os.path.relpath(json_path,
                                        repo_root).replace(os.sep, "/")
@@ -2241,7 +2286,8 @@ class SyncManager:
                     data = json.loads(blob.decode("utf-8-sig"))
                 except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                     continue
-                entry = package_entry(_ensure_package_shape(data), info)
+                entry = package_entry(
+                    _ensure_entry_package_shape(data, kind), info)
                 if entry is None:
                     continue
                 if canonical_hash_from_json_data(entry) == last_json_hash:
@@ -2262,6 +2308,7 @@ class SyncManager:
         report = {
             "status": result["status"],
             "name": name,
+            "kind": kind,
             "uid": sync_uuid,
             "base_rev": base_rev,
             "adopted_structure": result.get("adopted_structure"),
@@ -2284,7 +2331,7 @@ class SyncManager:
                 report["status"] = "unavailable"
                 report["reason"] = "could not re-read the JSON file"
                 return report
-            fresh = _ensure_package_shape(fresh)
+            fresh = _ensure_entry_package_shape(fresh, kind)
             package_put(fresh, info, result["merged"])
             write_json_file(json_path, fresh)
         finally:

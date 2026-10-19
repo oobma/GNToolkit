@@ -32,8 +32,9 @@ Semantic merge preview (same pure-Python core, no Blender):
     python gnt_check.py --merge BASE OURS THEIRS [--repo R] [--subdir D]
                         [--json] [--strict]
 
-    A 3-way merge PREVIEW of Geometry Nodes group values (socket defaults,
-    node labels/properties, custom properties, tree properties).  The
+    A 3-way merge PREVIEW of node group values (socket defaults, node
+    labels/properties, custom properties, tree properties) and of
+    material/world embedded trees (tree plus owner settings).  The
     structure is never guessed: it is adopted whole from the side that
     changed it, and reported as a per-element conflict when both sides
     changed it differently.  BASE/OURS/THEIRS are folders, JSON files or
@@ -68,8 +69,8 @@ Exit codes:
     0  all groups clean (or, without a baseline, everything parsed; in
        --merge mode: no conflicts)
     1  changes or missing groups detected (in --merge mode: at least one
-       conflict — or an unsupported tree type with --strict; only
-       Geometry Nodes and Shader are covered)
+       conflict — or an unsupported tree type with --strict; Geometry
+       Nodes/Shader groups, materials and worlds are covered)
     2  usage / IO / parse errors (with --strict, unparseable files also exit 2;
        in --merge mode any unreadable JSON in any side is always exit 2)
     3  baseline written by a different hash-algorithm version (update the
@@ -566,8 +567,34 @@ def _resolve_diff_side(side: str, repo: str | None, subdir: str) -> dict:
 # merge, so any read/parse failure in any side is a hard error.
 # ---------------------------------------------------------------------------
 
-def _git_merge_groups(repo: str, rev: str, subdir: str):
-    """(groups, unreadable) from a git revision (JSONs under *subdir*)."""
+_MERGE_SECTIONS = ("node_groups", "materials", "worlds")
+
+
+def _empty_merge_sections() -> dict:
+    return {section: {} for section in _MERGE_SECTIONS}
+
+
+def _add_merge_data(sections: dict, data, fallback_name: str) -> None:
+    """Collect node groups, materials and worlds from one JSON document."""
+    if not isinstance(data, dict):
+        return
+    node_groups = data.get("node_groups")
+    if isinstance(node_groups, dict):
+        for name, group in node_groups.items():
+            if isinstance(group, dict):
+                sections["node_groups"][name] = group
+    elif "nodes" in data and "owner_settings" not in data:
+        sections["node_groups"][data.get("name", fallback_name)] = data
+    for section in ("materials", "worlds"):
+        entries = data.get(section)
+        if isinstance(entries, dict):
+            for name, entry in entries.items():
+                if isinstance(entry, dict):
+                    sections[section][name] = entry
+
+
+def _git_merge_sections(repo: str, rev: str, subdir: str):
+    """(sections, unreadable) from a git revision (JSONs under *subdir*)."""
     def git(*args) -> bytes:
         proc = subprocess.run(["git", "-C", repo] + list(args),
                               capture_output=True)
@@ -579,7 +606,7 @@ def _git_merge_groups(repo: str, rev: str, subdir: str):
     prefix = subdir.strip("/\\").replace("\\", "/")
     listing = git("ls-tree", "-r", "--name-only", rev,
                   (prefix + "/") if prefix else ".")
-    groups = {}
+    sections = _empty_merge_sections()
     unreadable = []
     for name in listing.decode("utf-8", "replace").splitlines():
         if not name.endswith(".json"):
@@ -591,12 +618,12 @@ def _git_merge_groups(repo: str, rev: str, subdir: str):
         except (RuntimeError, json.JSONDecodeError, UnicodeDecodeError):
             unreadable.append(label)
             continue
-        _add_diff_data(groups, data, os.path.basename(name)[:-5])
-    return groups, unreadable
+        _add_merge_data(sections, data, os.path.basename(name)[:-5])
+    return sections, unreadable
 
 
-def _load_merge_groups(side: str, repo: str | None, subdir: str):
-    """({name: data}, unreadable) for one merge side — strict about reads."""
+def _load_merge_sections(side: str, repo: str | None, subdir: str):
+    """(sections, unreadable) for one merge side - strict about reads."""
     if os.path.exists(side):
         files = []
         if os.path.isdir(side):
@@ -606,7 +633,7 @@ def _load_merge_groups(side: str, repo: str | None, subdir: str):
                         files.append(os.path.join(root, name))
         else:
             files = [side]
-        groups = {}
+        sections = _empty_merge_sections()
         unreadable = []
         for file_path in files:
             try:
@@ -615,10 +642,10 @@ def _load_merge_groups(side: str, repo: str | None, subdir: str):
             except (OSError, json.JSONDecodeError, UnicodeDecodeError):
                 unreadable.append(file_path)
                 continue
-            _add_diff_data(groups, data, os.path.basename(file_path)[:-5])
-        return groups, unreadable
+            _add_merge_data(sections, data, os.path.basename(file_path)[:-5])
+        return sections, unreadable
     if repo:
-        return _git_merge_groups(repo, side, subdir)
+        return _git_merge_sections(repo, side, subdir)
     raise RuntimeError("'%s' is not an existing path; pass --repo to read "
                        "git revisions" % side)
 
@@ -633,16 +660,16 @@ def run_merge(base_side: str, ours_side: str, theirs_side: str,
     """Print a 3-way merge preview of the three sides.  Never writes.
 
     Folders, JSON files or git revisions (with *repo*).  Geometry Nodes
-    and Shader groups are covered.  Exit codes: 0 no conflicts, 1 any
-    conflict (or an unsupported tree type with *strict*), 2 usage/IO —
-    including any unreadable JSON in any side.
+    and Shader groups, materials and worlds are covered.  Exit codes: 0
+    no conflicts, 1 any conflict (or an unsupported tree type with
+    *strict*), 2 usage/IO — including any unreadable JSON in any side.
     """
     merge = _load_merge()
-    maps = []
+    side_maps = []
     labels = []
     for side in (base_side, ours_side, theirs_side):
         try:
-            groups, unreadable = _load_merge_groups(side, repo, subdir)
+            sections, unreadable = _load_merge_sections(side, repo, subdir)
         except RuntimeError as exc:
             print(f"error: {exc}")
             return 2
@@ -650,10 +677,24 @@ def run_merge(base_side: str, ours_side: str, theirs_side: str,
             for item in unreadable:
                 print(f"error: cannot read JSON for merge: {item}")
             return 2
-        maps.append(groups)
+        side_maps.append(sections)
         labels.append(side if os.path.exists(side) else "%s:%s" % (repo, side))
 
-    report = merge.merge_group_maps(maps[0], maps[1], maps[2])
+    report = merge.merge_group_maps(
+        side_maps[0]["node_groups"], side_maps[1]["node_groups"],
+        side_maps[2]["node_groups"])
+    embedded = {}
+    embedded_summary = {status: 0 for status in _MERGE_STATUS_ORDER}
+    for section, kind in (("materials", "material"), ("worlds", "world")):
+        if not any(sections.get(section) for sections in side_maps):
+            continue
+        result = merge.merge_embedded_maps(
+            kind, side_maps[0][section], side_maps[1][section],
+            side_maps[2][section])
+        embedded[section] = result["entries"]
+        for status, count in result["summary"].items():
+            embedded_summary[status] += count
+    ok = report["ok"] and embedded_summary["conflicted"] == 0
 
     if as_json:
         payload = {
@@ -673,9 +714,25 @@ def run_merge(base_side: str, ours_side: str, theirs_side: str,
                 }
                 for name, group in report["groups"].items()
             },
+            "embedded": {
+                section: {
+                    name: {
+                        "kind": entry["kind"],
+                        "status": entry["status"],
+                        "adopted_structure": entry["adopted_structure"],
+                        "merged_hash": entry["merged_hash"],
+                        "applied": entry["applied"],
+                        "conflicts": entry["conflicts"],
+                        "notices": entry["notices"],
+                    }
+                    for name, entry in entries.items()
+                }
+                for section, entries in embedded.items()
+            },
             "summary": report["summary"],
+            "embedded_summary": embedded_summary,
             "notices": report["notices"],
-            "ok": report["ok"],
+            "ok": ok,
         }
         print(json.dumps(payload, sort_keys=True))
     else:
@@ -698,15 +755,40 @@ def run_merge(base_side: str, ours_side: str, theirs_side: str,
                       % (conflict["kind"], conflict["item"],
                          conflict["base"], conflict["ours"],
                          conflict["theirs"]))
+        for section in ("materials", "worlds"):
+            for name in sorted(embedded.get(section, {})):
+                entry = embedded[section][name]
+                head = "== %s '%s' [%s]" % (entry["kind"], name,
+                                            entry["status"])
+                if entry["adopted_structure"]:
+                    head += " adopted: %s" % entry["adopted_structure"]
+                if entry["merged_hash"]:
+                    head += " hash %s" % entry["merged_hash"][:12]
+                print(head)
+                for note in entry["notices"]:
+                    print("    note: %s" % note)
+                for item in entry["applied"]:
+                    print("    + %s <- %s (%s)"
+                          % (item["item"], item["from"], item["value"]))
+                for conflict in entry["conflicts"]:
+                    print("    ! %s: %s (base %s, ours %s, theirs %s)"
+                          % (conflict["kind"], conflict["item"],
+                             conflict["base"], conflict["ours"],
+                             conflict["theirs"]))
         for note in report["notices"]:
             print("notice: %s" % note)
         print("--- " + ", ".join(
             "%d %s" % (report["summary"][key], key)
             for key in _MERGE_STATUS_ORDER))
+        if any(embedded_summary.values()):
+            print("--- embedded: " + ", ".join(
+                "%d %s" % (embedded_summary[key], key)
+                for key in _MERGE_STATUS_ORDER))
 
-    if not report["ok"]:
+    if not ok:
         return 1
-    if strict and report["summary"]["unsupported"]:
+    if strict and (report["summary"]["unsupported"]
+                   or embedded_summary["unsupported"]):
         return 1
     return 0
 
@@ -1374,8 +1456,9 @@ def main(argv=None) -> int:
                          "versions (folders, files, or git revisions with "
                          "--repo; ignores layout-only properties)")
     ap.add_argument("--merge", nargs=3, metavar=("BASE", "OURS", "THEIRS"),
-                    help="3-way merge preview of Geometry Nodes group values "
-                         "(folders, files or git revisions with --repo; use "
+                    help="3-way merge preview of node group values and "
+                         "material/world embedded trees (folders, files or "
+                         "git revisions with --repo; use "
                          "git merge-base for BASE); reports only, never "
                          "writes; conflicts exit 1, with --strict unsupported "
                          "tree types exit 1 too")

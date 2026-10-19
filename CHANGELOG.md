@@ -12,10 +12,18 @@ All notable changes to this project are documented in this file.
   use the base/ours/theirs decision, the structure is adopted whole, and
   exact-content renames are paired (group and file level). The add-on's
   **Merge** action and the diverged **Sync Changes** flow use the same
-  path; material/world entries stay outside (adopted whole per entry in
-  sync, `unsupported` in the merge editor). No hash or merge-format
-  change (`HASH_VERSION` 23, `MERGE_VERSION` 2). Covered by the pure
-  merge suites and the external shader corpus (31 checks).
+  path. No hash change (`HASH_VERSION` 23). Covered by the pure merge
+  suites and the external shader corpus (31 checks).
+- **Merge covers materials and worlds (embedded trees).** A three-way
+  merge now fuses `materials`/`worlds` entries per item: the shader tree
+  (values and structural adoption) and the curated `owner_settings`
+  (properties and custom properties) use the base/ours/theirs decision.
+  One-side additions/removals, both-added and delete/modify follow the
+  same rules as node groups. Available in the add-on's **Merge** action,
+  the diverged **Sync Changes** flow and `gnt_check --merge` (new
+  `embedded` report); `MERGE_VERSION` is now 3 (`HASH_VERSION` stays
+  23). Owner renames remain delete + add. Covered by the pure suites and
+  the external material corpus (10 checks).
 - **`gnt_check --cross-version OLD NEW`.** Compares two exports of the same
   project made with different Blender versions, matching nodes and sockets
   by name. Sockets added by the newer version are reported as additive

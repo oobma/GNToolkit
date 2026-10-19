@@ -309,8 +309,8 @@ issues.
 
 - The row leaves the Changes list once resolved.
 - Merge requires the JSON file to be committed in a git repository and
-  covers Geometry Nodes and Shader groups; otherwise the action reports
-  why. Material/world entries are not covered.
+  covers Geometry Nodes/Shader groups and materials/worlds (tree plus
+  owner settings) per item; otherwise the action reports why.
 
 ---
 
@@ -385,8 +385,8 @@ file and modifiers in `Modifiers/*.json`.
    - **Sync Changes** — pull + push. Remote changes arrive
      only when your branch is simply behind; if versions diverged, the
      tracked JSON files merge per item (values, modifier inputs,
-     Geometry Nodes and Shader groups, materials/worlds per entry) into
-     a two-parent merge commit and are pushed —
+     Geometry Nodes/Shader groups, materials and worlds) into a
+     two-parent merge commit and are pushed —
      unless anything conflicts, in which case nothing is written and the
      per-item report lands in the merge report box.
 3. Use **Pull from JSON** (Sync panel) after a sync to apply changed
@@ -579,8 +579,9 @@ node groups — GNToolkit tracks them as **owner-aware entries**:
    next to `NodeGroups/`, and **Track Folder…** links those files back
    to their owners.
 3. Statuses, the Changes list, staged saves, **Pull from JSON**,
-   conflicts and the import picker work exactly like with groups;
-   embedded entries appear with a material/world icon.
+   conflicts, **Merge** and the import picker work exactly like with
+   groups (the tree and the owner settings merge per item); embedded
+   entries appear with a material/world icon.
 4. Cloning into a fresh file recreates missing owners (with a warning)
    and restores the tree, the curated settings and the owner's custom
    properties. Object material slots are **not** versioned.

@@ -1426,11 +1426,12 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
 class GN_OT_SyncMergeConflict(bpy.types.Operator):
     bl_idname = "gn.sync_merge_conflict"
     bl_label = "Merge with JSON"
-    bl_description = ("Merge this conflicted group per item (socket defaults, "
-                      "node labels/properties, custom properties): local .blend "
-                      "edits are kept and the JSON changes applied; the common "
-                      "base comes from the JSON file's git history. Nothing is "
-                      "written when items conflict")
+    bl_description = ("Merge this conflicted entry per item (socket defaults, "
+                      "node labels/properties, custom properties, owner "
+                      "settings): local .blend edits are kept and the JSON "
+                      "changes applied; the common base comes from the JSON "
+                      "file's git history. Nothing is written when items "
+                      "conflict")
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: bpy.props.StringProperty(name="UUID")
@@ -1478,7 +1479,7 @@ class GN_OT_SyncMergeApply(bpy.types.Operator):
     bl_idname = "gn.sync_merge_apply"
     bl_label = "Apply Chosen Merge"
     bl_description = ("Write the merged package with the per-item decisions "
-                      "chosen in the merge report, rebuild the group in the "
+                      "chosen in the merge report, rebuild the entry in the "
                       ".blend and mark it Synced; nothing is written while "
                       "any conflict is undecided")
     bl_options = {'REGISTER', 'UNDO'}
@@ -1487,7 +1488,7 @@ class GN_OT_SyncMergeApply(bpy.types.Operator):
         state = context.scene.gnt_merge_state
         if not state.uid:
             self.report({'ERROR'}, "No editable merge report - press Merge "
-                                   "in the group row first")
+                                   "in the entry row first")
             return {'CANCELLED'}
         values = {}
         undecided = 0

@@ -323,6 +323,30 @@ check("22: override order does not change the result",
       r1 == r2 and r1["merged_hash"] == r2["merged_hash"]
       and _value_of(r1, "Math") == 7.0)
 
+# ---------------------------------------------------------------------------
+# 7. Embedded owner settings
+# ---------------------------------------------------------------------------
+
+def _embedded(metallic):
+    entry = _entry(nodes=[_math_node("Math")])
+    entry["name"] = "Mat"
+    entry["tree_type"] = "ShaderNodeTree"
+    entry["owner_settings"] = {"properties": {"metallic": metallic}}
+    return entry
+
+
+BASE_E = _embedded(0.1)
+OURS_E = _embedded(0.5)
+THEIRS_E = _embedded(0.9)
+R_E = merge.merge_group_entries(BASE_E, OURS_E, THEIRS_E)
+key = R_E["conflicts"][0]["key"]
+r = merge.merge_group_entries(BASE_E, OURS_E, THEIRS_E,
+                              overrides={"values": {key: "theirs"}})
+check("23: an owner setting override writes the chosen side",
+      R_E["status"] == "conflicted" and r["status"] == "merged"
+      and r["merged"]["owner_settings"]["properties"]["metallic"] == 0.9
+      and r["applied"][0]["from"] == "theirs")
+
 print()
 print(f"=== RESULTS: {len(PASSED)} passed, {len(FAILED)} failed ===")
 if FAILED:

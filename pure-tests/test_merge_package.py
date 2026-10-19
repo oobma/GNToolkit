@@ -235,30 +235,58 @@ try:
 except Exception as exc:
     check("D: add/delete/bakes", False, f"-> {exc!r}")
 
-# --- E. sections (materials) per entry --------------------------------------
+# --- E. embedded sections (materials) per item ------------------------------
 try:
-    base = _pkg(materials={"M": _entry(1.0)})
-    ours = _pkg(materials={"M": _entry(2.0)})
-    theirs = _pkg(materials={"M": _entry(1.0)})
-    result = merge.merge_package_dicts(base, ours, theirs)
-    check("E1: material changed on ours only is adopted",
-          result["ok"]
-          and result["merged"]["materials"]["M"]["nodes"][0]["inputs"][0]
-          ["default_value"] == 2.0)
+    def _embedded(value=1.0, metallic=0.1, note="a"):
+        entry = _entry(nodes=[_math_node("Math", value),
+                              _math_node("Math2", 1.0)])
+        entry["name"] = "M"
+        entry["tree_type"] = "ShaderNodeTree"
+        entry["owner_settings"] = {
+            "properties": {"metallic": metallic},
+            "custom_properties": {"note": note},
+        }
+        return entry
 
-    theirs_e = _pkg(materials={"M": _entry(3.0)})
-    result_e = merge.merge_package_dicts(base, ours, theirs_e)
-    check("E2: material changed on both sides differently conflicts",
+    base = _pkg(materials={"M": _embedded(1.0, 0.1, "a")})
+    ours = _pkg(materials={"M": _embedded(2.0, 0.1, "a")})
+    theirs = _pkg(materials={"M": _embedded(1.0, 0.9, "b")})
+    result = merge.merge_package_dicts(base, ours, theirs)
+    merged = result["merged"]["materials"]["M"]
+    check("E1: material tree + owner settings merge per item",
+          result["ok"]
+          and merged["nodes"][0]["inputs"][0]["default_value"] == 2.0
+          and merged["owner_settings"]["properties"]["metallic"] == 0.9
+          and merged["owner_settings"]["custom_properties"]["note"] == "b"
+          and result["embedded"]["materials"]["M"]["status"] == "merged"
+          and result["embedded_summary"]["merged"] == 1)
+
+    ours_e = _pkg(materials={"M": _embedded(1.0, 0.5, "a")})
+    theirs_e = _pkg(materials={"M": _embedded(1.0, 0.9, "a")})
+    result_e = merge.merge_package_dicts(base, ours_e, theirs_e)
+    check("E2: same owner setting on both sides conflicts",
           not result_e["ok"] and result_e["merged"] is None
           and any("materials 'M'" in c["item"]
-                  for c in result_e["conflicts"]),
+                  and "owner setting 'metallic'" in c["item"]
+                  for c in result_e["conflicts"])
+          and result_e["embedded_summary"]["conflicted"] == 1,
           str(result_e["conflicts"]))
 
-    ours_e3 = _pkg(materials={"M": _entry(1.0), "N": _entry(9.0)})
-    theirs_e3 = _pkg(materials={"M": _entry(1.0), "N": _entry(9.0)})
+    ours_e3 = _pkg(materials={"M": _embedded(1.0), "N": _embedded(9.0)})
+    theirs_e3 = _pkg(materials={"M": _embedded(1.0), "N": _embedded(9.0)})
     result_e3 = merge.merge_package_dicts(base, ours_e3, theirs_e3)
     check("E3: an entry added identically on both sides is kept once",
-          result_e3["ok"] and "N" in result_e3["merged"]["materials"])
+          result_e3["ok"] and "N" in result_e3["merged"]["materials"]
+          and result_e3["embedded"]["materials"]["N"]["status"] == "added")
+
+    ours_e4 = _pkg(materials={})
+    theirs_e4 = _pkg(materials={"M": _embedded(1.0, 0.9, "a")})
+    result_e4 = merge.merge_package_dicts(base, ours_e4, theirs_e4)
+    check("E4: delete/modify in an embedded section conflicts",
+          not result_e4["ok"] and result_e4["merged"] is None
+          and any(c["kind"] == "delete/modify"
+                  for c in result_e4["conflicts"]),
+          str(result_e4["conflicts"]))
 except Exception as exc:
     check("E: sections", False, f"-> {exc!r}")
 

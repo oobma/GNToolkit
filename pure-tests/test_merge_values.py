@@ -491,6 +491,52 @@ check("40c: a non-mergeable tree type stays unsupported",
       and r["groups"]["C"]["merged"] is None
       and r["groups"]["C"]["notices"] and r["ok"])
 
+
+def _embedded(value=1.0, metallic=0.1, note="a", blend="HASHED"):
+    entry = _shader(value)
+    entry["name"] = "M"
+    entry["owner_settings"] = {
+        "properties": {"metallic": metallic, "blend_method": blend},
+        "custom_properties": {"note": note},
+    }
+    return entry
+
+
+r = merge.merge_group_entries(_embedded(1.0, 0.1, "a"),
+                              _embedded(2.0, 0.1, "a"),
+                              _embedded(1.0, 0.9, "b"), name="M")
+merged = r.get("merged") or {}
+check("40d: embedded tree + owner settings merge per item",
+      r["status"] == "merged"
+      and merged["nodes"][0]["inputs"][0]["default_value"] == 2.0
+      and merged["owner_settings"]["properties"]["metallic"] == 0.9
+      and merged["owner_settings"]["custom_properties"]["note"] == "b")
+
+r = merge.merge_group_entries(_embedded(1.0, 0.1, "a"),
+                              _embedded(1.0, 0.5, "a"),
+                              _embedded(1.0, 0.9, "a"), name="M")
+check("40e: the same owner setting on both sides conflicts",
+      r["status"] == "conflicted"
+      and r["conflicts"][0]["key"] == '["ownerprop", "metallic"]'
+      and r["conflicts"][0]["value_type"] == "float")
+
+r = merge.merge_group_entries(_embedded(1.0, 0.1, "a", "HASHED"),
+                              _embedded(1.0, 0.1, "a", "BLEND"),
+                              _embedded(1.0, 0.1, "a", "CLIP"), name="M")
+check("40f: owner string settings are side-only (no custom)",
+      r["status"] == "conflicted"
+      and r["conflicts"][0]["key"] == '["ownerprop", "blend_method"]'
+      and r["conflicts"][0]["value_type"] == "other")
+
+key = merge.value_key_id(("ownerprop", "metallic"))
+r = merge.merge_group_entries(_embedded(1.0, 0.1, "a"),
+                              _embedded(1.0, 0.5, "a"),
+                              _embedded(1.0, 0.9, "a"), name="M",
+                              overrides={"values": {key: "theirs"}})
+check("40g: an owner setting override resolves the conflict",
+      r["status"] == "merged"
+      and r["merged"]["owner_settings"]["properties"]["metallic"] == 0.9)
+
 ours_shader = deepcopy(E)
 ours_shader["tree_type"] = "ShaderNodeTree"
 r = merge.merge_group_maps({"G": deepcopy(E)}, {"G": ours_shader},
@@ -673,7 +719,7 @@ check("54: rename reports are deterministic and inputs untouched",
       json.dumps(r1, sort_keys=True) == json.dumps(r2, sort_keys=True)
       and json.dumps(maps, sort_keys=True) == snapshot)
 
-check("55: MERGE_VERSION is 2", merge.MERGE_VERSION == 2)
+check("55: MERGE_VERSION is 3", merge.MERGE_VERSION == 3)
 
 print()
 print(f"=== RESULTS: {len(PASSED)} passed, {len(FAILED)} failed ===")
