@@ -29,7 +29,10 @@ What it enforces (any problem fails the build):
   * every relative import is shipped (``git_backend_git`` is optional in
     the platform box and required in the GitHub box);
   * the wheels set is pure (``*-py3-none-any.whl``), complete, in sync with
-    the manifest, and contains no compiled files or unsafe paths.
+    the manifest, contains no compiled files or unsafe paths, and declares
+    no upper Python bound (``Requires-Python``: only ``>=``, ``>`` and
+    ``!=`` clauses, so no wheel stops installing when Blender changes its
+    Python version).
 
 Usage:
     python build_platform.py                  # platform box
@@ -194,6 +197,35 @@ def check_compliance(files) -> None:
                 fail(f"forbidden pattern in {name}: {reason}")
 
 
+ALLOWED_PYTHON_SPECIFIERS = (">=", ">", "!=")
+
+
+def wheel_requires_python(path: Path) -> str:
+    with zipfile.ZipFile(path) as zf:
+        entry = next(
+            (n for n in zf.namelist()
+             if n.count("/") == 1 and n.endswith(".dist-info/METADATA")),
+            None)
+        if entry is None:
+            fail(f"{path.name}: no .dist-info/METADATA in the wheel")
+        raw = zf.read(entry).decode("utf-8", "replace")
+    headers = re.split(r"\r?\n\r?\n", raw, maxsplit=1)[0]
+    headers = re.sub(r"\r?\n[ \t]", " ", headers)
+    match = re.search(r"(?im)^requires-python:\s*(\S.*)$", headers)
+    return match.group(1).strip() if match else ""
+
+
+def check_wheel_requires_python(path: Path) -> None:
+    spec = wheel_requires_python(path)
+    if not spec:
+        return
+    for clause in spec.split(","):
+        if not clause.strip().startswith(ALLOWED_PYTHON_SPECIFIERS):
+            fail(f"wheel {path.name} restricts the Python version "
+                 f"(Requires-Python: {spec}); Blender changes Python "
+                 f"between releases - ship a build with no upper bound")
+
+
 def check_wheels() -> None:
     wheels_dir = ROOT / "wheels"
     if not wheels_dir.is_dir():
@@ -208,6 +240,8 @@ def check_wheels() -> None:
     compiled = [w for w in actual if not w.endswith("-py3-none-any.whl")]
     if compiled:
         fail("non-pure wheels not allowed: " + ", ".join(compiled))
+    for name in EXPECTED_WHEELS:
+        check_wheel_requires_python(wheels_dir / name)
     manifest = read_text("blender_manifest.toml")
     manifest_wheels = re.findall(
         r'(?m)^\s*"\./wheels/([^"]+)"\s*,?\s*$', manifest)

@@ -35,6 +35,7 @@ CASES = [
     ("gnt_check render (dot-only)", "test_gnt_check_render.py"),
     ("exclusions rationale", "test_exclusions_rationale.py"),
     ("hash cross-version", "test_hash_cross_version.py"),
+    ("wheel python guard", "test_wheel_python_guard.py"),
 ]
 
 
