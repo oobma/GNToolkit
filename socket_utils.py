@@ -78,6 +78,10 @@ def normalize_socket_type(raw_type: str) -> str:
         return "VECTOR"
     if "COLOR" in r or "RGBA" in r:
         return "RGBA"
+    if "QUATERNION" in r:
+        return "ROTATION"
+    if "FLOAT4X4" in r:
+        return "MATRIX"
     if "FLOAT" in r or "VALUE" in r:
         return "FLOAT"
     if "GEOMETRY" in r:

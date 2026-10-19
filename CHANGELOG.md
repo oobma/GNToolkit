@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Blender 5.2 dynamic item sockets rebuild faithfully.** Three node
+  families whose sockets are created from dynamic item collections lost
+  their links on import: Capture Attribute items of type Rotation and
+  Matrix (the RNA enum is `ROTATION`/`MATRIX`, the serialized attribute
+  type is `QUATERNION`/`FLOAT4X4`), Format String placeholders (the
+  `Item_N` inputs are now recreated from the serialized format string
+  sockets), and Field to Grid grid items (recreated from the `Field_N`
+  inputs). Rebuilding a public third-party asset library (414
+  groups, 957 dependency references, depth 10) is now 414/414 canonical
+  hash-identical with 0 import warnings; covered by the gate
+  (`dynamic item sockets 5.2`, 16 checks).
+- **Interface menu defaults are no longer reported as failed before
+  wiring.** Menu socket defaults are deferred to the final menu pass on
+  both input and output sockets (the enum is only populated once the
+  Menu Switch is linked), removing false WARN records on import.
+- **Canonical hash: derived interface `enum_items` excluded** (they come
+  from the Menu Switch behind the Group Input; the serializer captured
+  them only opportunistically, so source and rebuilt trees disagreed
+  without content changes). `HASH_VERSION` is now 23; stored baselines
+  are re-stamped by the existing migration.
+- **Build guard: a bundled wheel may not pin the Python version.**
+  `build_platform.py` now reads `Requires-Python` from every wheel in
+  `wheels/` and refuses any upper bound (`<`, `<=`, `~=`, `==`), so a
+  dependency pin such as `~=3.11.0` cannot silently enter a release and
+  make the extension uninstallable when Blender changes its Python
+  (5.1+ ships 3.13). Lower bounds (`>=`, `>`) and exclusions (`!=`) keep
+  working; a wheel without the field is accepted. The guard is static
+  (wheel metadata only); the dynamic proof stays the release gate's real
+  installs. Covered by the pure suite (`wheel python guard`, 12 checks).
+
 ## [0.4.1] - 2026-10-17
 
 ### Added

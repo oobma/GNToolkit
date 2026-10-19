@@ -668,7 +668,11 @@ WORLD_SETTINGS_PROPS: tuple[str, ...] = (
 # (``inner_tree``) instead of a name reference, and referenced Text
 # datablocks (OSL scripts) are versioned under ``texts``; the Script
 # node's compiled ``bytecode``/``bytecode_hash`` are no longer stored.
-HASH_VERSION: int = 22
+# 23: interface menu ``enum_items`` are excluded from the hash: they are
+# derived from the wiring (a Menu Switch behind the Group Input) and the
+# serializer captured them only opportunistically, so source and rebuilt
+# trees disagreed without any content change (external library, 2026-10-19).
+HASH_VERSION: int = 23
 
 # Sidecar file settings
 SIDECAR_EXTENSION = ".gntsync"

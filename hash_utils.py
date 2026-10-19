@@ -279,12 +279,11 @@ def canonicalize_node_tree_data(data: dict) -> dict:
                     _fold_version_defaults(it["properties"],
                                            "interface").items()))
             if "enum_items" in it and isinstance(it["enum_items"], list):
-                cleaned = []
-                for e in it["enum_items"]:
-                    ed = dict(e)
-                    ed.pop("description", None)
-                    cleaned.append(ed)
-                it["enum_items"] = sorted(cleaned, key=lambda x: x.get("name", ""))
+                # Derived from the wiring (a Menu Switch behind the Group
+                # Input), not stored by Blender on the interface item and
+                # captured only opportunistically by the serializer; it
+                # must not move the hash.  HASH_VERSION 23.
+                it.pop("enum_items", None)
             items.append(it)
         # Sort by (name, in_out): the roundtrip may recreate homonymous
         # INPUT/OUTPUT items in a different relative order (Blender
@@ -300,6 +299,7 @@ def canonicalize_node_tree_data(data: dict) -> dict:
             for item in lst:
                 it = dict(item)
                 it.pop("identifier", None)
+                it.pop("enum_items", None)
                 _canonicalize_interface_socket_entry(it)
                 if "properties" in it and isinstance(it["properties"], dict):
                     it["properties"] = {

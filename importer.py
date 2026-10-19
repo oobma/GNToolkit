@@ -960,6 +960,38 @@ def _configure_special_node(new_node, node_data: dict, node_type: str,
                     f"CaptureAttribute '{new_node.name}': could not set data_type: {exc}", level="DEBUG",
                 )
 
+    elif node_type == "GeometryNodeFieldToGrid":
+        # 5.2 node: the field sockets are dynamic grid items (Field_N in
+        # the serialized inputs).  Recreate them (name + socket type)
+        # before defaults and links; the outputs (Grid_N) follow.
+        coll = getattr(new_node, "grid_items", None)
+        items = [inp for inp in node_data.get("inputs", [])
+                 if str(inp.get("identifier", "")).startswith("Field_")]
+        if coll is not None and items:
+            _reset_collection(coll, tracker)
+            for inp in items:
+                raw_type = (inp.get("bl_idname") or inp.get("socket_type")
+                            or inp.get("type") or "FLOAT")
+                attempt_create_item(coll, raw_type, inp.get("name", "Density"))
+            map_dynamic_sockets(node_data, new_node, zone_socket_remap,
+                                new_node.name)
+
+    elif node_type == "FunctionNodeFormatString":
+        # 5.2 node: the placeholder sockets are dynamic items.  The JSON
+        # carries them as Item_N inputs; recreate the items (name + type)
+        # before defaults and links so their sockets exist.
+        coll = getattr(new_node, "format_items", None)
+        items = [inp for inp in node_data.get("inputs", [])
+                 if str(inp.get("identifier", "")).startswith("Item_")]
+        if coll is not None and items:
+            _reset_collection(coll, tracker)
+            for inp in items:
+                raw_type = (inp.get("bl_idname") or inp.get("socket_type")
+                            or inp.get("type") or "FLOAT")
+                attempt_create_item(coll, raw_type, inp.get("name", "Value"))
+            map_dynamic_sockets(node_data, new_node, zone_socket_remap,
+                                new_node.name)
+
     elif node_type == "GeometryNodeBake":
         bake_data = node_data.get("bake_items_data")
         coll = getattr(new_node, "bake_items", None)
@@ -1531,6 +1563,12 @@ def _apply_default_values_gen(data: dict, node_map: dict, zone_socket_remap: dic
                     type_hint = bl_id or serialized_bl_id or out_data.get("type") or "VALUE"
                     raw_val = out_data["default_value"]
                     ctx = f"Node '{node.name}' output '{sname}'"
+
+                    # Menu socket defaults are deferred to Step 6
+                    # (_final_menu_defaults_pass): the enum identifiers may
+                    # only exist after wiring.
+                    if bl_id == 'NodeSocketMenu':
+                        continue
 
                     try:
                         sock.default_value = unclean_value(raw_val, type_hint, context=ctx)
@@ -2248,30 +2286,32 @@ def _final_menu_defaults_pass(ng, data: dict, interface_map: dict,
         if node is None:
             continue
 
-        for inp_data in node_data.get("inputs", []):
-            raw_val = inp_data.get("default_value")
-            if raw_val is None:
-                continue
-            sname = inp_data.get("name", "")
-            sock = None
-            for s in node.inputs:
-                if s.name == sname:
-                    sock = s
-                    break
-            if sock is None:
-                continue
-            bl_id = getattr(sock, 'bl_idname', '') or ''
-            if bl_id != 'NodeSocketMenu':
-                continue
-            if not hasattr(sock, 'default_value'):
-                continue
+        for direction, sockets in (("inputs", node.inputs),
+                                   ("outputs", node.outputs)):
+            for inp_data in node_data.get(direction, []):
+                raw_val = inp_data.get("default_value")
+                if raw_val is None:
+                    continue
+                sname = inp_data.get("name", "")
+                sock = None
+                for s in sockets:
+                    if s.name == sname:
+                        sock = s
+                        break
+                if sock is None:
+                    continue
+                bl_id = getattr(sock, 'bl_idname', '') or ''
+                if bl_id != 'NodeSocketMenu':
+                    continue
+                if not hasattr(sock, 'default_value'):
+                    continue
 
-            # Try to set the string enum value on the Menu socket
-            try:
-                sock.default_value = str(raw_val)
-            except (TypeError, AttributeError, ValueError, RuntimeError):
-                # Socket might not have enum_items yet — skip silently
-                pass
+                # Try to set the string enum value on the Menu socket
+                try:
+                    sock.default_value = str(raw_val)
+                except (TypeError, AttributeError, ValueError, RuntimeError):
+                    # Socket might not have enum_items yet - skip silently
+                    pass
 
 
 # ---------------------------------------------------------------------------
