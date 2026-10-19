@@ -32,6 +32,7 @@ CASES = [
     ("gnt_check version guard", "test_gnt_check_version_guard.py"),
     ("gnt_check diff", "test_gnt_check_diff.py"),
     ("gnt_check merge", "test_gnt_check_merge.py"),
+    ("cross-version", "test_cross_version.py"),
     ("gnt_check render (dot-only)", "test_gnt_check_render.py"),
     ("exclusions rationale", "test_exclusions_rationale.py"),
     ("hash cross-version", "test_hash_cross_version.py"),

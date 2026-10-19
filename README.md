@@ -102,6 +102,11 @@ python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --health
 # Compare two or more projects by content: shared logic, diverging forks
 python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups
 
+# Compare the same project exported from two Blender versions: sockets
+# added by the newer version are reported as additive (type + default);
+# removed sockets, shared-socket changes and structure changes exit 1
+python gnt_check.py --cross-version export_52/NodeGroups export_53/NodeGroups
+
 # Preview a semantic 3-way merge (values only; never writes files)
 python gnt_check.py --merge base/NodeGroups ours/NodeGroups theirs/NodeGroups
 python gnt_check.py --merge HEAD~1 HEAD theirs --repo . --subdir NodeGroups
@@ -161,6 +166,18 @@ revisions:
 ```bash
 python gnt_check.py --diff HEAD~1 HEAD --repo /path/to/project --subdir motor/NodeGroups
 ```
+
+`gnt_check.py --cross-version OLD NEW` compares two exports of the same
+project made with different Blender versions. Nodes and sockets are
+matched by name, so a socket that the newer Blender inserted is not
+confused with a renamed or reordered one: additive sockets are reported
+with their type and default value, while removed nodes/sockets, type or
+value changes on sockets present in both, interface/link/structure changes
+and added/removed groups are destructive. Exit code 0 = no destructive
+change, 1 = destructive (or any change with `--strict`), 2 = unreadable
+input; `--json` emits the full report. The tool compares JSON exports
+only - it never launches Blender, so export the same `.blend` once per
+version first.
 
 `gnt_check.py --merge BASE OURS THEIRS` previews the semantic merge of
 the three sides without writing anything: the **values** (socket

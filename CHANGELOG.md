@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`gnt_check --cross-version OLD NEW`.** Compares two exports of the same
+  project made with different Blender versions, matching nodes and sockets
+  by name. Sockets added by the newer version are reported as additive
+  (with type and default value); removed nodes/sockets, type or value
+  changes on sockets present in both, interface/link/structure changes and
+  added/removed groups are destructive. Exit codes: 0 no destructive
+  change, 1 destructive (or any change with `--strict`), 2 unreadable
+  input. `--json` emits the full report. The command only reads JSON
+  exports; it never launches Blender. Covered by the pure suite
+  (`cross-version`, 24 checks).
+
 ### Fixed
 
 - **Blender 5.2 dynamic item sockets rebuild faithfully.** Three node

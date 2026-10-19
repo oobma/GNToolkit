@@ -17,6 +17,17 @@ Audit modes (same pure-Python core, no Blender):
 Cross-project identity (same pure-Python core, no Blender):
     python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups [--strict]
 
+Cross-version comparison (same pure-Python core, no Blender):
+    python gnt_check.py --cross-version OLD_EXPORT NEW_EXPORT [--json] [--strict]
+
+    Compares two exports of the same project made with different Blender
+    versions.  Nodes and sockets are matched by name: sockets added by the
+    newer version are reported as additive (with type and default value);
+    removed nodes/sockets, type/value changes on sockets present in both,
+    interface/link/structure changes and added/removed groups are
+    destructive.  Exit 0 = no destructive change, 1 = destructive (or any
+    change with --strict), 2 = unreadable input.
+
 Semantic merge preview (same pure-Python core, no Blender):
     python gnt_check.py --merge BASE OURS THEIRS [--repo R] [--subdir D]
                         [--json] [--strict]
@@ -442,6 +453,32 @@ def run_cross(targets, as_json: bool, strict: bool) -> int:
     return 0
 
 
+def run_cross_version(old_path: str, new_path: str, as_json: bool,
+                      strict: bool) -> int:
+    for label, path in (("old", old_path), ("new", new_path)):
+        if not os.path.exists(path):
+            print(f"error: {label} target not found: {path}")
+            return 2
+    cross = _load_cross_version()
+    old_groups, old_bad = cross.load_groups(old_path)
+    new_groups, new_bad = cross.load_groups(new_path)
+    if not old_groups:
+        print(f"error: no readable group JSONs in old target: {old_path}")
+        for item in old_bad:
+            print(f"[UNREADABLE] {item['path']} ({item['error']})")
+        return 2
+    if not new_groups:
+        print(f"error: no readable group JSONs in new target: {new_path}")
+        for item in new_bad:
+            print(f"[UNREADABLE] {item['path']} ({item['error']})")
+        return 2
+    report = cross.compare_groups(old_groups, new_groups)
+    report["unreadable_old"] = old_bad
+    report["unreadable_new"] = new_bad
+    print(cross.format_report(report, as_json))
+    return cross.exit_code(report, strict)
+
+
 # ---------------------------------------------------------------------------
 # Semantic diff (--diff A B): a readable summary of what changed between two
 # versions of the JSON (folder or file; standalone files or unified
@@ -457,6 +494,16 @@ def _load_semantic_diff():
         _load_pure("gnt_core.semantic_diff",
                    os.path.join(_ROOT, "semantic_diff.py"))
     return sys.modules["gnt_core.semantic_diff"]
+
+
+def _load_cross_version():
+    """Load cross_version.py (pure, repo-only CLI helper)."""
+    if "gnt_core.hash_utils" not in sys.modules:
+        _load_hash_utils()
+    if "gnt_core.cross_version" not in sys.modules:
+        _load_pure("gnt_core.cross_version",
+                   os.path.join(_ROOT, "cross_version.py"))
+    return sys.modules["gnt_core.cross_version"]
 
 
 def _load_merge():
@@ -1314,6 +1361,13 @@ def main(argv=None) -> int:
                          "or JSON files) by content hash: shared logic and "
                          "divergent forks; with --strict, divergent forks "
                          "exit 1")
+    ap.add_argument("--cross-version", nargs=2, metavar=("OLD", "NEW"),
+                    help="compare two exports of the same project made with "
+                         "different Blender versions: sockets added by the "
+                         "newer version are reported as additive; removed "
+                         "sockets, shared-socket changes, interface/link/"
+                         "structure changes and added/removed groups exit 1; "
+                         "with --strict any change exits 1")
     ap.add_argument("--diff", nargs=2, metavar=("A", "B"),
                     help="readable summary of what changed between two JSON "
                          "versions (folders, files, or git revisions with "
@@ -1376,6 +1430,11 @@ def main(argv=None) -> int:
     if args.diff:
         return run_diff(args.diff[0], args.diff[1], args.repo,
                         args.subdir or "")
+
+    if args.cross_version:
+        return run_cross_version(args.cross_version[0],
+                                 args.cross_version[1], args.json,
+                                 args.strict)
 
     if args.render:
         try:
