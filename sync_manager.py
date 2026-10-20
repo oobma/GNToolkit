@@ -2167,7 +2167,7 @@ class SyncManager:
     def merge_conflict(self, sync_uuid: str,
                        overrides: dict | None = None) -> dict:
         """Resolve a CONFLICT by merging values per item (Geometry Nodes,
-        Shader, materials and worlds; specs 2026-10-16/19).
+        Shader, Compositor, materials and worlds; specs 2026-10-16/19/20).
 
         Sides: ours = the live .blend entry, theirs = the JSON entry on
         disk, base = the entry recovered from the JSON file's git history
@@ -2216,7 +2216,7 @@ class SyncManager:
         if not is_trackable_tree_type(getattr(tree, "type", "")):
             return {"status": "unsupported", "name": name,
                     "notices": ["tree type '%s' is not covered by merge "
-                                "(Geometry Nodes and Shader trees only)"
+                                "(Geometry Nodes, Shader and Compositor trees only)"
                                 % getattr(tree, "bl_idname", "?")],
                     "conflicts": [], "applied": []}
 
@@ -2627,7 +2627,7 @@ class SyncManager:
     # --- Batch operations ---------------------------------------------------
 
     def link_all_groups(self, json_path: str, context=None) -> dict:
-        """Link all trackable node groups (Geometry Nodes and Shader) in
+        """Link all trackable node groups (Geometry Nodes, Shader and Compositor) in
         the current .blend to a single master JSON file.
 
         Serializes every group, creates per-group tracking entries with

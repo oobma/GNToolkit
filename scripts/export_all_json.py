@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-r"""Export every trackable node group (Geometry Nodes and Shader) of the
-open .blend to a GNToolkit folder export (one JSON file per group, plus
-Modifiers/).
+r"""Export every trackable node group (Geometry Nodes, Shader and
+Compositor) of the open .blend to a GNToolkit folder export (one JSON
+file per group, plus Modifiers/).
 
 Run from Blender's Text Editor (Scripting workspace) with the .blend open,
 or headless:
@@ -25,7 +25,7 @@ toolsets out of the export/conversion.  The addon is enabled
 automatically when missing (extension module or the repo copy next to
 this script).
 
---categories gn,shader,modifiers,materials,worlds exports only the listed
+--categories gn,shader,compositor,modifiers,materials,worlds exports only the listed
 categories (comma-separated; the omitted ones are left out).  Without it
 the export is the same as before (everything).  "modifiers" needs "gn":
 NODES modifiers are exported only together with the Geometry Nodes groups
@@ -44,8 +44,9 @@ import sys
 
 ADDON_MODULES = ("GNToolkit", "bl_ext.user_default.gn_toolkit")
 # Mirrors constants.TRACKABLE_TREE_TYPES (script stays self-contained).
-TRACKABLE_TREE_TYPES = ("GEOMETRY", "SHADER")
+TRACKABLE_TREE_TYPES = ("GEOMETRY", "SHADER", "COMPOSITING")
 CATEGORY_TOKENS = {"gn": "include_geometry", "shader": "include_shader",
+                   "compositor": "include_compositor",
                    "modifiers": "include_modifiers",
                    "materials": "include_materials", "worlds": "include_worlds"}
 DEFAULT_OUT = os.path.join(os.getcwd(), "gnt_export")
@@ -234,7 +235,7 @@ def main():
         if selected is None:
             return True
         if category == "groups":
-            return bool({"gn", "shader"} & selected)
+            return bool({"gn", "shader", "compositor"} & selected)
         if category == "modifiers":
             return "modifiers" in selected and "gn" in selected
         return category in selected

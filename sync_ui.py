@@ -590,6 +590,18 @@ class GN_PT_SyncPanel(bpy.types.Panel):
                          icon='FILE_TICK')
         mat_row.operator("gn.sync_link_world", text="Track World", icon='WORLD')
 
+        if hasattr(context.scene, "compositing_node_group"):
+            comp_tree = context.scene.compositing_node_group
+            comp_row = layout.row(align=True)
+            comp_row.operator(
+                "gn.sync_link_scene_compositor",
+                text="Track Scene Compositor",
+                icon=_layout_icon('COMPOSITING', 'NODETREE'))
+            if comp_tree is not None:
+                comp_row.label(text=comp_tree.name)
+            else:
+                comp_row.enabled = False
+
         if not tracked:
             layout.separator()
             layout.label(text="Nothing tracked yet", icon='INFO')

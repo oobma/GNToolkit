@@ -6,6 +6,27 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Compositor node groups are tracked, exported, imported and merged.**
+  `COMPOSITING` (`CompositorNodeTree`) joins Geometry Nodes and Shader in
+  the trackable set: Track Group/Track All, the per-group status/save/pull
+  loop, Export JSON Package (new **Compositor groups** category, on by
+  default), folder exports and the three-way merge work the same way.
+  Blender 5.x scene compositors are normal node groups, so the scene's
+  compositor is covered; a new **Track Scene Compositor** button tracks
+  the active scene's group without depending on the active editor.
+  Compositor entries carry an informational `compositor_scenes` list: on
+  import/rebuild, a scene without a compositor (or pointing at a missing
+  group) is assigned the rebuilt group, while a different valid
+  assignment is preserved and scenes are never created. The list is not
+  part of the canonical hash (no `HASH_VERSION` bump) and `MERGE_VERSION`
+  stays 3. Limits: Blender 4.2's scene compositor (`Scene.node_tree`, not
+  a node group) is not covered; compositor trees with Render
+  Layers/Cryptomatte depend on the referenced scene's view layers/passes,
+  which are not versioned (the scene-owner boundary) — a clone into a
+  file without that scene cannot recreate those pass sockets/links, while
+  pulling into the project file works; and library-linked groups are
+  skipped by Track All (exportable as content; make them local to sync
+  them). Covered by the new compositor corpus test (36 checks, 5.1/5.2).
 - **Merge covers Shader node groups.** A three-way merge now fuses Shader
   groups per item exactly like Geometry Nodes: socket defaults, node
   labels/properties, custom properties and tree/interface properties

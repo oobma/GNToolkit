@@ -207,7 +207,7 @@ def apply_modifier_tasks(mod_data_list: list, interface_maps: dict | None) -> in
 class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.export_batch_json"
     bl_label = "Export JSON Package"
-    bl_description = ("Export all node groups (Geometry Nodes and Shader) and NODES "
+    bl_description = ("Export all node groups (Geometry Nodes, Shader and Compositor) and NODES "
                       "modifiers to JSON — a single package file, or one file per group "
                       "in folders with 'Use Folder Structure'")
     filename_ext = ".json"
@@ -229,6 +229,10 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
     include_shader: BoolProperty(
         name="Shader groups", default=True,
         description="Include Shader node group trees")
+    include_compositor: BoolProperty(
+        name="Compositor groups", default=True,
+        description="Include Compositor node group trees (scene compositors "
+                    "and reusable compositor groups)")
     include_modifiers: BoolProperty(
         name="Modifiers (NODES)", default=True,
         description="Include NODES modifier setups (exported only together "
@@ -245,6 +249,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
         col = layout.column(heading="Include:")
         col.prop(self, "include_geometry")
         col.prop(self, "include_shader")
+        col.prop(self, "include_compositor")
         col.prop(self, "include_modifiers")
         col.prop(self, "include_materials")
         col.prop(self, "include_worlds")
@@ -257,6 +262,7 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
         base_dir = os.path.dirname(self.filepath)
         modifiers_on = self.include_modifiers and self.include_geometry
         if not (self.include_geometry or self.include_shader
+                or self.include_compositor
                 or modifiers_on or self.include_materials
                 or self.include_worlds):
             self.report({'ERROR'},
@@ -284,6 +290,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
         def _selected(tree):
             if tree.type == 'GEOMETRY':
                 return self.include_geometry
+            if tree.type == 'COMPOSITING':
+                return self.include_compositor
             return self.include_shader
 
         excluded_names = {t.name for t in trackable if _excluded(t)}
@@ -309,7 +317,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                 ng_names = FilenameAllocator()
                 mod_names = FilenameAllocator()
                 count_ng = 0
-                if self.include_geometry or self.include_shader:
+                if (self.include_geometry or self.include_shader
+                        or self.include_compositor):
                     ng_dir = os.path.join(base_dir, "NodeGroups")
                     if not os.path.exists(ng_dir):
                         os.makedirs(ng_dir)
@@ -385,7 +394,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     "type": "GN_UNIFIED_PACKAGE",
                     "export_method": PACKAGE_EXPORT_METHOD,
                 }
-                if self.include_geometry or self.include_shader:
+                if (self.include_geometry or self.include_shader
+                        or self.include_compositor):
                     master_data["node_groups"] = {}
                     for i, tree in enumerate(trees):
                         context.window_manager.progress_update(i)
@@ -621,7 +631,7 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
     bl_label = "Import JSON Package"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = ("Recreate all node groups (Geometry Nodes and Shader) and modifiers "
+    bl_description = ("Recreate all node groups (Geometry Nodes, Shader and Compositor) and modifiers "
                       "from a JSON package — "
                       "or pick any file inside a folder export ('Export package' with folder "
                       "structure) to recreate its NodeGroups/Modifiers folders; "

@@ -47,6 +47,26 @@ def tree_has_animation(tree) -> bool:
     return any(bool(tr.strips) for tr in ad.nla_tracks)
 
 
+def tree_compositor_scenes(tree) -> list[str]:
+    """Names of the scenes that use *tree* as their compositor (5.0+).
+
+    Informational owner reference (like ``has_animation``): it travels in
+    the JSON so a fresh import can assign the scene, but the canonical
+    hash ignores it.  Blender 4.2 has no ``Scene.compositing_node_group``
+    and returns no owners.
+    """
+    if getattr(tree, "bl_idname", "") != "CompositorNodeTree":
+        return []
+    scenes = []
+    for scene in bpy.data.scenes:
+        try:
+            if getattr(scene, "compositing_node_group", None) == tree:
+                scenes.append(scene.name)
+        except Exception:
+            continue
+    return sorted(scenes)
+
+
 def _serialize_enum_items(collection) -> list[dict]:
     """Serialize a Blender enum_items collection into a list of dicts.
 
@@ -471,6 +491,12 @@ def _serialize_node_tree_core(tree):
     # UI and gnt_check warnings.
     if tree_has_animation(tree):
         data["has_animation"] = True
+    # Scene owner references (compositor only, 5.0+): informational, not
+    # part of the canonical hash.  A fresh import uses them to assign the
+    # rebuilt group to the scenes that used it in the source file.
+    compositor_scenes = tree_compositor_scenes(tree)
+    if compositor_scenes:
+        data["compositor_scenes"] = compositor_scenes
     data.update({"inputs": [], "outputs": [], "nodes": [], "links": []})
 
     group_input_node = next((n for n in tree.nodes if n.bl_idname == 'NodeGroupInput'), None)

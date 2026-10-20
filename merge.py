@@ -7,7 +7,8 @@ Implements the merge semantics (specs 2026-10-16 and 2026-10-19):
   (node and tree), tree properties and the curated owner settings of
   embedded trees (materials/worlds), decided per item with a diff3 table
   over base/ours/theirs.  ABSENT is a value of its own.
-* NODE GROUPS: Geometry Nodes and Shader trees (spec 2026-10-19); any
+* NODE GROUPS: Geometry Nodes, Shader and Compositor trees (spec
+  2026-10-19, compositor 2026-10-20); any
   other tree type reports ``unsupported`` (a notice, not a conflict) so
   a mixed repository does not fail the preview.
 * EMBEDDED ENTRIES: ``materials`` and ``worlds`` merge the tree and the
@@ -49,7 +50,8 @@ _DROP = object()
 
 _DEFAULT_TREE_TYPE = "GeometryNodeTree"
 
-_MERGE_TREE_TYPES = frozenset(("GeometryNodeTree", "ShaderNodeTree"))
+_MERGE_TREE_TYPES = frozenset(
+    ("GeometryNodeTree", "ShaderNodeTree", "CompositorNodeTree"))
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +622,7 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
     if tree_type not in _MERGE_TREE_TYPES:
         return _result(group_name, "unsupported", notices=[
             "tree type '%s' is not covered by merge "
-            "(Geometry Nodes and Shader trees only)" % tree_type])
+            "(Geometry Nodes, Shader and Compositor trees only)" % tree_type])
 
     canon = [canonicalize_node_tree_data(entry)
              for entry in (base, ours, theirs)]
@@ -752,8 +754,8 @@ def _rename_pairings(base_groups: dict, ours_groups: dict,
     *added* one when the name is absent from base, absent from the other
     side and present there.  A removed and an added candidate pair up
     only when their fingerprints match exactly and the match is 1-to-1 -
-    ambiguity never guesses.  Mergeable tree types only (Geometry Nodes
-    and Shader), mirroring the values-merge scope.  Deterministic:
+    ambiguity never guesses.  Mergeable tree types only (Geometry Nodes,
+    Shader and Compositor), mirroring the values-merge scope.  Deterministic:
     per-old entries sort by side.
     """
     pairs = {}
@@ -822,7 +824,7 @@ def pair_renamed_files(deletions: dict, additions: dict) -> dict:
     JSON data (a deletion uses its base content, an addition its new
     content; ``None`` entries are skipped).  A pair forms when both sides
     parse as packages, every ``node_groups`` entry is a mergeable tree
-    (Geometry Nodes or Shader), the entry-set fingerprints match exactly
+    (Geometry Nodes, Shader or Compositor), the entry-set fingerprints match exactly
     and the match is 1-to-1 on both sides - ambiguity never guesses.
     """
     def fingerprint(data):
@@ -1429,8 +1431,9 @@ def merge_package_dicts(base: dict, ours: dict, theirs: dict) -> dict:
                         "base": (hb or "(absent)")[:12],
                         "ours": (ho or "(absent)")[:12],
                         "theirs": (ht or "(absent)")[:12]})
-                    notices.append("group '%s' is not a Geometry Nodes or "
-                                   "Shader tree and merge does not fuse it"
+                    notices.append("group '%s' is not a Geometry Nodes, "
+                                   "Shader or Compositor tree and merge does "
+                                   "not fuse it"
                                    % name)
             else:
                 for conflict in entry_result.get("conflicts") or []:

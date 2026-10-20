@@ -1,6 +1,6 @@
 # GNToolkit — Collaborating with Git
 
-GNToolkit tracks node groups (Geometry Nodes and Shader) as deterministic
+GNToolkit tracks node groups (Geometry Nodes, Shader and Compositor) as deterministic
 JSON files, which makes every Git client a collaboration backend for
 them. Two ways to work:
 
@@ -119,8 +119,9 @@ automatically when one is present.
   - **Sync Changes** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
-    (values, modifier inputs, Geometry Nodes/Shader groups, materials
-    and worlds, and exact-content renames per entry or per renamed file
+     (values, modifier inputs, Geometry Nodes/Shader/Compositor groups,
+     materials and worlds, and exact-content renames per entry or per
+     renamed file
     — `ours` = your HEAD,
     `theirs` = the upstream branch, `base` = their merge-base), written,
     committed as a real two-parent merge commit and pushed. Any item
@@ -199,12 +200,14 @@ row shows as **Conflict** and offers three exits:
 committed in a git repository. Without a repository (or without the
 baseline revision in history) the Merge action reports why.
 
-Merge covers Geometry Nodes/Shader node groups and material/world
-embedded trees, per item (tree plus owner settings). Merges are values
-only — socket defaults, node labels/properties, custom properties, tree
-properties, curated owner settings; the structure is adopted whole from
-the side that changed it and never guessed. Exact-content renames (same
-logic under a new name) are paired and merged under the new name for
-Geometry Nodes and Shader groups; a rename that also edited values on
-the same side still reads as delete + add, and animated groups are
-flagged but not merged specially.
+Merge covers Geometry Nodes/Shader/Compositor node groups and
+material/world embedded trees, per item (tree plus owner settings).
+Merges are values only — socket defaults, node labels/properties, custom
+properties, tree properties, curated owner settings; the structure is
+adopted whole from the side that changed it and never guessed.
+Exact-content renames (same logic under a new name) are paired and
+merged under the new name for Geometry Nodes, Shader and Compositor
+groups; a rename that also edited values on the same side still reads as
+delete + add, and animated groups are flagged but not merged specially.
+A compositor entry's informational `compositor_scenes` list is not part
+of the hash and travels with the adopted side.

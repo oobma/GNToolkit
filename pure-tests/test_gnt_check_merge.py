@@ -205,9 +205,17 @@ check("10: shader groups merge per item (one-side change)",
       code == 0 and "== G [merged]" in out and "adopted: ours" in out,
       out.strip().splitlines()[-1])
 
-un_base = side(work, "un_base", 1.0, tree_type="CompositorNodeTree")
-un_ours = side(work, "un_ours", 2.0, tree_type="CompositorNodeTree")
-un_theirs = side(work, "un_theirs", 3.0, tree_type="CompositorNodeTree")
+co_base = side(work, "co_base", 1.0, tree_type="CompositorNodeTree")
+co_ours = side(work, "co_ours", 2.0, tree_type="CompositorNodeTree")
+co_theirs = side(work, "co_theirs", 1.0, tree_type="CompositorNodeTree")
+code, out = run_merge(co_base, co_ours, co_theirs)
+check("10b: compositor groups merge per item (one-side change)",
+      code == 0 and "== G [merged]" in out and "adopted: ours" in out,
+      out.strip().splitlines()[-1])
+
+un_base = side(work, "un_base", 1.0, tree_type="TextureNodeTree")
+un_ours = side(work, "un_ours", 2.0, tree_type="TextureNodeTree")
+un_theirs = side(work, "un_theirs", 3.0, tree_type="TextureNodeTree")
 code, out = run_merge(un_base, un_ours, un_theirs)
 check("11: a non-mergeable tree type is an unsupported notice",
       code == 0 and "[unsupported]" in out and "not covered" in out,

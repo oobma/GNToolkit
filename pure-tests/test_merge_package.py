@@ -145,24 +145,24 @@ try:
                   for c in result_b["conflicts"]),
           str(result_b["conflicts"]))
 
-    def _compositor(value):
+    def _texture(value):
         entry = _entry(value)
-        entry["tree_type"] = "CompositorNodeTree"
+        entry["tree_type"] = "TextureNodeTree"
         return entry
 
-    base_c = _pkg(groups={"C": _compositor(1.0)})
-    ours_c = _pkg(groups={"C": _compositor(2.0)})
+    base_c = _pkg(groups={"C": _texture(1.0)})
+    ours_c = _pkg(groups={"C": _texture(2.0)})
     result_c1 = merge.merge_package_dicts(base_c, ours_c, base_c)
     check("B3: a non-mergeable type changed on one side is adopted",
           result_c1["ok"]
           and result_c1["merged"]["node_groups"]["C"]["nodes"][0]
           ["inputs"][0]["default_value"] == 2.0)
 
-    theirs_c = _pkg(groups={"C": _compositor(3.0)})
+    theirs_c = _pkg(groups={"C": _texture(3.0)})
     result_c2 = merge.merge_package_dicts(base_c, ours_c, theirs_c)
     check("B4: a non-mergeable type changed on both sides conflicts",
           not result_c2["ok"] and result_c2["merged"] is None
-          and any("not a Geometry Nodes or Shader tree" in n
+          and any("not a Geometry Nodes" in n
                   for n in result_c2["notices"]),
           str(result_c2["conflicts"]))
 except Exception as exc:
@@ -411,8 +411,16 @@ try:
     check("I3: shader file renames are paired",
           pairs == {"NodeGroups/S.json": "NodeGroups/T.json"}, str(pairs))
 
+    compositor = _entry(1.0)
+    compositor["tree_type"] = "CompositorNodeTree"
+    pairs = merge.pair_renamed_files(
+        {"NodeGroups/C.json": compositor},
+        {"NodeGroups/D.json": deepcopy(compositor)})
+    check("I3b: compositor file renames are paired",
+          pairs == {"NodeGroups/C.json": "NodeGroups/D.json"}, str(pairs))
+
     unsupported = _entry(1.0)
-    unsupported["tree_type"] = "CompositorNodeTree"
+    unsupported["tree_type"] = "TextureNodeTree"
     pairs = merge.pair_renamed_files(
         {"NodeGroups/C.json": unsupported},
         {"NodeGroups/D.json": deepcopy(unsupported)})

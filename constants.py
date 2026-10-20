@@ -14,11 +14,12 @@ ADDON_VERSION = "0.4.1"
 # only; importers never read it.
 PACKAGE_EXPORT_METHOD = "GN_TOOLKIT"
 
-# Node-tree types the add-on versions (multi-editor scope A, shader
-# first).  ``NodeTree.type`` strings: GEOMETRY is the primary target and
-# SHADER the first additional editor; the compositor and embedded trees
-# (materials/worlds) are out of scope so far.
-TRACKABLE_TREE_TYPES: tuple[str, ...] = ("GEOMETRY", "SHADER")
+# Node-tree types the add-on versions (multi-editor scope A).  ``NodeTree
+# .type`` strings: GEOMETRY is the primary target, SHADER and COMPOSITING
+# are the additional editors.  Embedded trees (materials/worlds) use the
+# owner-entry kind instead.  NOTE: Blender spells the compositor type
+# "COMPOSITING" (bl_idname "CompositorNodeTree").
+TRACKABLE_TREE_TYPES: tuple[str, ...] = ("GEOMETRY", "SHADER", "COMPOSITING")
 
 
 def is_trackable_tree_type(tree_type) -> bool:

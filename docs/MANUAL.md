@@ -309,8 +309,8 @@ issues.
 
 - The row leaves the Changes list once resolved.
 - Merge requires the JSON file to be committed in a git repository and
-  covers Geometry Nodes/Shader groups and materials/worlds (tree plus
-  owner settings) per item; otherwise the action reports why.
+  covers Geometry Nodes/Shader/Compositor groups and materials/worlds
+  (tree plus owner settings) per item; otherwise the action reports why.
 
 ---
 
@@ -384,8 +384,8 @@ file and modifiers in `Modifiers/*.json`.
      that changed and commits locally.
    - **Sync Changes** — pull + push. Remote changes arrive
      only when your branch is simply behind; if versions diverged, the
-     tracked JSON files merge per item (values, modifier inputs,
-     Geometry Nodes/Shader groups, materials and worlds) into a
+      tracked JSON files merge per item (values, modifier inputs,
+      Geometry Nodes/Shader/Compositor groups, materials and worlds) into a
      two-parent merge commit and are pushed —
      unless anything conflicts, in which case nothing is written and the
      per-item report lands in the merge report box.
@@ -436,8 +436,9 @@ file and modifiers in `Modifiers/*.json`.
 
 ## Additional workflow 7 — Headless export (no UI)
 
-Export every trackable node group (Geometry Nodes and Shader) of a
-.blend to a folder export (one JSON file per group, plus `Modifiers/`)
+Export every trackable node group (Geometry Nodes, Shader and
+Compositor) of a .blend to a folder export (one JSON file per group, plus
+`Modifiers/`)
 without opening Blender's UI:
 
 ```bash
@@ -585,6 +586,36 @@ node groups — GNToolkit tracks them as **owner-aware entries**:
 4. Cloning into a fresh file recreates missing owners (with a warning)
    and restores the tree, the curated settings and the owner's custom
    properties. Object material slots are **not** versioned.
+
+---
+
+## Additional workflow 11 - Scene compositor (Blender 5.0+)
+
+In Blender 5.x the scene compositor is a normal `CompositorNodeTree`
+node group pointed to by `Scene.compositing_node_group` (Blender 4.2
+still uses `Scene.node_tree` and is not covered here):
+
+1. With the compositor set up, click **Track Scene Compositor** in the
+   Sync panel (it does not depend on which editor is active). You can
+   also use **Track Group** from the Compositor editor or **Track All**.
+2. Status, save, pull, conflicts and **Merge** work like any other
+   group. The entry also stores an informational `compositor_scenes`
+   list (the scenes that use the group); it does not affect the hash.
+3. Export JSON Package has a **Compositor groups** category (on by
+   default). On import, a scene without a compositor (or pointing at a
+   missing group) is assigned the rebuilt group; a different valid
+   assignment is kept and scenes are never created.
+4. Library-linked compositor groups (for example Blender's
+   `compositing_nodes_essentials.blend`) are skipped by **Track All**;
+   use **Make Local** first if you want to track and pull them. Export
+   Package can serialize them as content, but they remain read-only in
+   the source .blend.
+5. **Limit**: trees with **Render Layers/Cryptomatte** nodes depend on
+   the referenced scene and its view layers/passes. The add-on versions
+   the tree and the scene reference, but not the scene itself; cloning
+   into a file without that scene cannot recreate the render-pass
+   sockets/links (Blender rebuilds the node's outputs from the scene).
+   Pulling into the project file, where the scene exists, keeps them.
 
 ---
 

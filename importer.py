@@ -2506,6 +2506,58 @@ def _rebuild_custom_inner_tree(node, inner_data: dict, json_cache: dict,
     return True
 
 
+def _apply_compositor_scenes(tree, data: dict, tracker) -> None:
+    """Assign the rebuilt compositor group to the scenes that used it.
+
+    ``compositor_scenes`` is an informational owner reference written by
+    the serializer for ``CompositorNodeTree`` groups (5.0+).  Assignment
+    is non-destructive: a scene that already uses a different, valid
+    group keeps it.  A scene without a compositor (or pointing at a
+    missing datablock) gets the rebuilt group.  Scenes are never created.
+    """
+    names = data.get("compositor_scenes")
+    if not isinstance(names, list):
+        return
+    if getattr(tree, "bl_idname", "") != "CompositorNodeTree":
+        return
+    for scene_name in names:
+        if not isinstance(scene_name, str) or not scene_name:
+            continue
+        scene = bpy.data.scenes.get(scene_name)
+        if scene is None:
+            tracker.record(
+                f"Tree '{tree.name}': scene '{scene_name}' does not exist - "
+                f"compositor group not assigned", level="NOTICE")
+            continue
+        if not hasattr(scene, "compositing_node_group"):
+            continue
+        try:
+            current = scene.compositing_node_group
+        except Exception:
+            current = None
+        if current == tree:
+            continue
+        if current is not None:
+            try:
+                current_missing = bpy.data.node_groups.get(current.name) is None
+            except Exception:
+                current_missing = True
+            if not current_missing:
+                tracker.record(
+                    f"Tree '{tree.name}': scene '{scene_name}' keeps its "
+                    f"compositor group '{current.name}'", level="DEBUG")
+                continue
+        try:
+            scene.compositing_node_group = tree
+            tracker.record(
+                f"Scene '{scene_name}' now uses compositor group "
+                f"'{tree.name}'", level="NOTICE")
+        except Exception as exc:
+            tracker.record(
+                f"Scene '{scene_name}': could not assign compositor group "
+                f"'{tree.name}': {exc}", level="WARN")
+
+
 def _import_node_tree_gen(
     data: dict,
     json_cache: dict,
@@ -2967,6 +3019,9 @@ def _import_node_tree_gen(
                 f"Restored {restored_bakes} bake setting(s) after rebuilding "
                 f"'{name}'", level="DEBUG",
             )
+
+    # --- Step 8: Scene owner references (compositor, 5.0+) ---
+    _apply_compositor_scenes(ng, data, tracker)
 
     _log.debug(f"[OK] Reconstruction of node '{name}' completed.")
     yield (1.0, "done")

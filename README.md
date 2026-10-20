@@ -6,9 +6,9 @@ Node groups are serialized into deterministic JSON files — the DNA, or
 source of truth — while the .blend stays your working cache (RNA).
 GNToolkit watches both sides: canonical change detection, per-group sync
 statuses, dependency-aware import and a save/pull/conflict loop that
-plugs into Git, all from inside Blender. Geometry Nodes, Shader node
-groups and the Shader Editor's materials and worlds are supported
-(compositor trees are not tracked yet).
+plugs into Git, all from inside Blender. Geometry Nodes, Shader and
+Compositor node groups, plus the Shader Editor's materials and worlds,
+are supported.
 
 The status layer also runs **headless** through `gnt_check.py`
 (`gnt_check.py` and `scripts/` are GitHub repository tools — they are not
@@ -191,9 +191,9 @@ conflict, never a silent drop); exact-content renames (same logic under
 a new name) are matched and merged under the new name for node groups.
 Sides are folders, JSON files or git revisions (`--repo`/`--subdir`;
 BASE is typically `git merge-base`); `--json` prints a
-machine-readable report. Geometry Nodes/Shader groups, materials and
-worlds are covered; other tree types (for example compositor trees) are
-reported as notices (`--strict` turns them into a failure). Conflicts
+machine-readable report. Geometry Nodes, Shader and Compositor groups,
+materials and worlds are covered; other tree types (for example Texture
+trees) are reported as notices (`--strict` turns them into a failure). Conflicts
 exit `1`; any unreadable JSON in any side exits `2`. The decision core
 is `merge.py` (pure Python, the same canonical rules as the hasher).
 
@@ -251,8 +251,9 @@ python gnt_check.py D:\NodeGroups\NodeGroups --strict
 ```
 
 `--minify` produces compact JSON. `--make-local` first turns every
-library-linked tree that participates in the export (geometry groups,
-their transitive group-node references and geometry-nodes modifiers)
+library-linked tree that participates in the export (geometry, shader
+and compositor groups, their transitive group-node references and
+geometry-nodes modifiers)
 into a local copy — needed when the groups come from an addon's
 `assets.blend`: library-linked groups can be exported but never pulled
 back. The conversion is only written to the .blend when `--save` is also
@@ -339,7 +340,7 @@ extension zip.
   (e.g. after an external node arrangement).
 - **Conflict resolution**: keep the .blend or the JSON version with a
   single click - or **Merge**: the per-item value merge (Geometry
-  Nodes/Shader groups, materials and worlds) keeps your local edits,
+  Nodes/Shader/Compositor groups, materials and worlds) keeps your local edits,
   applies the JSON changes on top (the common base is recovered
   from the JSON file's git history). If items changed differently on
   both sides, the merge report lists each one with an Ours / Base / JSON
@@ -369,18 +370,28 @@ extension zip.
   icon when a file is missing.
 - **Concurrency-safe**: lock files prevent two Blender sessions from
   corrupting the same JSON.
-- **Tree kinds and declared limits**: Geometry Nodes and Shader node
-  groups are versioned, **and so are the Shader Editor's materials and
-  worlds** (embedded trees, tracked as owner-aware entries: "Track
-  Material"/"Track World"/"Track All Materials", with per-entry status,
-  save, pull, conflicts and merge). A material/world entry stores its
+- **Tree kinds and declared limits**: Geometry Nodes, Shader and
+  Compositor node groups are versioned, **and so are the Shader Editor's
+  materials and worlds** (embedded trees, tracked as owner-aware entries:
+  "Track Material"/"Track World"/"Track All Materials", with per-entry
+  status, save, pull, conflicts and merge). Compositor groups also carry
+  an informational `compositor_scenes` list: on import, a scene without a
+  compositor (or pointing at a missing one) is assigned the rebuilt
+  group; a different valid assignment is never overwritten and scenes are
+  never created. Compositor trees that use **Render Layers/Cryptomatte**
+  also depend on the referenced scene's view layers and passes; those are
+  not versioned (the scene-owner boundary), so a clone into a file
+  without that scene cannot recreate those pass sockets/links — pulling
+  into the project file, where the scene exists, keeps them. In Blender
+  4.2 the scene compositor is not a node group (`Scene.node_tree`), so
+  only reusable compositor groups are covered there. A material/world
+  entry stores its
   node tree plus a curated allowlist of the owner's settings (mix mode,
   shadows, culling, refraction/SSS, displacement, viewport display,
   Freestyle; world color/sun) and its custom properties — the rest of
   the datablock and object material slots are not versioned, and cloning
-  a missing owner warns about that. Compositor trees are not tracked
-  yet; Texture
-  node trees never. **Third-party custom group nodes** (add-ons that
+  a missing owner warns about that. Texture node trees are never
+  versioned. **Third-party custom group nodes** (add-ons that
   define their own node classes) keep their per-instance inner tree: it
   is versioned embedded with the node, so edits made inside it survive
   clones and rebuilds, and the inner tree is never a standalone tracked
@@ -401,8 +412,8 @@ extension zip.
 - **Git Commit…** stages only the tracked JSONs; **Sync Changes** pulls,
   pushes, and when the branch diverged it **merges the tracked JSON
   files per item** (values, modifier input overrides, exact-content
-  renames; Geometry Nodes/Shader groups; materials and worlds) and
-  pushes a real two-parent merge commit.
+  renames; Geometry Nodes/Shader/Compositor groups; materials and
+  worlds) and pushes a real two-parent merge commit.
   Anything that cannot be decided — a conflicting item, or a file
   outside the tracked JSONs changed on both sides — aborts the operation
   with a per-item report and nothing is written; commit your JSONs first
@@ -415,13 +426,13 @@ extension zip.
 ### Import & share
 
 - **JSON package snapshots**: export/import of the node groups (Geometry
-  Nodes and Shader), NODES modifier setups, materials and worlds to/from
-  a single JSON package, with in-place update of existing groups on
-  import. The export can be **filtered by category** ("Include:"
-  switches — Geometry Nodes groups / Shader groups / Modifiers /
-  Materials / Worlds, everything on by default), both in the dialog and
-  headless via `scripts/export_all_json.py --categories`; NODES
-  modifiers are exported only together with Geometry Nodes groups.
+  Nodes, Shader and Compositor), NODES modifier setups, materials and
+  worlds to/from a single JSON package, with in-place update of existing
+  groups on import. The export can be **filtered by category** ("Include:"
+  switches — Geometry Nodes groups / Shader groups / Compositor groups /
+  Modifiers / Materials / Worlds, everything on by default), both in the
+  dialog and headless via `scripts/export_all_json.py --categories`;
+  NODES modifiers are exported only together with Geometry Nodes groups.
 - **Export active group** with its full dependency chain.
 - **Folder workflow**: the per-group folder export (`NodeGroups/` +
   `Modifiers/`) round-trips end to end — track every file of a folder in
@@ -452,9 +463,9 @@ extension zip.
 ### Version your project in 3 steps
 
 1. **Start tracking** (like `git init` + first save):
-   - **Track All** — every trackable node group (Geometry Nodes and
-     Shader) is tracked against one master JSON **written from the
-     current .blend** (first save).
+   - **Track All** — every trackable node group (Geometry Nodes, Shader
+     and Compositor) is tracked against one master JSON **written from
+     the current .blend** (first save).
      Each group gets a UUID stored on the node tree. The JSON is
      updated surgically: entries that have no counterpart in the .blend
      (e.g. groups removed locally) are preserved.
@@ -574,8 +585,8 @@ transport for them:
 
 1. In the Node Editor sidebar → **GN Tools**, use:
    - **Export Package** — writes every trackable node group (Geometry
-     Nodes and Shader) and modifier setup, one file per group in
-     `NodeGroups/` + `Modifiers/` folders (**Use Folder Structure**,
+     Nodes, Shader and Compositor) and modifier setup, one file per group
+     in `NodeGroups/` + `Modifiers/` folders (**Use Folder Structure**,
      on by default) or a single JSON package when unticked.
    - **Export Active Group** — exports the active group plus its
      dependencies.
@@ -701,6 +712,10 @@ Each node group entry contains its interface, nodes (with socket defaults),
 links and tree properties — enough to fully reconstruct the group. A group
 entry also carries a `tree_type` marker when it is not a Geometry Nodes
 tree (absent means Geometry Nodes, so existing exports are unchanged).
+Compositor groups (Blender 5.0+) can also carry an informational
+`compositor_scenes` list (the scenes that use the group); it is not part
+of the canonical hash and drives the non-destructive scene assignment on
+import.
 Tracked materials and worlds live in their own sections (`materials`,
 `worlds`); each entry carries the owner's name and an `owner_settings`
 block with the versioned datablock properties and custom properties.

@@ -7,7 +7,7 @@ serialized to deterministic JSON (the DNA — source of truth) while the
 .blend stays a working cache (RNA), with per-group sync statuses,
 dependency-aware import and a Git collaboration loop. The JSON side is
 pure Python, so the same status checks run headless (gnt_check) without
-opening Blender. Geometry Nodes and Shader node groups are supported.
+opening Blender. Geometry Nodes, Shader and Compositor node groups are supported.
 """
 
 import bpy

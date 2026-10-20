@@ -478,18 +478,38 @@ check("40b: shader same value changed on both sides -> conflict",
       and r["groups"]["S"]["conflicts"][0]["kind"] == "value")
 
 
+def _texture(value):
+    entry = _shader(value)
+    entry["tree_type"] = "TextureNodeTree"
+    return entry
+
+
 def _compositor(value):
     entry = _shader(value)
     entry["tree_type"] = "CompositorNodeTree"
     return entry
 
 
-r = merge.merge_group_maps({"C": _compositor(1)}, {"C": _compositor(2)},
-                           {"C": _compositor(3)})
+r = merge.merge_group_maps({"C": _texture(1)}, {"C": _texture(2)},
+                           {"C": _texture(3)})
 check("40c: a non-mergeable tree type stays unsupported",
       r["groups"]["C"]["status"] == "unsupported"
       and r["groups"]["C"]["merged"] is None
       and r["groups"]["C"]["notices"] and r["ok"])
+
+r = merge.merge_group_maps({"C": _compositor(1.0)}, {"C": _compositor(2.0)},
+                           {"C": _compositor(1.0)})
+check("40d: compositor groups merge per item (one-side change)",
+      r["ok"] and r["groups"]["C"]["status"] == "merged"
+      and r["groups"]["C"]["merged"]["nodes"][0]["inputs"][0]
+      ["default_value"] == 2.0)
+
+r = merge.merge_group_maps({"C": _compositor(1.0)}, {"C": _compositor(2.0)},
+                           {"C": _compositor(3.0)})
+check("40e: compositor same value changed on both sides -> conflict",
+      not r["ok"] and r["groups"]["C"]["status"] == "conflicted"
+      and r["groups"]["C"]["merged"] is None
+      and r["groups"]["C"]["conflicts"][0]["kind"] == "value")
 
 
 def _embedded(value=1.0, metallic=0.1, note="a", blend="HASHED"):

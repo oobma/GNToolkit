@@ -46,6 +46,17 @@ def _get_active_tree(context):
     return None
 
 
+def _get_scene_compositor(context):
+    """Return the active scene's compositor group (5.0+), or None."""
+    scene = getattr(context, 'scene', None)
+    if scene is None or not hasattr(scene, 'compositing_node_group'):
+        return None
+    tree = scene.compositing_node_group
+    if tree is not None and is_trackable_tree_type(getattr(tree, 'type', '')):
+        return tree
+    return None
+
+
 def _get_active_material(context):
     """Active material in the Shader Editor (or the object's active slot)."""
     mat = getattr(context, 'material', None)
@@ -176,8 +187,11 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
 
     _progress_started = False
 
+    def _resolve_tree(self, context):
+        return _get_active_tree(context)
+
     def invoke(self, context, event):
-        tree = _get_active_tree(context)
+        tree = self._resolve_tree(context)
         if tree is None:
             self.report({'ERROR'}, "No active node group found")
             return {'CANCELLED'}
@@ -240,6 +254,24 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
 
         _refresh_after_sync_change(context)
         return {'FINISHED'}
+
+
+class GN_OT_SyncLinkSceneCompositor(GN_OT_SyncLink):
+    bl_idname = "gn.sync_link_scene_compositor"
+    bl_label = "Track Scene Compositor"
+    bl_description = ("Start tracking the active scene's compositor group "
+                      "(Compositor Nodes, Blender 5.0+): writes its JSON from "
+                      "the current .blend content (first save)")
+
+    def _resolve_tree(self, context):
+        return _get_scene_compositor(context)
+
+    def invoke(self, context, event):
+        if self._resolve_tree(context) is None:
+            self.report({'ERROR'},
+                        "The active scene has no compositor node group")
+            return {'CANCELLED'}
+        return super().invoke(context, event)
 
 
 class GN_OT_SyncLinkMaterial(bpy.types.Operator, ExportHelper):
@@ -1434,7 +1466,7 @@ def _mass_counts_link_all() -> dict:
 class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
     bl_idname = "gn.sync_link_all"
     bl_label = "Track All"
-    bl_description = ("Track every node group (Geometry Nodes and Shader), writing one master JSON from the "
+    bl_description = ("Track every node group (Geometry Nodes, Shader and Compositor), writing one master JSON from the "
                       "current .blend — the addon CREATES the JSON here (first save). "
                       "Use 'Track from Existing JSON' instead when the JSON already exists "
                       "elsewhere and must not be rewritten")
@@ -2770,6 +2802,7 @@ classes = (
     GN_FailedImportsState,
     GN_OT_SyncInitialize,
     GN_OT_SyncLink,
+    GN_OT_SyncLinkSceneCompositor,
     GN_OT_SyncLinkMaterial,
     GN_OT_SyncLinkWorld,
     GN_OT_SyncLinkAllMaterials,
