@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Track Group could fail silently.** Registering an operator subclass
+  after its base leaves the base without a Python class on Blender
+  4.2/5.1/5.2 (`gn.sync_link` returned FINISHED without tracking). The
+  compositor operator is now registered before the group operator.
+- **The disposable graph board could be tracked and exported.** The
+  `GNT Graph` board and its `GNT Graph Port N` helper trees no longer
+  count for Track All, cannot be tracked (Track Group or API) and are
+  omitted from package/active exports; they also no longer appear as the
+  Active entry when the board is open.
+
 ### Changed
 
 - **UX overhaul: task-based panels and one Changes list.** The sidebar

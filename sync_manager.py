@@ -26,7 +26,8 @@ from .constants import (ADDON_VERSION, EMBEDDED_KINDS, HASH_VERSION,
                         LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD,
                         READ_TIMEOUT_SECONDS, SyncStatus,
                         classify_sync_status, hashes_differ,
-                        is_group_node_bl_idname, is_trackable_tree_type)
+                        is_graph_tree_name, is_group_node_bl_idname,
+                        is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import sanitize_filename, snapshot_files, write_json_file
 from .hash_utils import (
@@ -987,6 +988,9 @@ class SyncManager:
         If the JSON file already exists, it reads it and updates the
         entry in-place to preserve other groups in the unified package.
         """
+        if is_graph_tree_name(getattr(tree, "name", "")):
+            raise ValueError("The graph board is a disposable view and "
+                             "cannot be tracked")
         self._clear_load_report()
         sync_uuid = generate_uuid()
         store_uuid_on_tree(tree, sync_uuid)
@@ -2695,7 +2699,8 @@ class SyncManager:
         inner_names = custom_inner_tree_names()
         all_groups = {ng.name: ng for ng in bpy.data.node_groups
                       if is_trackable_tree_type(ng.type)
-                      and ng.name not in inner_names}
+                      and ng.name not in inner_names
+                      and not is_graph_tree_name(ng.name)}
         linked_skipped = sum(1 for ng in all_groups.values()
                              if group_library_path(ng))
         if linked_skipped:

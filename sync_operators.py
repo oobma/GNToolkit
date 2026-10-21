@@ -14,7 +14,8 @@ from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProp
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
-                        is_group_node_bl_idname, is_trackable_tree_type)
+                        is_graph_tree_name, is_group_node_bl_idname,
+                        is_trackable_tree_type)
 from .serializer import serialize_node_tree, tree_has_animation
 from .socket_utils import custom_inner_tree_names
 from .sync_manager import (
@@ -226,6 +227,10 @@ class GN_OT_SyncLink(bpy.types.Operator, ExportHelper):
         tree = bpy.data.node_groups.get(self.tree_name)
         if tree is None:
             self.report({'ERROR'}, f"Node group '{self.tree_name}' not found")
+            return {'CANCELLED'}
+        if is_graph_tree_name(tree.name):
+            self.report({'ERROR'},
+                        "The graph board is a disposable view and cannot be tracked")
             return {'CANCELLED'}
         if group_library_path(tree):
             self.report({'ERROR'},
@@ -1647,7 +1652,8 @@ def _mass_counts_link_all() -> dict:
     inner_names = custom_inner_tree_names()
     groups = [ng for ng in bpy.data.node_groups
               if is_trackable_tree_type(ng.type)
-              and ng.name not in inner_names]
+              and ng.name not in inner_names
+              and not is_graph_tree_name(ng.name)]
     linked = sum(1 for ng in groups if group_library_path(ng))
     tracked = len(sync_manager.metadata.get("tracked_groups", {}))
     return {"total": len(groups), "linked": linked, "tracked": tracked}
@@ -1707,7 +1713,8 @@ class GN_OT_SyncLinkAll(bpy.types.Operator, ExportHelper):
         inner_names = custom_inner_tree_names()
         gn_groups = [ng for ng in bpy.data.node_groups
                      if is_trackable_tree_type(ng.type)
-                     and ng.name not in inner_names]
+                     and ng.name not in inner_names
+                     and not is_graph_tree_name(ng.name)]
         if not gn_groups:
             self.report({'ERROR'},
                         "No trackable node groups found in this .blend")
@@ -3063,8 +3070,8 @@ classes = (
     GN_FailedImport,
     GN_FailedImportsState,
     GN_OT_SyncInitialize,
-    GN_OT_SyncLink,
     GN_OT_SyncLinkSceneCompositor,
+    GN_OT_SyncLink,
     GN_OT_SyncLinkMaterial,
     GN_OT_SyncLinkWorld,
     GN_OT_SyncLinkAllMaterials,

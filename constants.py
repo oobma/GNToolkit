@@ -27,6 +27,16 @@ def is_trackable_tree_type(tree_type) -> bool:
     return tree_type in TRACKABLE_TREE_TYPES
 
 
+GRAPH_TREE_NAME = "GNT Graph"
+GRAPH_TREE_PORT_PREFIX = "GNT Graph Port"
+
+
+def is_graph_tree_name(name) -> bool:
+    """True for the disposable graph board and its port helper trees."""
+    name = str(name or "")
+    return name == GRAPH_TREE_NAME or name.startswith(GRAPH_TREE_PORT_PREFIX)
+
+
 def is_group_node_bl_idname(bl_idname) -> bool:
     """True for group nodes of any tree kind.
 

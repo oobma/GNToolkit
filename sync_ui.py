@@ -24,7 +24,7 @@ from .geometry_validator import (
     ValidationIssue,
     validate_tracked_tree,
 )
-from .constants import is_trackable_tree_type
+from .constants import is_graph_tree_name, is_trackable_tree_type
 from .sync_manager import (sync_manager, SyncStatus, entry_kind,
                            group_library_path, package_entry,
                            read_json_tolerant, resolve_entry_tree)
@@ -180,6 +180,8 @@ def _active_entry(context):
     space = getattr(context, "space_data", None)
     active_tree = getattr(space, "node_tree", None)
     tree_type = getattr(active_tree, "type", "")
+    if is_graph_tree_name(getattr(active_tree, "name", "")):
+        return None
     owner = None
     kind = "group"
 

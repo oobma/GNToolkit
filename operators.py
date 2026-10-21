@@ -20,7 +20,8 @@ from bpy.props import StringProperty, BoolProperty
 from .codec import clean_value, unclean_value, reset_coercion_count, coercion_count
 from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
                         PACKAGE_EXPORT_METHOD,
-                        is_group_node_bl_idname, is_trackable_tree_type)
+                        is_graph_tree_name, is_group_node_bl_idname,
+                        is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
 from .importer import _import_node_tree_gen, merge_derived_groups
@@ -272,7 +273,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
         inner_names = custom_inner_tree_names()
         trackable = [t for t in bpy.data.node_groups
                      if is_trackable_tree_type(t.type)
-                     and t.name not in inner_names]
+                     and t.name not in inner_names
+                     and not is_graph_tree_name(t.name)]
 
         fragments = [frag.strip().lower()
                      for frag in (self.exclude_libraries or "").split(";")
@@ -476,6 +478,10 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
         tree = bpy.data.node_groups.get(self.tree_name)
         if not tree:
             self.report({'ERROR'}, f"Tree '{self.tree_name}' not found.")
+            return {'CANCELLED'}
+        if is_graph_tree_name(tree.name):
+            self.report({'ERROR'},
+                        "The graph board is a disposable view and cannot be exported")
             return {'CANCELLED'}
 
         dump_args = {'separators': (',', ':')} if self.use_minify else {'indent': 4}

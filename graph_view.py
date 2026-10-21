@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import bpy
 
+from .constants import GRAPH_TREE_NAME, GRAPH_TREE_PORT_PREFIX
 from .graph_utils import STATUS_COLORS, STATUS_LABELS, layered_layout, \
     neighborhood
 from .sync_manager import sync_manager
 
-GRAPH_TREE_NAME = "GNT Graph"
 last_report: dict = {}
-PORT_TREE_PREFIX = "GNT Graph Port"
+PORT_TREE_PREFIX = GRAPH_TREE_PORT_PREFIX
 MAX_PORTS = 12
 COL_GAP = 40.0        # air between the widest node of two columns
 BAR_HEIGHT = 28.0     # collapsed bar with up to three sockets
