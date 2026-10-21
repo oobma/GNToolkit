@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **The history box kept an obsolete "Pull to rebuild" note** after a
+  successful Pull (individual or batch) or Keep JSON; it now switches to
+  Ready with `Pulled`/`Kept JSON - the .blend matches the JSON`.
 - **Track Group could fail silently.** Registering an operator subclass
   after its base leaves the base without a Python class on Blender
   4.2/5.1/5.2 (`gn.sync_link` returned FINISHED without tracking). The
@@ -73,6 +76,11 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- **Stale-board notice.** Explore now warns when the graph board was
+  built before a status change (Pull/Save/Keep/Merge/Refresh/Track) and
+  offers a Rebuild button that reuses the board scope. Boards are still
+  snapshots: nothing rebuilds automatically, and the notice stays hidden
+  while the History box is open.
 - **Background project audit.** `Advanced > Project Health > Run` now
   processes the tracked JSONs in batches, shows `Auditing x/y`, keeps
   Blender responsive and offers Cancel; headless runs stay synchronous.

@@ -755,6 +755,7 @@ class SyncManager:
         self._ensure_hash_version()
         tracked = self.metadata.get("tracked_groups", {})
         self._status_cache.clear()
+        self._mark_board_stale()
         if not tracked:
             self._check_remaining = []
             self._check_total = 0
@@ -974,6 +975,8 @@ class SyncManager:
                 self._status_cache[uid] = status
                 new_names.append(blend_name)
             self._ext_verified[json_path] = current_mtime
+        if new_names:
+            self._mark_board_stale()
         return new_names
 
     # --- Linking / unlinking -----------------------------------------------
@@ -1179,6 +1182,7 @@ class SyncManager:
         self._auto_link_dependencies(owner.node_tree, abs_path, stored_path,
                                      sync_uuid)
         self._dirty = True
+        self._mark_board_stale()
         return sync_uuid
 
     def unlink_group(self, sync_uuid: str) -> None:
@@ -1197,6 +1201,7 @@ class SyncManager:
             if owner is not None and SYNC_UUID_PROP in owner:
                 del owner[SYNC_UUID_PROP]
         self._dirty = True
+        self._mark_board_stale()
 
     def unlink_all_groups(self) -> int:
         """Stop tracking every group.
@@ -1212,6 +1217,7 @@ class SyncManager:
             self.unlink_group(uid)
         self._status_cache.clear()
         self._dirty = True
+        self._mark_board_stale()
         return len(uids)
 
     # --- External connection preservation -----------------------------------
@@ -2628,6 +2634,14 @@ class SyncManager:
             self._status_cache.clear()
             self._geometry_issues_cache.clear()
             self._geometry_checked = False
+        self._mark_board_stale()
+
+    def _mark_board_stale(self) -> None:
+        try:
+            from . import graph_view
+            graph_view.mark_board_stale()
+        except Exception:
+            pass
 
     def mark_dirty(self) -> None:
         self._dirty = True
@@ -2871,6 +2885,7 @@ class SyncManager:
             context.workspace.status_text_set(
                 f"Link All: done ({linked} linked, {skipped} skipped{extra})"
             )
+        self._mark_board_stale()
         return {"linked": linked, "skipped": skipped, "errors": errors,
                 "linked_skipped": linked_skipped}
 
@@ -2975,6 +2990,7 @@ class SyncManager:
             self._status_cache[uid] = SyncStatus.SYNCED
         _log.info("[Link All Materials] done: %d linked, %d refreshed, %d errors",
                   linked, skipped, errors)
+        self._mark_board_stale()
         return {"linked": linked, "skipped": skipped, "errors": errors,
                 "linked_skipped": linked_skipped}
 
@@ -3072,6 +3088,7 @@ class SyncManager:
             self._status_cache[uid] = SyncStatus.SYNCED
         _log.info("[Link All Worlds] done: %d linked, %d refreshed, %d errors",
                   linked, skipped, errors)
+        self._mark_board_stale()
         return {"linked": linked, "skipped": skipped, "errors": errors,
                 "linked_skipped": linked_skipped}
 
@@ -3648,6 +3665,24 @@ class SyncManager:
                 self._status_cache[uid] = self.check_status(uid)
             except Exception:
                 pass
+        self._mark_board_stale()
+
+    def refresh_history_after_sync(self, uid: str | None = None,
+                                   reason: str = "Synced") -> None:
+        """Replace the restored 'Pull to rebuild' note once the entry is synced."""
+        scene = getattr(bpy.context, "scene", None)
+        state = getattr(scene, "gnt_history_state", None) if scene is not None else None
+        if state is None or not state.uid or state.status != "restored":
+            return
+        if uid is not None and state.uid != uid:
+            return
+        try:
+            if self.check_status(state.uid) != SyncStatus.SYNCED:
+                return
+        except Exception:
+            return
+        state.status = "ok"
+        state.message = f"{reason} - the .blend matches the JSON"
 
     def import_all_modified(self, context=None, only_names=None) -> dict:
         """Import all groups that are JSON_MODIFIED, BLEND_MODIFIED, or CONFLICT.

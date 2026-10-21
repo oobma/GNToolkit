@@ -505,6 +505,7 @@ class GN_OT_SyncImport(bpy.types.Operator):
                     if other.get("json_path", "") == json_path:
                         affected.add(uid)
             sync_manager.refresh_cached_statuses(affected)
+            sync_manager.refresh_history_after_sync(self.sync_uuid, "Pulled")
         # Force UI redraw so issue disappears immediately
         for area in context.screen.areas:
             area.tag_redraw()
@@ -773,6 +774,7 @@ class GN_OT_SyncDiscardLocal(bpy.types.Operator):
                         "(library-linked groups must be made local first)")
             return {'CANCELLED'}
         _refresh_after_sync_change(context)
+        sync_manager.refresh_history_after_sync(self.sync_uuid, "Kept JSON")
         self.report({'INFO'}, "Local changes discarded - JSON version applied")
         return {'FINISHED'}
 
@@ -974,6 +976,32 @@ class GN_OT_GraphClear(bpy.types.Operator):
         removed = clear_graph_trees()
         _tag_ui_redraw(context)
         self.report({'INFO'}, f"Graph cleared ({removed} tree(s) removed)")
+        return {'FINISHED'}
+
+
+class GN_OT_GraphRebuild(bpy.types.Operator):
+    bl_idname = "gn.graph_rebuild"
+    bl_label = "Rebuild Board"
+    bl_description = ("Rebuild the current graph board with fresh statuses "
+                      "(layout and selection are reset)")
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from .graph_view import build_graph_tree, last_report, show_in_editor
+        report = dict(last_report or {})
+        if not report.get("tree"):
+            self.report({'ERROR'}, "No graph board to rebuild")
+            return {'CANCELLED'}
+        new = build_graph_tree(
+            mode=report.get("mode", "PROJECT"),
+            focus=report.get("focus", ""),
+            hops=int(report.get("hops", 2) or 2),
+            include_externals=bool(report.get("include_externals", True)))
+        tree = bpy.data.node_groups.get(new.get("tree"))
+        if tree is not None:
+            show_in_editor(context, tree)
+        unit = "clusters" if new.get("mode") == "CLUSTERS" else "groups"
+        self.report({'INFO'}, f"Board rebuilt: {new.get('nodes', 0)} {unit}")
         return {'FINISHED'}
 
 
@@ -2249,6 +2277,7 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
             result = sync_manager.import_all_modified(context)
             sync_manager.save()
             sync_manager.refresh_cached_statuses(pending)
+            sync_manager.refresh_history_after_sync(None, "Pulled")
             context.window_manager.progress_end()
             _set_failed_imports(context.scene, result.get("failures", []))
             # Force UI redraw so issues disappear immediately
@@ -2296,6 +2325,7 @@ class GN_OT_SyncRetryFailed(bpy.types.Operator):
             self.report({'ERROR'}, f"Retry failed: {e}")
             return {'CANCELLED'}
         _set_failed_imports(context.scene, result.get("failures", []))
+        sync_manager.refresh_history_after_sync(None, "Pulled")
         for area in context.screen.areas:
             area.tag_redraw()
         if result.get("failures"):
@@ -3101,6 +3131,7 @@ classes = (
     GN_OT_GraphView,
     GN_OT_GraphPoster,
     GN_OT_GraphClear,
+    GN_OT_GraphRebuild,
     GN_OT_SyncImportGroup,
     GN_OT_SyncImportGroupFile,
     GN_OT_SyncImportGroupTrack,

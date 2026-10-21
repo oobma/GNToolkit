@@ -972,6 +972,14 @@ class GN_PT_ExplorePanel(bpy.types.Panel):
             if report.get("clipped"):
                 layout.label(text="Graph incomplete: increase the port cap "
                                   "or use a neighborhood.", icon='ERROR')
+        state = getattr(context.scene, "gnt_history_state", None)
+        history_open = bool(state is not None and state.uid)
+        if report and report.get("stale") and not history_open:
+            row = layout.row(align=True)
+            row.label(text="Board may be out of date",
+                      icon=STATUS_WARNING_ICON)
+            row.operator("gn.graph_rebuild", text="Rebuild",
+                         icon='FILE_REFRESH')
         layout.label(text="Bar marks: ~ edited | J JSON | ! conflict | "
                           "M missing | F JSON missing", icon='INFO')
         prefs = context.scene.gnt_sync_prefs
@@ -984,7 +992,6 @@ class GN_PT_ExplorePanel(bpy.types.Panel):
             row.label(text=f"Board selection: {name}", icon='NODETREE')
             op = row.operator("gn.sync_history_open", text="", icon='TIME')
             op.sync_uuid = uid
-        state = getattr(context.scene, "gnt_history_state", None)
         if state is not None and state.uid:
             _draw_history_box(layout, context)
         else:
@@ -1512,6 +1519,7 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
                         "(library-linked groups must be made local first)")
             return {'CANCELLED'}
         sync_manager.refresh_cached_statuses({self.sync_uuid})
+        sync_manager.refresh_history_after_sync(self.sync_uuid, "Kept JSON")
         for area in context.screen.areas:
             area.tag_redraw()
         self.report({'INFO'}, "Conflict resolved - kept the JSON version")

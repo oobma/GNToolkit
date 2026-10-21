@@ -141,6 +141,12 @@ def clear_graph_trees() -> int:
     return removed
 
 
+def mark_board_stale() -> None:
+    """Flag the current board as possibly out of date (no rebuild)."""
+    if isinstance(last_report, dict) and last_report.get("tree"):
+        last_report["stale"] = True
+
+
 _HISTORY_DIFF_COLOR = (0.05, 0.75, 0.70)
 _HISTORY_FRAME_COLOR = (0.008, 0.020, 0.165)  # #02052A, subtle frame
 _history_diff_backup: dict = {}
@@ -536,7 +542,10 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
         "externals": len(extra_externals),
         "focus": focus if mode == "NEIGHBORHOOD" else "",
         "mode": mode,
+        "hops": int(hops) if mode == "NEIGHBORHOOD" else 2,
+        "include_externals": bool(include_externals),
         "clusters": len(kept_names) if mode == "CLUSTERS" else 0,
+        "stale": False,
     }
     return last_report
 
