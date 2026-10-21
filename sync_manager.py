@@ -411,6 +411,7 @@ class SyncManager:
         self._untracked_deps_cache: list[dict] | None = None
         self._dirty: bool = False
         self._geometry_issues_cache: dict[str, list] = {}
+        self._geometry_checked = False
         self.load_report: dict[str, dict] = {}
         self._json_check_remaining: list[tuple] = []
         self._json_check_files: dict[str, tuple] = {}
@@ -429,6 +430,7 @@ class SyncManager:
         self.metadata = load_sync_metadata()
         self._status_cache.clear()
         self._geometry_issues_cache.clear()
+        self._geometry_checked = False
         self._untracked_deps_cache = None
         self.load_report.clear()
         self._dirty = False
@@ -438,6 +440,31 @@ class SyncManager:
         self._check_remaining = []
         self._check_total = 0
         self._ensure_hash_version()
+
+    def _owner_for_entry(self, info: dict):
+        """Best local owner for a tracked entry (group/material/world)."""
+        name = info.get("blend_name", "")
+        kind = entry_kind(info)
+        if kind == "material":
+            owner = bpy.data.materials.get(name)
+        elif kind == "world":
+            owner = bpy.data.worlds.get(name)
+        else:
+            owner = bpy.data.node_groups.get(name)
+        if owner is not None and getattr(owner, "library", None) is not None:
+            return None
+        return owner
+
+    def uuid_mismatch_count(self) -> int:
+        """Entries whose recorded UUID differs from the local owner's UUID."""
+        count = 0
+        for uid, info in self.metadata.get("tracked_groups", {}).items():
+            owner = self._owner_for_entry(info)
+            if owner is None:
+                continue
+            if (owner.get(SYNC_UUID_PROP) or "") != uid:
+                count += 1
+        return count
 
     def save(self) -> bool:
         if not self._dirty:
@@ -888,6 +915,18 @@ class SyncManager:
             except OSError:
                 continue
             if current_mtime <= self._ext_verified.get(json_path, 0.0):
+                # Already scanned this mtime. A local .blend edit may have
+                # happened afterwards, so upgrade flagged JSON changes to
+                # CONFLICT instead of leaving a stale "In JSON".
+                for uid, info in groups:
+                    report = self.load_report.get(uid)
+                    if (report is not None
+                            and report.get("status") == SyncStatus.JSON_MODIFIED):
+                        if hashes_differ(entry_blend_hash(uid, info),
+                                         info.get("last_blend_hash", "")):
+                            report["status"] = SyncStatus.CONFLICT
+                            self._status_cache[uid] = SyncStatus.CONFLICT
+                            new_names.append(info.get("blend_name", ""))
                 continue
             last_mtime = max((info.get("last_json_mtime", 0.0) for _, info in groups),
                              default=0.0)
@@ -918,14 +957,20 @@ class SyncManager:
                 last_json_hash = info.get("last_json_hash", "")
                 if last_json_hash and json_hash == last_json_hash:
                     continue
+                # The JSON moved. Check the .blend side too: a cached
+                # "synced" status may simply be stale because edits are
+                # detected on Refresh. Never offer Pull for a group that
+                # also has local changes.
+                blend_hash = entry_blend_hash(uid, info)
+                blend_changed = hashes_differ(
+                    blend_hash, info.get("last_blend_hash", ""))
+                status = (SyncStatus.CONFLICT if blend_changed
+                          else SyncStatus.JSON_MODIFIED)
                 self.load_report[uid] = {
-                    "status": SyncStatus.JSON_MODIFIED,
+                    "status": status,
                     "blend_name": blend_name,
                 }
-                if self._status_cache.get(uid) == SyncStatus.BLEND_MODIFIED:
-                    self._status_cache[uid] = SyncStatus.CONFLICT
-                else:
-                    self._status_cache[uid] = SyncStatus.JSON_MODIFIED
+                self._status_cache[uid] = status
                 new_names.append(blend_name)
             self._ext_verified[json_path] = current_mtime
         return new_names
@@ -2343,8 +2388,7 @@ class SyncManager:
                 "the merged JSON was written but the .blend rebuild "
                 "reported %d error(s)" % tracker.error_count)
         self._merge_sessions.pop(sync_uuid, None)
-        self.invalidate_cache(sync_uuid)
-        self._status_cache[sync_uuid] = self.check_status(sync_uuid)
+        self.refresh_cached_statuses({sync_uuid})
         self._dirty = True
         return report
 
@@ -2493,11 +2537,11 @@ class SyncManager:
                     "identical": False, "lines": [],
                     "reason": "could not read the current JSON file"}
 
-        identical = (canonical_hash_from_json_data(old)
-                     == canonical_hash_from_json_data(current))
+        from . import semantic_diff
+        identical = (semantic_diff.canonical_hash_ignoring_reroutes(old)
+                     == semantic_diff.canonical_hash_ignoring_reroutes(current))
         lines = []
         if not identical:
-            from . import semantic_diff
             result = semantic_diff.compare_groups(current, old)
             if result is not None:
                 lines = semantic_diff.format_group_report(name, result)
@@ -2557,9 +2601,13 @@ class SyncManager:
             cur = package_entry(current_pkg, other)
             if old is None and cur is None:
                 continue
-            if old is None or cur is None or (
-                    canonical_hash_from_json_data(old)
-                    != canonical_hash_from_json_data(cur)):
+            if old is None or cur is None:
+                changed = True
+            else:
+                from . import semantic_diff
+                changed = (semantic_diff.canonical_hash_ignoring_reroutes(old)
+                           != semantic_diff.canonical_hash_ignoring_reroutes(cur))
+            if changed:
                 name = other.get("blend_name", "")
                 if name:
                     names.append(name)
@@ -2575,6 +2623,7 @@ class SyncManager:
         else:
             self._status_cache.clear()
             self._geometry_issues_cache.clear()
+            self._geometry_checked = False
 
     def mark_dirty(self) -> None:
         self._dirty = True
@@ -2920,6 +2969,103 @@ class SyncManager:
         for uid in synced_uids:
             self._status_cache[uid] = SyncStatus.SYNCED
         _log.info("[Link All Materials] done: %d linked, %d refreshed, %d errors",
+                  linked, skipped, errors)
+        return {"linked": linked, "skipped": skipped, "errors": errors,
+                "linked_skipped": linked_skipped}
+
+    def link_all_worlds(self, json_path: str, context=None) -> dict:
+        """Link every local world with a node tree to one master JSON.
+
+        Mirrors ``link_all_materials`` for the ``worlds`` section.
+        """
+        owners = [w for w in bpy.data.worlds
+                  if getattr(w, "use_nodes", False)
+                  and getattr(w, "node_tree", None) is not None]
+        linked_skipped = sum(1 for w in owners
+                             if getattr(w, "library", None) is not None)
+        owners = [w for w in owners
+                  if getattr(w, "library", None) is None]
+        if not owners:
+            return {"linked": 0, "skipped": 0, "errors": 0,
+                    "linked_skipped": linked_skipped}
+
+        abs_path = json_path
+        if not os.path.isabs(abs_path):
+            abs_path = os.path.join(self._blend_dir(), abs_path)
+
+        master_data = read_json_tolerant(abs_path) if os.path.isfile(abs_path) else None
+        if not isinstance(master_data, dict):
+            master_data = {
+                "version": ADDON_VERSION,
+                "type": "GN_UNIFIED_PACKAGE",
+                "export_method": PACKAGE_EXPORT_METHOD,
+                "node_groups": {},
+            }
+        master_data = _ensure_package_shape(master_data)
+
+        for owner in owners:
+            info = {"kind": "world", "blend_name": owner.name}
+            package_put(master_data, info,
+                        serialize_embedded_entry(owner, "world"))
+        write_json_file(abs_path, master_data)
+        json_mtime = os.path.getmtime(abs_path)
+        stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
+
+        linked = 0
+        skipped = 0
+        errors = 0
+        synced_uids = []
+        for owner in owners:
+            try:
+                blend_hash = canonical_hash_from_embedded(owner, "world")
+                json_hash = canonical_hash_from_json_embedded(
+                    abs_path, "world", owner.name)
+                if json_hash is None:
+                    json_hash = canonical_hash_from_json_path(abs_path)
+
+                existing_uid = owner.get(SYNC_UUID_PROP) or ""
+                existing = (get_tracked_group(self.metadata, existing_uid)
+                            if existing_uid else None)
+                if existing is None:
+                    for uid, ig in self.metadata.get("tracked_groups", {}).items():
+                        if (entry_kind(ig) == "world"
+                                and ig.get("blend_name") == owner.name):
+                            existing_uid, existing = uid, ig
+                            break
+
+                if existing is not None:
+                    update_tracked_group(
+                        self.metadata, existing_uid,
+                        last_blend_hash=blend_hash,
+                        last_json_hash=json_hash,
+                        last_json_mtime=json_mtime,
+                        json_path=stored_path,
+                    )
+                    synced_uids.append(existing_uid)
+                    skipped += 1
+                    continue
+
+                sync_uuid = generate_uuid()
+                owner[SYNC_UUID_PROP] = sync_uuid
+                try:
+                    owner.use_fake_user = True
+                except Exception:
+                    pass
+                add_tracked_group(
+                    self.metadata, sync_uuid, owner.name, stored_path,
+                    blend_hash, json_hash, json_mtime,
+                    depends_on=[], layout="package", kind="world",
+                )
+                synced_uids.append(sync_uuid)
+                linked += 1
+            except Exception as exc:
+                _log.warning("[Link All Worlds] '%s': %s", owner.name, exc)
+                errors += 1
+
+        self._dirty = True
+        for uid in synced_uids:
+            self._status_cache[uid] = SyncStatus.SYNCED
+        _log.info("[Link All Worlds] done: %d linked, %d refreshed, %d errors",
                   linked, skipped, errors)
         return {"linked": linked, "skipped": skipped, "errors": errors,
                 "linked_skipped": linked_skipped}
@@ -3489,6 +3635,15 @@ class SyncManager:
                         last_json_mtime=new_mtime,
                     )
 
+    def refresh_cached_statuses(self, uids) -> None:
+        """Recheck specific entries after a pull so panels do not go stale."""
+        for uid in set(uids):
+            self.load_report.pop(uid, None)
+            try:
+                self._status_cache[uid] = self.check_status(uid)
+            except Exception:
+                pass
+
     def import_all_modified(self, context=None, only_names=None) -> dict:
         """Import all groups that are JSON_MODIFIED, BLEND_MODIFIED, or CONFLICT.
 
@@ -3862,6 +4017,7 @@ class SyncManager:
             Dict mapping UUID to list of ValidationIssue objects.
         """
         self._geometry_issues_cache = validate_all_tracked_trees()
+        self._geometry_checked = True
         return self._geometry_issues_cache
 
     def get_geometry_issues(self, sync_uuid: str = None) -> list:
@@ -3895,9 +4051,14 @@ class SyncManager:
         """Check if any tracked group has geometry issues."""
         return bool(self._geometry_issues_cache)
 
+    def has_geometry_validation_result(self) -> bool:
+        """True when Validate has run since the last invalidation/load."""
+        return self._geometry_checked
+
     def invalidate_geometry_cache(self) -> None:
         """Clear the geometry issues cache so it will be recomputed."""
         self._geometry_issues_cache.clear()
+        self._geometry_checked = False
 
 
 sync_manager = SyncManager()

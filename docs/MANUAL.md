@@ -30,7 +30,7 @@ Applies to GNToolkit 0.2.9 on Blender 4.2 – 5.2 LTS (tested on 5.1.1 and
 
 1. Close Blender completely.
 2. Open Blender again.
-3. Open the GNToolkit panel: Node Editor → sidebar (**N**) → **GN Tools** tab.
+3. Open the GNToolkit panel: Node Editor → sidebar (**N**) → **GNToolkit** tab.
 4. Check the addon version shown in the panel.
 
 **What should happen**
@@ -46,8 +46,8 @@ Applies to GNToolkit 0.2.9 on Blender 4.2 – 5.2 LTS (tested on 5.1.1 and
 **What to do**
 
 1. File → New → General (clean file).
-2. In the GN Tools tab, use **Import Package/Folder** (the full-package
-   batch import) and select the **baseline JSON**.
+2. In **GNToolkit ? Advanced ? Package**, use **Import package/folder...**
+   (the full-package batch import) and select the **baseline JSON**.
 3. Wait for the import to finish (a couple of minutes on large
    projects; progress is shown in the status bar).
 
@@ -100,7 +100,7 @@ discards the session (Blender asks for confirmation).
 > The operator accepts a **unified package** or a **single-group export**
 > (one file from a folder export — the group is tracked against that
 > file). For tracking a whole folder export in one click, use
-> **Track Folder…** instead (see "Folder workflow" below).
+> **Track from folder…** instead (see "Folder workflow" below).
 
 **What should happen**
 
@@ -126,15 +126,15 @@ discards the session (Blender asks for confirmation).
 
 **What should happen**
 
-- The panel shows a summary: **Total / Synced / To pull** (and other
-  issue buckets).
-- The **Sync Issues** panel shows one entry per divergent group with the
-  state **Changed in JSON** (the list is collapsible via its header
-  triangle; likewise the **JSON files** list in the Sync panel).
-- Each issue row provides per-group actions: **Pull**, **Ignore**
-  (and Commit / Keep JSON / Keep Blend for other states).
+- The status line shows tracked/synced counts and the to-save, to-pull,
+  conflict and missing counters that are not zero.
+- The **Changes** list shows one entry per divergent group, with status
+  filters and a 50-row default cap (Show all reveals the rest).
+- Each row has a primary **Save/Pull/Merge** action, a **Mark/Unmark**
+  button and a `...` menu with History, Go to item, Ignore, Discard and
+  the Keep JSON/Blend conflict exits.
 - If a tracked group gained a **new nested group with no JSON yet**,
-  Sync Issues also lists it as an *untracked dependency* — one row per
+  Changes also lists it as an *untracked dependency* — one row per
   child with a **Track** button (see workflow 2 for the bulk path).
 - The **Audit** box at the bottom (Run / Clear) reports duplicate logic,
   JSON health and the dependency impact of the group selected in the
@@ -289,7 +289,7 @@ issues.
 2. Choose one of the row actions (or the buttons in the Conflicts box):
    - **Keep JSON** (↩): discard the local edits and take the JSON
      version into the .blend.
-   - **Mark + Save** (＋ then *Save marked to JSON*): keep the .blend
+   - **Mark + Save** (＋ then *Save selected*): keep the .blend
      version and overwrite the JSON.
    - **Merge** (merge icon): decide per item — your local edits are
      kept and the JSON changes applied on top; the common base is
@@ -327,11 +327,11 @@ issues.
 
 - Within a couple of seconds a non-intrusive notice appears:
   "GNToolkit: N group(s) out of sync with JSON" (status bar, a warning
-  row in the Sync panel and entries in the Sync Issues list).
-- Open the Sync Issues list: the affected groups appear as
+  row in the Sync panel and entries in the Changes list).
+- Open the Changes list: the affected groups appear as
   **Changed in JSON** — use **Pull** to apply the JSON changes.
-- The plug icon next to **Refresh Status** toggles this check
-  (`check_on_load` pref). When disabled, no notice is shown on open.
+- **Check JSON on open** in Add-on Preferences toggles this check. When
+  disabled, no notice is shown on open.
 
 ---
 
@@ -343,26 +343,26 @@ file and modifiers in `Modifiers/*.json`.
 
 **What to do**
 
-1. In the GN Tools tab, run **Export Package** with **Use Folder
+1. In the GNToolkit tab, run **Export Package** with **Use Folder
    Structure** enabled and choose a directory.
-2. In the Sync panel, click **Track Folder…** and select **any file
+2. In **GNToolkit → Track**, click **Track from folder.....** and select **any file
    inside the exported folder** (the `NodeGroups/` subfolder is detected
    automatically).
-3. Work and commit normally: **Commit** (per-group or batch) writes each
+3. Work and save normally: **Save changed** (or **Save selected**) writes each
    edited group back to **its own file** — a per-group file becomes a
    one-group package on the first commit; both shapes are interchangeable
    for every reader.
-4. To recreate the project elsewhere: **Import Package/Folder** and pick
+4. To recreate the project elsewhere: **Advanced → Package → Import package/folder...** and pick
    any file inside the folder — every group is imported (dependency-first)
    and the stored modifiers are attached to existing objects with matching
    names (**Apply Modifiers** is on by default).
 
 **What should happen**
 
-- Track Folder reports the linked/skipped counts; every group shows
+- Track from folder reports the linked/skipped counts; every group shows
   **Synced** right after tracking.
-- The Sync panel's **JSON files** list shows one row per file (collapsed
-  by default — use the triangle to expand it).
+- The Active row shows the JSON file for the active entry (copy/reveal
+  icons); the old 581-row inventory is gone.
 - Recreation reproduces the project exactly: node/link counts and
   canonical hashes are identical, dependencies are resolved first, and
   groups that already exist in the target file are skipped (unless
@@ -377,12 +377,12 @@ file and modifiers in `Modifiers/*.json`.
 1. Export the project with **Export Package → Use Folder Structure**
    (one JSON per group), then `git init` + commit + push it with your
    git client (see `docs/GIT_COLLAB.md` for the full manual flow).
-2. In the GN Tools tab, the **Collaboration** panel shows the detected
+2. In the GNToolkit tab, the **Git** panel shows the detected
    repository, its state (`clean` / `N to commit` / `ahead` / `behind`)
    and the buttons:
    - **Git Commit…** — message dialog; stages only the tracked JSONs
      that changed and commits locally.
-   - **Sync Changes** — pull + push. Remote changes arrive
+   - **Git sync** — pull + push. Remote changes arrive
      only when your branch is simply behind; if versions diverged, the
       tracked JSON files merge per item (values, modifier inputs,
       Geometry Nodes/Shader/Compositor groups, materials and worlds) into a
@@ -396,7 +396,7 @@ file and modifiers in `Modifiers/*.json`.
 
 - Git Commit reports the number of committed files; the repository row
   returns to `clean`.
-- **Sync Changes** on a behind branch fast-forwards and pushes; on divergent
+- **Git sync** on a behind branch fast-forwards and pushes; on divergent
   branches it merges the tracked JSONs and pushes the merge (or refuses
   without touching any file when an item or a non-tracked file
   conflicts).
@@ -406,9 +406,9 @@ file and modifiers in `Modifiers/*.json`.
 - Git operations run without freezing Blender: the row buttons are
   disabled while a job is queued and the final result is reported in the
   status bar (not in a popup — the operator already finished).
-- **Sync Changes** and the fetch performed when opening a .blend respect
-  Blender's *Allow Online Access* setting (and the **Fetch remotes on
-  open** toggle, on by default); `git status` and **Git Commit…** are
+- **Git sync** and the fetch performed when opening a .blend respect
+  Blender's *Allow Online Access* setting (and **Fetch remotes on open**
+   in Add-on Preferences, on by default); `git status` and **Git Commit…** are
   local and work offline.
 
 ---
@@ -417,9 +417,10 @@ file and modifiers in `Modifiers/*.json`.
 
 **What to do**
 
-1. In the Sync panel / Sync Issues area, click **Run** in the **Audit**
+1. In **Advanced ? Project Health**, click **Run** in the **Audit**
    box (the group selected in the Node Editor is used for the impact
-   report). **Clear** dismisses the report.
+   report). It runs in the background (`Auditing x/y`) with a **Cancel**
+   button. **Clear** dismisses the report.
 
 **What should happen**
 
@@ -451,7 +452,7 @@ blender --background --factory-startup project.blend --python scripts\export_all
   `<out>/Modifiers/*.json`, plus a `<out>/<project>.json` package marker.
 - The folder export is a full sync participant: inside Blender use
   **Track from Existing JSON** (pick any file inside `<out>`) or
-  **Track Folder…** to link each group to its own file.
+  **Track from folder…** to link each group to its own file.
 - Headless checks then work without Blender:
 
   ```bash
@@ -576,8 +577,9 @@ node groups — GNToolkit tracks them as **owner-aware entries**:
    owner's tree plus its versioned settings into the chosen JSON
    (created here the first time).
 2. **Track All Materials** does the same for every material with nodes,
+   into one master file; **Track All Worlds** does it for every world.
    into one master file. Folder exports write `Materials/` and `Worlds/`
-   next to `NodeGroups/`, and **Track Folder…** links those files back
+   next to `NodeGroups/`, and **Track from folder…** links those files back
    to their owners.
 3. Statuses, the Changes list, staged saves, **Pull from JSON**,
    conflicts, **Merge** and the import picker work exactly like with
@@ -635,7 +637,7 @@ Two principles drive everything below:
 |---|---|---|---|---|
 | 1 | R exists in the .blend but **not** in the package | Commit succeeds and shows **Synced**; the package is left with a **dangling reference** (no warning) | R's group node is created **without an assigned tree** → links into/out of it do not connect; the import picker warns "Unconnected refs" | Use **Track to JSON…** (includes R automatically) or add R to the package |
 | 2 | R in the package, .blend and package **match** | Commit succeeds | Resolves correctly | — |
-| 3 | R in the package, .blend and package **differ** | Commit succeeds (the package keeps the older version of R) | The reference resolves to the package's R; if the **interfaces** differ, socket warnings and links that do not connect are possible. R shows as divergent in Sync Issues | Resolve R's divergence (Pull / Keep JSON) when needed |
+| 3 | R in the package, .blend and package **differ** | Commit succeeds (the package keeps the older version of R) | The reference resolves to the package's R; if the **interfaces** differ, socket warnings and links that do not connect are possible. R shows as divergent in Changes | Resolve R's divergence (Pull / Keep JSON) when needed |
 | 4 | **New** group with dependencies | — | — | Use **Track to JSON… / Track Group** (writes the group + dependencies); Commit alone is not enough |
 
 Additional notes:

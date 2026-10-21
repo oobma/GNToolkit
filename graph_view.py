@@ -17,6 +17,7 @@ from .graph_utils import STATUS_COLORS, STATUS_LABELS, layered_layout, \
 from .sync_manager import sync_manager
 
 GRAPH_TREE_NAME = "GNT Graph"
+last_report: dict = {}
 PORT_TREE_PREFIX = "GNT Graph Port"
 MAX_PORTS = 12
 COL_GAP = 40.0        # air between the widest node of two columns
@@ -47,17 +48,31 @@ def focus_from_board(tree) -> str:
     """The starred group of a board tree (its neighbourhood focus)."""
     for node in tree.nodes:
         if (node.label or "").startswith("* "):
-            return node.label[2:]
+            return _raw_name(node.label)
     return ""
 
 
+STATUS_PREFIXES = {
+    "blend_modified": "~ ",
+    "json_modified": "J ",
+    "conflict": "! ",
+    "orphan": "M ",
+    "json_missing": "F ",
+    "untracked": "? ",
+}
+
+
 def _raw_name(label: str) -> str:
-    """Undo the board's label decorations ("* ", " (untracked)")."""
+    """Undo the board's label decorations ("* ", status mark, untracked)."""
     name = label
     if name.startswith("* "):
         name = name[2:]
+    for prefix in STATUS_PREFIXES.values():
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
     if name.endswith(" (untracked)"):
-        name = name[:-len(" (untracked)")]
+        name = name[:-12]
     return name
 
 
@@ -114,6 +129,7 @@ LEGEND_ORDER = ("synced", "blend_modified", "json_modified", "conflict",
 
 
 def clear_graph_trees() -> int:
+    global last_report
     removed = 0
     for tree in list(bpy.data.node_groups):
         if (tree.name == GRAPH_TREE_NAME
@@ -121,6 +137,7 @@ def clear_graph_trees() -> int:
             bpy.data.node_groups.remove(tree)
             removed += 1
     _history_diff_backup.clear()
+    last_report = {}
     return removed
 
 
@@ -182,6 +199,17 @@ def mark_history_diff(names, label: str = "") -> int:
     if marked:
         global _history_diff_frame
         _history_diff_frame = _add_history_frame(tree, label)
+        base = tree.nodes.get("legend_synced")
+        if base is not None:
+            legend = tree.nodes.new("GeometryNodeGroup")
+            legend.name = "legend_history"
+            legend.label = "History diff"
+            legend.node_tree = _port_tree(0)
+            legend.location = (base.location[0], base.location[1] - 7 * 64.0)
+            legend.hide = True
+            legend.width = _fitted_width(legend.label)
+            legend.use_custom_color = True
+            legend.color = _HISTORY_DIFF_COLOR
     return marked
 
 
@@ -199,6 +227,9 @@ def clear_history_diff() -> None:
             frame = tree.nodes.get(_history_diff_frame)
             if frame is not None:
                 tree.nodes.remove(frame)
+        legend = tree.nodes.get("legend_history")
+        if legend is not None:
+            tree.nodes.remove(legend)
     _history_diff_backup.clear()
     _history_diff_frame = ""
 
@@ -302,6 +333,46 @@ def live_graph():
     return names, edges, name_status, externals
 
 
+def _cluster_key(name: str) -> str:
+    for sep in (" - ", " / ", "|"):
+        if sep in name:
+            return name.split(sep, 1)[0].strip() or name
+    return name.split(" ", 1)[0] if " " in name else name
+
+
+def collect_cluster_model(include_externals: bool = True) -> dict:
+    """Aggregate tracked names by prefix (one bar per prefix)."""
+    names, edges, name_status, externals = live_graph()
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        groups.setdefault(_cluster_key(name), []).append(name)
+    rank = {
+        "conflict": 0, "blend_modified": 1, "json_modified": 2,
+        "json_missing": 3, "orphan": 4, "untracked": 5, "synced": 6,
+    }
+    cluster_names = sorted(groups)
+    labels = {c: f"{c} ({len(groups[c])})" for c in cluster_names}
+    status_keys = {}
+    for cluster, members in groups.items():
+        keys = [name_status.get(m).value if name_status.get(m) is not None
+                else "untracked" for m in members]
+        status_keys[cluster] = min(keys, key=lambda k: rank.get(k, 5))
+    cluster_edges = set()
+    for a, b in edges:
+        ca, cb = _cluster_key(a), _cluster_key(b)
+        if ca != cb:
+            cluster_edges.add((ca, cb))
+    # Keep labels as the public names; the renderer adds the count via labels.
+    return {
+        "names": cluster_names,
+        "edges": sorted(cluster_edges),
+        "status_keys": status_keys,
+        "externals": [],
+        "focus": "",
+        "labels": labels,
+    }
+
+
 def collect_board_model(mode: str = "PROJECT", focus: str = "",
                         hops: int = 2, include_externals: bool = True) -> dict:
     """Plain model for a board/poster: names, edges, status keys, extras.
@@ -341,12 +412,16 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
     everything within *hops* hops, both directions).
     """
     clear_graph_trees()
-    model = collect_board_model(mode, focus, hops, include_externals)
+    if mode == "CLUSTERS":
+        model = collect_cluster_model(include_externals)
+    else:
+        model = collect_board_model(mode, focus, hops, include_externals)
     kept_names = model["names"]
     kept_edges = model["edges"]
     status_keys = model["status_keys"]
     focus = model["focus"]
     extra_externals = model["externals"]
+    cluster_labels = model.get("labels", {})
 
     indegree = {n: 0 for n in kept_names}
     for _a, b in kept_edges:
@@ -355,7 +430,13 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
     ext_set = set(extra_externals)
     labels = {}
     for name in kept_names:
-        label = f"{name} (untracked)" if name in ext_set else name
+        key = status_keys.get(name, "untracked")
+        prefix = STATUS_PREFIXES.get(key, "")
+        if name in cluster_labels:
+            label = cluster_labels[name]
+        else:
+            label = f"{prefix}{name} (untracked)" if name in ext_set \
+                else f"{prefix}{name}"
         labels[name] = ("* " + label) if name == focus else label
     widths = {n: _fitted_width(labels[n]) for n in kept_names}
     heights = {n: _bar_height(1 + min(indegree.get(n, 0), MAX_PORTS))
@@ -403,6 +484,8 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
                 rout.name = f"r{reroutes:04d}"
                 rout.width = REROUTE_W
                 rout.height = REROUTE_H
+                rout.use_custom_color = True
+                rout.color = (0.18, 0.18, 0.18)
                 # Anchor the location AT the waypoint (+5 south) with the
                 # height pinned: the Reroute draws its dot at `location`
                 # when the height is 30, but 50 px lower while it keeps
@@ -442,7 +525,8 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
             if hasattr(sock, "hide"):
                 sock.hide = not sock.is_linked
 
-    return {
+    global last_report
+    last_report = {
         "tree": graph.name,
         "nodes": len(kept_names),
         "edges": len(kept_edges),
@@ -451,7 +535,10 @@ def build_graph_tree(mode: str = "PROJECT", focus: str = "",
         "clipped": clipped,
         "externals": len(extra_externals),
         "focus": focus if mode == "NEIGHBORHOOD" else "",
+        "mode": mode,
+        "clusters": len(kept_names) if mode == "CLUSTERS" else 0,
     }
+    return last_report
 
 
 def show_in_editor(context, tree) -> bool:

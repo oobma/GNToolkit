@@ -2,11 +2,13 @@
 """
 gn_toolkit.sync_ui — Sidebar panels for DNA/RNA sync (N-panel).
 
-Panels in the Node Editor sidebar:
-  GN_PT_SyncPanel (bl_order=2): Batch operations, summary and conflicts
-  GN_PT_CollaborationPanel (bl_order=3): Git transport
-  GN_PT_IssuesPanel (bl_order=4): Scrollable list of all sync issues
-  GN_PT_GeometryIssuesPanel (bl_order=5): Geometry validation
+Panels in the Node Editor sidebar (category "GNToolkit"):
+  GN_PT_SyncPanel (bl_order=0): active entry, status, Changes, review
+  GN_PT_TrackPanel (bl_order=1): tracking setup (context-aware)
+  GN_PT_ExplorePanel (bl_order=2): graph board and JSON history
+  GN_PT_CollaborationPanel (bl_order=3, label "Git"): git transport
+  GN_PT_AdvancedPanel (bl_order=4): parent of Package/Project Health/
+  Geometry Nodes Validation
 """
 
 from __future__ import annotations
@@ -20,13 +22,15 @@ from .geometry_validator import (
     IssueType,
     IssueSeverity,
     ValidationIssue,
-    format_issue_report,
+    validate_tracked_tree,
 )
+from .constants import is_trackable_tree_type
 from .sync_manager import (sync_manager, SyncStatus, entry_kind,
                            group_library_path, package_entry,
-                           read_json_tolerant)
+                           read_json_tolerant, resolve_entry_tree)
 from .hash_utils import canonical_hash_from_json_data
-from .sync_metadata import find_uuid_for_tree, is_ignored, resolve_json_path
+from .sync_metadata import (SYNC_UUID_PROP, find_uuid_for_tree, is_ignored,
+                            resolve_json_path)
 from .sync_operators import _get_active_tree
 from .serializer import tree_has_animation
 from .graph_view import (GRAPH_TREE_NAME, _raw_name, clear_history_diff,
@@ -45,12 +49,21 @@ STATUS_ICONS = {
 
 STATUS_LABELS = {
     SyncStatus.SYNCED: "Synced",
-    SyncStatus.BLEND_MODIFIED: "Edited Locally",
+    SyncStatus.BLEND_MODIFIED: "Edited locally",
     SyncStatus.JSON_MODIFIED: "Changed in JSON",
     SyncStatus.CONFLICT: "Conflict",
-    SyncStatus.ORPHAN: "Missing in Blend",
+    SyncStatus.ORPHAN: "Missing in blend",
     SyncStatus.UNTRACKED: "Untracked",
-    SyncStatus.JSON_MISSING: "JSON File Missing",
+    SyncStatus.JSON_MISSING: "JSON missing",
+}
+
+STATUS_SHORT = {
+    SyncStatus.BLEND_MODIFIED: "Edited",
+    SyncStatus.JSON_MODIFIED: "In JSON",
+    SyncStatus.CONFLICT: "Conflict",
+    SyncStatus.ORPHAN: "Missing",
+    SyncStatus.UNTRACKED: "Untracked",
+    SyncStatus.JSON_MISSING: "JSON missing",
 }
 
 # Leading icon of a tracked entry, by kind (groups are the historical
@@ -59,6 +72,13 @@ KIND_ICONS = {
     "material": 'MATERIAL',
     "world": 'WORLD',
 }
+
+
+def _count_label(n, singular: str, plural: str | None = None) -> str:
+    """Compact singular/plural label for panel text."""
+    if plural is None:
+        plural = singular + "s"
+    return f"{n} {singular if n == 1 else plural}"
 
 
 def _layout_icon(*candidates: str) -> str:
@@ -143,6 +163,110 @@ def _active_tracked_json(context):
     return tree.name, os.path.basename(abs_path), abs_path
 
 
+def _supported_editor(context) -> bool:
+    space = getattr(context, "space_data", None)
+    tree = getattr(space, "node_tree", None)
+    return is_trackable_tree_type(getattr(tree, "type", ""))
+
+
+def _active_entry(context):
+    """Active group/material/world/compositor entry for the current editor.
+
+    Resolves the UUID on the owner (material/world) as well as on a node
+    group tree, so embedded entries get an Active row and History button.
+    """
+    metadata = sync_manager.metadata
+    tracked = metadata.get("tracked_groups", {})
+    space = getattr(context, "space_data", None)
+    active_tree = getattr(space, "node_tree", None)
+    tree_type = getattr(active_tree, "type", "")
+    owner = None
+    kind = "group"
+
+    if tree_type == 'SHADER':
+        mat = getattr(context, "material", None)
+        if mat is not None and getattr(mat, "use_nodes", False):
+            owner, kind = mat, "material"
+        else:
+            world = getattr(context, "world", None)
+            if world is not None and getattr(world, "use_nodes", False):
+                owner, kind = world, "world"
+
+    if owner is None:
+        tree = getattr(space, "node_tree", None)
+        if tree is not None and is_trackable_tree_type(
+                getattr(tree, "type", "")):
+            owner, kind = tree, "group"
+
+    if owner is None:
+        return None
+
+    name = owner.name
+    library = bool(kind == "group" and group_library_path(owner))
+    uid = None if library else owner.get(SYNC_UUID_PROP)
+    info = tracked.get(uid) if uid else None
+    if info is None and not library:
+        for candidate_uid, candidate in tracked.items():
+            if (candidate.get("blend_name") == name
+                    and entry_kind(candidate) == kind):
+                uid, info = candidate_uid, candidate
+                break
+    json_path = ""
+    if info is not None:
+        json_path = resolve_json_path(info.get("json_path", ""),
+                                      sync_manager._blend_dir())
+    return {
+        "owner": owner,
+        "kind": kind,
+        "name": name,
+        "uid": uid if info is not None else None,
+        "info": info,
+        "json_path": json_path,
+        "library": library,
+    }
+
+
+def _draw_active_entry(layout, context):
+    """Context row at the top of Sync/Track: active entry + actions."""
+    entry = _active_entry(context)
+    if entry is None:
+        return None
+    row = layout.row(align=True)
+    icon = KIND_ICONS.get(entry["kind"], 'NODETREE')
+    if entry["info"] is not None:
+        row.label(text=f"Active: {entry['name']}", icon=icon)
+        file_row = layout.row(align=True)
+        file_row.label(text=os.path.basename(entry["json_path"]),
+                       icon='FILE')
+        copy_op = file_row.operator("gn.sync_copy_json_path", text="",
+                                    icon='COPYDOWN')
+        copy_op.json_path = entry["json_path"]
+        hist_op = file_row.operator("gn.sync_history_open", text="",
+                                    icon='TIME')
+        hist_op.sync_uuid = entry["uid"]
+        reveal_op = file_row.operator("gn.sync_reveal_json_path", text="",
+                                      icon='FOLDER_REDIRECT')
+        reveal_op.json_path = entry["json_path"]
+    elif entry["library"]:
+        row.label(text=f"Active: {entry['name']} - library-linked", icon=icon)
+        row.label(text="Make it local to track", icon='INFO')
+    else:
+        row.label(text=f"Active: {entry['name']} - not tracked", icon=icon)
+        op_id = {
+            "group": "gn.sync_link",
+            "material": "gn.sync_link_material",
+            "world": "gn.sync_link_world",
+        }.get(entry["kind"])
+        if op_id:
+            row.operator(op_id, text="Track", icon='LINKED')
+
+    tree = entry["owner"] if entry["kind"] == "group" else None
+    if tree is not None and tree_has_animation(tree):
+        layout.label(text="Animation (keyframes/drivers) is not versioned",
+                     icon=_layout_icon('STATUS_WARNING', 'WARNING'))
+    return entry
+
+
 def _board_uid_for_name(name: str):
     """uid of the tracked group shown with *name* on the board, or None."""
     for uid, info in (sync_manager.metadata.get("tracked_groups")
@@ -208,6 +332,10 @@ def _board_history_dismiss(uid) -> None:
 def _board_history_tick():
     """Timer body: auto-open the History box for the selected board bar."""
     try:
+        prefs = bpy.context.scene.gnt_sync_prefs
+        if not getattr(prefs, "follow_board_selection", False):
+            _board_history_state["last"] = None
+            return 0.4
         board = bpy.data.node_groups.get(GRAPH_TREE_NAME)
         if board is None:
             _board_history_state["last"] = None
@@ -267,7 +395,7 @@ def stop_board_history_pump() -> None:
 
 
 def _notify_external_changes(count: int) -> None:
-    msg = f"GNToolkit: {count} JSON file(s) changed on disk - Refresh Status to align"
+    msg = f"GNToolkit: {_count_label(count, 'JSON file')} changed on disk - Refresh Status to align"
 
     def _show(text=msg):
         try:
@@ -298,22 +426,42 @@ def _picker_item_icon(name: str, default: str) -> str:
     return default
 
 
-def _draw_changes_list(layout, context) -> None:
-    """Draw the collapsible Changes box.
+def _draw_sync_alerts(layout, context) -> None:
+    """Top-of-panel safety notices (pending save, failed imports)."""
+    if sync_manager.has_pending_save():
+        box = layout.box()
+        box.label(text="Pull applied - save the .blend to persist (Ctrl+S)",
+                  icon='ERROR')
 
-    One row per out-of-sync tracked group with mark/unmark/discard/pull
-    actions, plus one row per untracked dependency group with its Track
-    button.  The mark state is session-scoped (see
-    ``sync_manager.stage_change``); nothing is marked by default.
-    """
+    failed = getattr(context.scene, "gnt_failed_imports", None)
+    if failed is not None and len(failed.items):
+        box = layout.box()
+        box.label(text=failed.summary or f"{len(failed.items)} failed",
+                  icon='ERROR')
+        for item in list(failed.items)[:5]:
+            box.label(text=f"{item.group_name} - {item.reason}",
+                      icon='NODETREE')
+        if len(failed.items) > 5:
+            box.label(text=f"... and {len(failed.items) - 5} more",
+                      icon='INFO')
+        btn_row = box.row(align=True)
+        btn_row.operator("gn.sync_retry_failed", text="Retry failed",
+                         icon='FILE_REFRESH')
+        btn_row.operator("gn.sync_failures_clear", text="Dismiss", icon='X')
+
+
+def _draw_changes_list(layout, context) -> None:
+    """One canonical Changes list (filters, marks, actions, deps)."""
     from .sync_operators import _change_rows
 
     prefs = context.scene.gnt_sync_prefs
     data = _change_rows()
     rows = data["rows"]
+    ignored_rows = data.get("ignored_rows", [])
     deps = data["deps"]
-    ignored = data["ignored"]
+    n_ignored = data.get("ignored", 0)
     staged_count = sum(1 for r in rows if r["staged"])
+    total = len(rows) + len(deps)
 
     layout.separator()
     box = layout.box()
@@ -321,81 +469,162 @@ def _draw_changes_list(layout, context) -> None:
     head.prop(prefs, "expand_changes", text="", emboss=False,
               icon='DISCLOSURE_TRI_DOWN' if prefs.expand_changes
               else 'DISCLOSURE_TRI_RIGHT')
-    head.label(text=f"Changes ({len(rows) + len(deps)})", icon='INFO')
+    head.label(text=f"Changes ({total})", icon='INFO')
     if staged_count:
         head.label(text=f"{staged_count} marked", icon='CHECKMARK')
     if not prefs.expand_changes:
         return
 
     if not rows and not deps:
-        if not sync_manager._status_cache and not sync_manager.load_report:
-            box.label(text="No status yet — click Refresh Status", icon='INFO')
+        if ignored_rows:
+            box.label(text=f"{_count_label(len(ignored_rows), 'ignored group')} "
+                           "hidden", icon='HIDE_ON')
+            box.prop(prefs, "show_ignored", text="Show ignored", toggle=True)
+        elif not sync_manager._status_cache and not sync_manager.load_report:
+            box.label(text="No status yet - click Refresh Status", icon='INFO')
         else:
-            box.label(text="No changes — everything is saved", icon='CHECKMARK')
+            box.label(text="No changes - everything is saved",
+                      icon='CHECKMARK')
         return
 
+    filter_row = box.row(align=True)
+    filter_row.prop(prefs, "expand_change_filters", text="Filter",
+                    emboss=False,
+                    icon='DISCLOSURE_TRI_DOWN' if prefs.expand_change_filters
+                    else 'DISCLOSURE_TRI_RIGHT')
+    if prefs.expand_change_filters:
+        grid = box.grid_flow(row_major=True, columns=2, even_columns=True)
+        grid.prop(prefs, "show_blend_modified", text="Edited locally",
+                  toggle=True, icon='LIGHT')
+        grid.prop(prefs, "show_json_modified", text="Changed in JSON",
+                  toggle=True, icon='FILE_REFRESH')
+        grid.prop(prefs, "show_conflict", text="Conflict", toggle=True,
+                  icon='ERROR')
+        grid.prop(prefs, "show_orphan", text="Missing in blend", toggle=True,
+                  icon='GROUP')
+        grid.prop(prefs, "show_json_missing", text="JSON missing", toggle=True,
+                  icon='FILE')
+        grid.prop(prefs, "show_ignored", text="Ignored", toggle=True,
+                  icon='RESTRICT_VIEW_OFF')
+
+    def _status_visible(r):
+        s = r["status"]
+        return {
+            SyncStatus.BLEND_MODIFIED: prefs.show_blend_modified,
+            SyncStatus.JSON_MODIFIED: prefs.show_json_modified,
+            SyncStatus.CONFLICT: prefs.show_conflict,
+            SyncStatus.ORPHAN: prefs.show_orphan,
+            SyncStatus.JSON_MISSING: prefs.show_json_missing,
+        }.get(s, True)
+
+    shown = [r for r in rows if _status_visible(r)]
+    n_local = sum(1 for r in rows
+                  if r["status"] in (SyncStatus.BLEND_MODIFIED,
+                                     SyncStatus.CONFLICT))
     control = box.row(align=True)
-    control.label(text="Mark the changes and save them to JSON:")
+    control.label(text="Mark to save", icon='INFO')
     tools = control.row(align=True)
     tools.alignment = 'RIGHT'
-    tools.operator("gn.sync_stage_all", text="", icon='PLUS')
-    tools.operator("gn.sync_unstage_all", text="", icon='REMOVE')
+    tools.operator("gn.sync_stage_all", text="Mark all", icon='CHECKMARK')
+    tools.operator("gn.sync_unstage_all", text="Unmark all", icon='X')
 
-    save_row = box.row()
-    save_row.enabled = staged_count > 0
-    save_label = (f"Save {staged_count} marked to JSON" if staged_count
-                  else "Save marked to JSON")
-    save_row.operator("gn.sync_save_staged", text=save_label, icon='EXPORT')
+    save_row = box.row(align=True)
+    if staged_count:
+        save_row.operator("gn.sync_save_staged",
+                          text=f"Save selected ({staged_count})",
+                          icon='EXPORT')
+    elif n_local:
+        save_row.operator("gn.sync_export_modified",
+                          text=f"Save changed ({n_local})",
+                          icon='EXPORT')
+    else:
+        save_row.enabled = False
+        save_row.label(text="Nothing to save", icon='INFO')
+    save_row.menu("GN_MT_SaveMenu", text="", icon='THREE_DOTS')
 
     n_animated = sum(1 for r in rows if r.get("animated"))
     if n_animated:
-        box.label(text=f"{n_animated} group(s) have animation that is not "
-                       "versioned",
+        box.label(text=f"{_count_label(n_animated, 'group')} "
+                       f"{'has' if n_animated == 1 else 'have'} animation that "
+                       "is not versioned",
                   icon=_layout_icon('STATUS_WARNING', 'WARNING'))
 
+    if not shown and not deps and not (prefs.show_ignored and ignored_rows):
+        box.label(text="No changes match current filters", icon='INFO')
+
+    limit = len(shown) if prefs.show_all_changes else 50
+    page = shown[:limit]
+    if len(shown) > limit:
+        row = box.row(align=True)
+        row.label(text=f"Showing {limit} of {len(shown)}", icon='INFO')
+        row.prop(prefs, "show_all_changes", text="Show all", toggle=True)
+
+    def _primary(r):
+        s = r["status"]
+        if s == SyncStatus.CONFLICT and r["mergeable"]:
+            return ("gn.sync_merge_conflict", "Merge", 'AUTOMERGE_ON')
+        if s == SyncStatus.BLEND_MODIFIED:
+            return ("gn.sync_export", "Save", 'EXPORT')
+        if s == SyncStatus.JSON_MODIFIED:
+            return ("gn.sync_import", "Pull", 'IMPORT')
+        if s == SyncStatus.ORPHAN:
+            return ("gn.sync_import", "Restore", 'IMPORT')
+        if s == SyncStatus.JSON_MISSING:
+            return ("gn.sync_export", "Re-create", 'EXPORT')
+        return None
+
     def _draw_change_row(target, r):
-        row = target.row(align=True)
+        line = target.row(align=True)
         kind_icon = KIND_ICONS.get(r.get("kind", "group"))
         if kind_icon:
-            row.label(text="", icon=kind_icon)
-        row.label(text=r["name"],
-                  icon=STATUS_ICONS.get(r["status"], 'QUESTION'))
-        row.label(text=STATUS_LABELS.get(r["status"], r["status"].value))
+            line.label(text="", icon=kind_icon)
+        line.label(text=r["name"],
+                   icon=STATUS_ICONS.get(r["status"], 'QUESTION'))
+        line.label(text=STATUS_SHORT.get(r["status"], r["status"].value))
+        if r.get("ignored"):
+            line.label(text="IGNORED", icon='HIDE_ON')
         if r.get("animated"):
-            row.label(text="", icon=_layout_icon('STATUS_WARNING', 'WARNING'))
-        actions = row.row(align=True)
+            line.label(text="", icon=_layout_icon('STATUS_WARNING', 'WARNING'))
+
+        actions = target.row(align=True)
         actions.alignment = 'RIGHT'
-        hist_op = actions.operator("gn.sync_history_open", text="",
-                                   icon='TIME')
-        hist_op.sync_uuid = r["uid"]
-        if r.get("mergeable"):
-            op = actions.operator("gn.sync_merge_conflict", text="",
-                                  icon='AUTOMERGE_ON')
+        if r.get("ignored"):
+            op = actions.operator("gn.sync_unignore", text="Un-ignore",
+                                  icon='RESTRICT_VIEW_OFF')
             op.sync_uuid = r["uid"]
-        if r["saveable"]:
-            if r["staged"]:
-                op = actions.operator("gn.sync_change_unmark", text="",
-                                      icon='REMOVE')
-            else:
-                op = actions.operator("gn.sync_change_mark", text="",
-                                      icon='PLUS')
-            op.sync_uuid = r["uid"]
-        if r["discardable"]:
-            op = actions.operator("gn.sync_discard_local", text="",
-                                  icon='LOOP_BACK')
-            op.sync_uuid = r["uid"]
-        if r["pullable"]:
-            op = actions.operator("gn.sync_import", text="", icon='IMPORT')
+        else:
+            primary = _primary(r)
+            if primary is not None:
+                op_id, label, icon = primary
+                op = actions.operator(op_id, text=label, icon=icon)
+                op.sync_uuid = r["uid"]
+            if r["saveable"]:
+                op = actions.operator(
+                    "gn.sync_change_unmark" if r["staged"]
+                    else "gn.sync_change_mark",
+                    text="Unmark" if r["staged"] else "Mark",
+                    icon='REMOVE' if r["staged"] else 'CHECKMARK')
+                op.sync_uuid = r["uid"]
+            op = actions.operator("gn.sync_change_menu", text="",
+                                  icon='THREE_DOTS')
             op.sync_uuid = r["uid"]
 
-    staged_rows = [r for r in rows if r["staged"]]
-    plain_rows = [r for r in rows if not r["staged"]]
+    staged_rows = [r for r in page if r["staged"]]
+    plain_rows = [r for r in page if not r["staged"]]
     if staged_rows:
         box.label(text=f"Marked ({len(staged_rows)})", icon='CHECKMARK')
         for r in staged_rows:
             _draw_change_row(box, r)
     for r in plain_rows:
         _draw_change_row(box, r)
+
+    if prefs.show_ignored and ignored_rows:
+        box.label(text=f"Ignored ({len(ignored_rows)})", icon='HIDE_ON')
+        for r in ignored_rows[:limit]:
+            _draw_change_row(box, r)
+        if len(ignored_rows) > limit:
+            box.label(text=f"... and {len(ignored_rows) - limit} more",
+                      icon='INFO')
 
     for d in deps:
         row = box.row(align=True)
@@ -404,9 +633,11 @@ def _draw_changes_list(layout, context) -> None:
         op = row.operator("gn.sync_track_deps", text="Track", icon='LINKED')
         op.group_name = d["name"]
 
-    if ignored:
-        box.label(text=f"{ignored} ignored group(s) hidden — manage them in "
-                       "Sync Issues", icon='HIDE_ON')
+    if n_ignored and not prefs.show_ignored:
+        row = box.row(align=True)
+        row.label(text=f"{_count_label(n_ignored, 'ignored group')} hidden",
+                  icon='HIDE_ON')
+        row.prop(prefs, "show_ignored", text="Show", toggle=True)
 
 
 def _draw_merge_report(layout, context) -> None:
@@ -420,7 +651,7 @@ def _draw_merge_report(layout, context) -> None:
     status = state.status
     icon = 'CHECKMARK' if status == "merged" else 'ERROR'
     head.label(text=f"Merge report: {state.group_name}", icon=icon)
-    head.label(text=status)
+    head.label(text="Merged" if status == "merged" else "Conflicted")
     head.operator("gn.sync_merge_report_clear", text="", icon='X')
     if state.summary:
         box.label(text=state.summary, icon='INFO')
@@ -495,7 +726,8 @@ def _draw_history_box(layout, context) -> None:
     ok = state.status in ("ok", "restored")
     head.label(text=f"History: {state.group_name}", icon='TIME')
     if state.status:
-        head.label(text=state.status)
+        head.label(text={"ok": "Ready", "restored": "Restored"}.get(
+            state.status, state.status))
     head.operator("gn.sync_history_close", text="", icon='X')
     if state.message:
         box.label(text=state.message, icon='INFO' if ok else 'ERROR')
@@ -522,6 +754,77 @@ def _draw_history_box(layout, context) -> None:
                              text="Restore This Revision", icon='LOOP_BACK')
 
 
+def _draw_refresh_button(layout, context):
+    """Refresh Status / Checking x/y in a layout row."""
+    if sync_manager.check_busy():
+        done, total = sync_manager.check_progress()
+        wait = layout.row(align=True)
+        wait.enabled = False
+        wait.operator("gn.sync_check", text=f"Checking {done}/{total}...",
+                      icon='FILE_REFRESH')
+    else:
+        layout.operator("gn.sync_check", text="Refresh Status",
+                        icon='FILE_REFRESH')
+
+
+def _draw_status_summary(layout, context):
+    """Compact status line; the Changes list owns the issue count."""
+    if sync_manager.check_busy():
+        done, total = sync_manager.check_progress()
+        row = layout.row(align=True)
+        row.label(text=f"Checking {done}/{total}...", icon='TIME')
+        row.operator("gn.sync_cancel_check", text="Cancel", icon='X')
+        return
+    if not sync_manager._status_cache:
+        row = layout.row(align=True)
+        row.label(text="Status not checked", icon='INFO')
+        _draw_refresh_button(row, context)
+        if sync_manager.load_report:
+            layout.label(
+                text=f"{_count_label(len(sync_manager.load_report), 'JSON change')}"
+                     " detected - Refresh Status to compare",
+                icon='FILE_REFRESH')
+        return
+    summary = sync_manager.get_status_summary()
+    n_total = len(sync_manager.metadata.get("tracked_groups", {}))
+    n_cached = sum(v for k, v in summary.items() if k != "ignored")
+    n_synced = summary.get("synced", 0)
+    partial = n_cached < n_total
+    row = layout.row(align=True)
+    row.label(text=f"{n_total} tracked", icon='NODETREE')
+    row.label(text=f"{n_synced} synced", icon='CHECKMARK')
+    _draw_refresh_button(row, context)
+    if partial:
+        layout.label(text="Status partially checked - Refresh Status",
+                     icon='INFO')
+
+    counters = (
+        ("To save", summary.get("blend_modified", 0), 'LIGHT'),
+        ("To pull", summary.get("json_modified", 0), 'FILE_REFRESH'),
+        ("Conflicts", summary.get("conflict", 0), 'ERROR'),
+        ("Missing", summary.get("orphan", 0), 'GROUP'),
+        ("JSON missing", summary.get("json_missing", 0), 'FILE'),
+    )
+    active = [(label, count, icon) for label, count, icon in counters if count]
+    if active:
+        grid = layout.grid_flow(row_major=True, columns=2, even_columns=True)
+        for label, count, icon in active:
+            grid.label(text=f"{label}: {count}", icon=icon)
+    elif not partial:
+        layout.label(text="All synced", icon='CHECKMARK')
+
+
+def _draw_review(layout, context):
+    """Conflict banner + last merge report; the Changes list has actions."""
+    summary = sync_manager.get_status_summary()
+    n_conflict = summary.get("conflict", 0)
+    if n_conflict:
+        box = layout.box()
+        box.label(text=f"{_count_label(n_conflict, 'conflict')} - resolve in "
+                       "Changes", icon='ERROR')
+    _draw_merge_report(layout, context)
+
+
 # ---------------------------------------------------------------------------
 # Panel 1: Batch Operations
 # ---------------------------------------------------------------------------
@@ -535,367 +838,187 @@ class GN_PT_SyncPanel(bpy.types.Panel):
     bl_idname = "GN_PT_SyncPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
-    bl_category = 'GN Tools'
-    bl_order = 2
+    bl_category = 'GNToolkit'
+    bl_order = 0
+
+    @classmethod
+    def poll(cls, context):
+        return _supported_editor(context)
 
     def draw(self, context):
         layout = self.layout
+        _draw_sync_alerts(layout, context)
+        mismatches = sync_manager.uuid_mismatch_count()
+        if mismatches:
+            box = layout.box()
+            box.label(text=f"{_count_label(mismatches, 'entry')} matched by "
+                           "name but with a different UUID", icon='ERROR')
+            box.label(text="Restore the matching sidecar or re-track these "
+                           "groups", icon='INFO')
         metadata = sync_manager.metadata
         tracked = metadata.get("tracked_groups", {})
-
         if tracked:
             changed = sync_manager.scan_external_json_changes()
             if changed:
                 _notify_external_changes(len(changed))
-
-        if tracked:
-            active = _active_tracked_json(context)
-            if active:
-                tree_name, json_base, json_path = active
-                active_row = layout.row(align=True)
-                active_row.label(text=f"Active: {tree_name} → {json_base}", icon='NODETREE')
-                copy_op = active_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
-                copy_op.json_path = json_path
-                active_tree = bpy.data.node_groups.get(tree_name)
-                if active_tree is not None:
-                    uid = find_uuid_for_tree(active_tree, metadata)
-                    if uid:
-                        hist_op = active_row.operator(
-                            "gn.sync_history_open", text="", icon='TIME')
-                        hist_op.sync_uuid = uid
-                if active_tree is not None and tree_has_animation(active_tree):
-                    layout.label(text="Animation (keyframes/drivers) is not "
-                                      "versioned",
-                                 icon=_layout_icon('STATUS_WARNING', 'WARNING'))
-                layout.separator()
-
-        board = _board_selection(context)
-        if board:
-            name, uid = board
-            board_row = layout.row(align=True)
-            board_row.label(text=f"Board selection: {name}", icon='NODETREE')
-            hist_op = board_row.operator("gn.sync_history_open", text="",
-                                         icon='TIME')
-            hist_op.sync_uuid = uid
-
-        row = layout.row(align=True)
-        row.operator("gn.sync_link", text="Track Group", icon='LINKED')
-        row.operator("gn.sync_link_all", text="Track All", icon='FILE_TICK')
-        row.operator("gn.sync_link_folder", text="Track Folder…", icon='FILE_FOLDER')
-
-        mat_row = layout.row(align=True)
-        mat_row.operator("gn.sync_link_material", text="Track Material",
-                         icon='MATERIAL')
-        mat_row.operator("gn.sync_link_all_materials", text="Track All Materials",
-                         icon='FILE_TICK')
-        mat_row.operator("gn.sync_link_world", text="Track World", icon='WORLD')
-
-        if hasattr(context.scene, "compositing_node_group"):
-            comp_tree = context.scene.compositing_node_group
-            comp_row = layout.row(align=True)
-            comp_row.operator(
-                "gn.sync_link_scene_compositor",
-                text="Track Scene Compositor",
-                icon=_layout_icon('COMPOSITING', 'NODETREE'))
-            if comp_tree is not None:
-                comp_row.label(text=comp_tree.name)
-            else:
-                comp_row.enabled = False
-
+        _draw_active_entry(layout, context)
         if not tracked:
             layout.separator()
             layout.label(text="Nothing tracked yet", icon='INFO')
-            layout.separator()
-            layout.operator("gn.sync_initialize", text="Track from Existing JSON", icon='FILE_FOLDER')
-            layout.label(text="Reads the JSON as the source of truth — it is NOT modified")
-            layout.separator()
-            layout.label(text="Or create the JSON from this .blend with the buttons above:")
+            layout.label(text="Use Track to add a group, material or world.",
+                         icon='INFO')
             return
-
         layout.separator()
-        layout.label(text="Sync Actions:", icon='ACTION')
-
-        batch_row = layout.row(align=True)
-        batch_row.operator("gn.sync_export_modified", text="Save Modified to JSON", icon='EXPORT')
-        batch_row.operator("gn.sync_import_modified", text="Pull from JSON", icon='IMPORT')
-
-        batch_row2 = layout.row(align=True)
-        batch_row2.operator("gn.sync_export_all", text="Save All to JSON", icon='EXPORT')
-
-        _draw_changes_list(layout, context)
-
-        graph_row = layout.row(align=True)
-        graph_row.operator("gn.graph_view", text="Graph View…",
-                           icon='NODETREE')
-        graph_row.operator("gn.graph_poster", text="", icon='EXPORT')
-        graph_row.operator("gn.graph_clear", text="", icon='X')
-
-        check_row = layout.row(align=True)
-        if sync_manager.check_busy():
-            done, total = sync_manager.check_progress()
-            wait_row = check_row.row(align=True)
-            wait_row.enabled = False
-            wait_row.operator("gn.sync_check", text=f"Checking {done}/{total}…",
-                              icon='FILE_REFRESH')
-        else:
-            check_row.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
-        prefs = context.scene.gnt_sync_prefs
-        check_row.prop(prefs, "check_on_load", text="", icon='PLUGIN',
-                       toggle=True, expand=True)
-
-        import_row = layout.row(align=True)
-        import_row.operator("gn.sync_import_group_file", text="Import Group from JSON…",
-                            icon='IMPORT')
-
-        state = getattr(context.scene, "gnt_import_state", None)
-        if state and state.open:
-            layout.separator()
-            picker_box = layout.box()
-            picker_box.label(text=f"Package: {os.path.basename(state.filepath)}",
-                             icon='PACKAGE')
-            picker_box.label(text=state.filepath, icon='FILE')
-            picker_box.label(text="Use the search field to filter the group list:",
-                             icon='VIEWZOOM')
-            srow = picker_box.row(align=True)
-            srow.prop_search(state, "group_name", state, "items",
-                             text="", icon='VIEWZOOM')
-            import_row = srow.row()
-            import_row.enabled = bool(state.group_name)
-            imp = import_row.operator("gn.sync_import_group", text="Import",
-                                      icon='IMPORT')
-            imp.filepath = state.filepath
-            imp.group_name = state.group_name
-            track_row = picker_box.row(align=True)
-            _is_group_item = (bool(state.group_name)
-                              and not state.group_name.startswith(
-                                  ("Material: ", "World: ")))
-            track_row.enabled = _is_group_item and \
-                bpy.data.node_groups.get(state.group_name) is not None
-            track_op = track_row.operator("gn.sync_import_group_track",
-                                          text="Track to JSON…", icon='LINKED')
-            track_op.group_name = state.group_name
-            if state.group_name:
-                from .sync_operators import (_compute_selection_plan,
-                                             _tracked_elsewhere_notes)
-                plan = _compute_selection_plan(state)
-                if plan:
-                    if plan["existing"]:
-                        picker_box.label(text="Already in the .blend (not touched):",
-                                         icon='INFO')
-                        for name in plan["existing"]:
-                            picker_box.label(text=f"  {name}",
-                                             icon=_picker_item_icon(
-                                                 name, 'CHECKMARK'))
-                    if plan["missing"]:
-                        picker_box.label(text="Will be imported:", icon='IMPORT')
-                        for name in plan["missing"]:
-                            picker_box.label(text=f"  {name}",
-                                             icon=_picker_item_icon(
-                                                 name, 'NODETREE'))
-                    if plan["divergent"]:
-                        picker_box.label(
-                            text=f"Differ from {os.path.basename(state.filepath)}: "
-                                 f"{', '.join(plan['divergent'])}",
-                            icon='ERROR')
-                    if plan["external"]:
-                        picker_box.label(
-                            text=f"Unconnected refs: {', '.join(plan['external'])}",
-                            icon=STATUS_WARNING_ICON)
-                    for name, other_pkg in _tracked_elsewhere_notes(state, plan):
-                        picker_box.label(
-                            text=f"{name} — tracked to: {other_pkg} (not this package)",
-                            icon='INFO')
-                else:
-                    picker_box.label(text="Not found in this package",
-                                     icon='ERROR')
-            picker_box.label(text="Existing groups are never touched — only missing "
-                                  "dependencies are imported.", icon='INFO')
-            picker_box.label(text="To update an existing group: Import Package/Folder "
-                                  "with 'Update existing groups' (or Pull from JSON "
-                                  "when tracked).", icon='INFO')
-            picker_box.row(align=True).operator("gn.sync_import_group_close",
-                                                text="Close Picker", icon='X')
-
-        remotes = _json_remotes(tracked)
-        if remotes:
-            layout.separator()
-            rem_box = layout.box()
-            rem_head = rem_box.row(align=True)
-            rem_head.prop(prefs, "expand_remotes", text="", emboss=False,
-                          icon='DISCLOSURE_TRI_DOWN' if prefs.expand_remotes
-                          else 'DISCLOSURE_TRI_RIGHT')
-            rem_head.label(text=f"JSON files: {len(remotes)}", icon='FILE_FOLDER')
-            if prefs.expand_remotes:
-                for abs_path, count in sorted(remotes.items()):
-                    remote_row = rem_box.row(align=True)
-                    icon = 'FILE' if os.path.isfile(abs_path) else 'ERROR'
-                    remote_row.label(text=abs_path, icon=icon)
-                    remote_row.label(text=f"{count} groups")
-                    copy_op = remote_row.operator("gn.sync_copy_json_path", text="", icon='COPYDOWN')
-                    copy_op.json_path = abs_path
-                    reveal_op = remote_row.operator("gn.sync_reveal_json_path", text="", icon='FOLDER_REDIRECT')
-                    reveal_op.json_path = abs_path
-
-        has_cache = bool(sync_manager._status_cache)
-
-        load_report = sync_manager.load_report
-        if load_report:
-            n_changed = sum(1 for e in load_report.values()
-                            if e.get("status") == SyncStatus.JSON_MISSING)
-            layout.separator()
-            warn_row = layout.row(align=True)
-            warn_row.label(text=f"{len(load_report)} group(s) out of sync with JSON",
-                           icon='FILE_REFRESH')
-            if n_changed:
-                warn_row.label(text=f"({n_changed} file(s) missing)", icon='FILE')
-            warn_row.operator("gn.sync_check", text="", icon='FILE_REFRESH')
-
-        if has_cache:
-            layout.separator()
-            summary = sync_manager.get_status_summary()
-            n_total = sum(v for k, v in summary.items() if k != "ignored")
-            n_synced = summary.get("synced", 0)
-            n_issues = n_total - n_synced
-            n_ignored = summary.get("ignored", 0)
-
-            summary_row = layout.row()
-            summary_row.label(text=f"Total: {n_total}  |  ", icon='NODETREE')
-            summary_row.label(text=f"Synced: {n_synced}")
-
-            n_blend = summary.get("blend_modified", 0)
-            n_json = summary.get("json_modified", 0)
-            n_conflict = summary.get("conflict", 0)
-            n_orphan = summary.get("orphan", 0)
-            n_missing = summary.get("json_missing", 0)
-
-            if n_blend:
-                summary_row.label(text=f"  To save: {n_blend}", icon='LIGHT')
-            if n_json:
-                summary_row.label(text=f"  To pull: {n_json}", icon='FILE_REFRESH')
-            if n_conflict:
-                summary_row.label(text=f"  Conflict: {n_conflict}", icon='ERROR')
-            if n_orphan:
-                summary_row.label(text=f"  Missing: {n_orphan}", icon='GROUP')
-            if n_missing:
-                summary_row.label(text=f"  JSON file: {n_missing}", icon='FILE')
-
-            if n_issues:
-                info_row = layout.row()
-                info_row.label(text=f"{n_issues} issues", icon='ERROR')
-                if n_ignored:
-                    info_row.label(text=f"({n_ignored} ignored)", icon='HIDE_ON')
-            else:
-                layout.label(text="All synced", icon='CHECKMARK')
-
-            layout.separator()
-            conf_box = layout.box()
-            if n_conflict:
-                conf_box.label(text="Conflicts — resolve per group:", icon='ERROR')
-                shown = 0
-                for uid, status in sync_manager._status_cache.items():
-                    if status != SyncStatus.CONFLICT:
-                        continue
-                    info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
-                    crow = conf_box.row(align=True)
-                    crow.label(text=info.get("blend_name", uid), icon='NODETREE')
-                    if info.get("kind", "group") == "group":
-                        merge_op = crow.operator("gn.sync_merge_conflict",
-                                                 text="Merge",
-                                                 icon='AUTOMERGE_ON')
-                        merge_op.sync_uuid = uid
-                    keep_json = crow.operator("gn.sync_resolve_json", text="Keep JSON",
-                                              icon='FILE_REFRESH')
-                    keep_json.sync_uuid = uid
-                    keep_blend = crow.operator("gn.sync_resolve_blend", text="Keep Blend",
-                                               icon='LIGHT')
-                    keep_blend.sync_uuid = uid
-                    shown += 1
-                    if shown >= 8:
-                        rest = n_conflict - shown
-                        if rest > 0:
-                            conf_box.label(text=f"…and {rest} more — resolve in Sync Issues",
-                                           icon='INFO')
-                        break
-            else:
-                btn_row = conf_box.row(align=True)
-                btn_row.enabled = False
-                keep_json = btn_row.operator("gn.sync_resolve_json", text="Keep JSON",
-                                             icon='FILE_REFRESH')
-                keep_blend = btn_row.operator("gn.sync_resolve_blend", text="Keep Blend",
-                                              icon='LIGHT')
-                hint_row = conf_box.row()
-                hint_row.label(text="when a group differs on both sides", icon='INFO')
-            _draw_merge_report(layout, context)
-        else:
-            layout.label(text="No status yet — click Refresh Status", icon='INFO')
-
-        _draw_history_box(layout, context)
-
-        if sync_manager.has_pending_save():
-            layout.separator()
-            save_row = layout.row(align=True)
-            save_row.label(text="Pull applied — save the .blend to persist (Ctrl+S)",
-                           icon='ERROR')
-
-        failed = getattr(context.scene, "gnt_failed_imports", None)
-        if failed is not None and len(failed.items):
-            layout.separator()
-            fail_box = layout.box()
-            fail_box.label(text=failed.summary or f"{len(failed.items)} failed",
-                           icon='ERROR')
-            for item in list(failed.items)[:8]:
-                fail_box.label(text=f"{item.group_name} — {item.reason}", icon='NODETREE')
-            if len(failed.items) > 8:
-                fail_box.label(text=f"…and {len(failed.items) - 8} more", icon='INFO')
-            btn_row = fail_box.row(align=True)
-            btn_row.operator("gn.sync_retry_failed", text="Retry Failed",
-                             icon='FILE_REFRESH')
-            btn_row.operator("gn.sync_failures_clear", text="Dismiss", icon='X')
-
-        layout.separator()
-        stop_row = layout.row(align=True)
-        stop_row.operator("gn.sync_unlink_all", text="Stop Tracking All", icon='X')
+        _draw_status_summary(layout, context)
+        summary = sync_manager.get_status_summary()
+        pullable = (summary.get("json_modified", 0)
+                    + summary.get("conflict", 0)
+                    + summary.get("orphan", 0))
+        if pullable:
+            batch = layout.row(align=True)
+            batch.operator("gn.sync_import_modified",
+                           text=f"Pull from JSON ({pullable})",
+                           icon='IMPORT')
+        if sync_manager._status_cache or sync_manager.load_report:
+            _draw_changes_list(layout, context)
+        _draw_review(layout, context)
 
 
-# ---------------------------------------------------------------------------
-# Panel 2: Issues List
-# ---------------------------------------------------------------------------
-
-class GN_PT_IssuesPanel(bpy.types.Panel):
-    bl_label = "Sync Issues"
-    bl_idname = "GN_PT_IssuesPanel"
+class GN_PT_TrackPanel(bpy.types.Panel):
+    bl_label = "Track"
+    bl_idname = "GN_PT_TrackPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
-    bl_category = 'GN Tools'
-    bl_order = 4
+    bl_category = 'GNToolkit'
+    bl_order = 1
 
     @classmethod
     def poll(cls, context):
-        metadata = sync_manager.metadata
-        tracked = metadata.get("tracked_groups", {})
-        return bool(tracked)
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon='FILE_REFRESH')
+        return _supported_editor(context)
 
     def draw(self, context):
         layout = self.layout
+        entry = _draw_active_entry(layout, context)
+        layout.separator()
+        layout.label(text="Add more", icon='ADD')
+        row = layout.row(align=True)
+        row.operator("gn.sync_link_all", text="Track all groups...",
+                     icon='FILE_TICK')
+        row = layout.row(align=True)
+        row.operator("gn.sync_link_all_materials",
+                     text="Track all materials...", icon='MATERIAL')
+        row = layout.row(align=True)
+        row.operator("gn.sync_link_all_worlds",
+                     text="Track all worlds...", icon='WORLD')
+        row = layout.row(align=True)
+        row.operator("gn.sync_link_folder", text="Track from folder...",
+                     icon='FILE_FOLDER')
+        row = layout.row(align=True)
+        row.operator("gn.sync_initialize", text="Adopt existing JSON...",
+                     icon='FILE_FOLDER')
+        comp = getattr(context.scene, "compositing_node_group", None)
+        if comp is not None:
+            row = layout.row(align=True)
+            row.operator("gn.sync_link_scene_compositor",
+                         text="Track scene compositor...",
+                         icon=_layout_icon('COMPOSITING', 'NODETREE'))
+        layout.separator()
+        if entry is not None and entry["info"] is not None:
+            stop = layout.operator("gn.sync_unlink",
+                                   text=f"Stop tracking {entry['name']}",
+                                   icon='X')
+            stop.sync_uuid = entry["uid"]
+        layout.operator("gn.sync_unlink_all", text="Stop tracking all...",
+                        icon='X')
+        layout.label(text="Tracking writes the JSON and metadata; "
+                          "Save writes later changes.", icon='INFO')
+
+
+class GN_PT_ExplorePanel(bpy.types.Panel):
+    bl_label = "Explore"
+    bl_idname = "GN_PT_ExplorePanel"
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'GNToolkit'
+    bl_order = 2
+
+    @classmethod
+    def poll(cls, context):
+        return _supported_editor(context)
+
+    def draw(self, context):
+        from . import graph_view as gv
+        layout = self.layout
+        row = layout.row(align=True)
+        row.operator("gn.graph_view", text="Graph view...", icon='NODETREE')
+        clusters = row.operator("gn.graph_view", text="Clusters...",
+                                icon='NODETREE')
+        clusters.mode = 'CLUSTERS'
+        row = layout.row(align=True)
+        row.operator("gn.graph_poster", text="Graph poster...", icon='EXPORT')
+        row.operator("gn.graph_clear", text="Clear graph", icon='X')
+        report = getattr(gv, "last_report", None)
+        if report:
+            unit = "clusters" if report.get("mode") == "CLUSTERS" else "groups"
+            text = (f"{report.get('nodes', 0)} {unit}, "
+                    f"{report.get('links', 0) - report.get('reroutes', 0)} "
+                    "links, "
+                    f"{report.get('reroutes', 0)} routing")
+            if report.get("clipped"):
+                text += f", {report['clipped']} clipped"
+            layout.label(text=text, icon='INFO')
+            if report.get("clipped"):
+                layout.label(text="Graph incomplete: increase the port cap "
+                                  "or use a neighborhood.", icon='ERROR')
+        layout.label(text="Bar marks: ~ edited | J JSON | ! conflict | "
+                          "M missing | F JSON missing", icon='INFO')
         prefs = context.scene.gnt_sync_prefs
+        layout.prop(prefs, "follow_board_selection",
+                    text="Follow board selection")
+        board = _board_selection(context)
+        if board:
+            name, uid = board
+            row = layout.row(align=True)
+            row.label(text=f"Board selection: {name}", icon='NODETREE')
+            op = row.operator("gn.sync_history_open", text="", icon='TIME')
+            op.sync_uuid = uid
+        state = getattr(context.scene, "gnt_history_state", None)
+        if state is not None and state.uid:
+            _draw_history_box(layout, context)
+        else:
+            layout.label(text="Select a row's History or a board bar.",
+                         icon='INFO')
 
-        metadata = sync_manager.metadata
-        tracked = metadata.get("tracked_groups", {})
 
-        if not tracked:
-            layout.label(text="No groups tracked", icon='INFO')
-            return
+class GN_PT_IssuesPanel(bpy.types.Panel):
+    bl_label = "Project Health"
+    bl_idname = "GN_PT_IssuesPanel"
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'GNToolkit'
+    bl_parent_id = "GN_PT_AdvancedPanel"
+    bl_order = 1
+    bl_options = {'DEFAULT_CLOSED'}
 
-        # Project audit (works without a status refresh)
+    @classmethod
+    def poll(cls, context):
+        return (bool(sync_manager.metadata.get("tracked_groups"))
+                and _supported_editor(context))
+
+    def draw(self, context):
+        layout = self.layout
         audit_state = context.scene.gnt_audit_state
         audit_box = layout.box()
-        audit_head = audit_box.row(align=True)
-        audit_head.label(text="Audit", icon='VIEWZOOM')
-        audit_head.operator("gn.audit_project", text="Run", icon='PLAY')
-        audit_head.operator("gn.audit_clear", text="", icon='X')
+        head = audit_box.row(align=True)
+        head.label(text="Project audit", icon='VIEWZOOM')
+        if _audit_busy():
+            done, total = _audit_progress()
+            head.label(text=f"{done}/{total}", icon='TIME')
+            head.operator("gn.cancel_project_audit", text="Cancel", icon='X')
+            audit_box.label(text="Auditing in the background...", icon='INFO')
+            return
+        head.operator("gn.audit_project", text="Run", icon='PLAY')
+        head.operator("gn.audit_clear", text="", icon='X')
         if audit_state.summary:
             audit_box.label(text=audit_state.summary, icon='INFO')
         for item in audit_state.details[:30]:
@@ -904,163 +1027,15 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
         extra = len(audit_state.details) - 30
         if extra > 0:
             audit_box.label(text=f"... and {extra} more", icon='INFO')
-        layout.separator()
 
-        has_cache = bool(sync_manager._status_cache)
-        load_report = sync_manager.load_report
-
-        if not has_cache and not load_report:
-            layout.label(text=f"{len(tracked)} groups tracked", icon='NODETREE')
-            layout.label(text="Statuses not checked yet", icon='INFO')
-            layout.operator("gn.sync_check", text="Check Statuses", icon='FILE_REFRESH')
-            return
-
-        summary = sync_manager.get_status_summary()
-        n_total = sum(v for k, v in summary.items() if k != "ignored")
-        n_synced = summary.get("synced", 0)
-        n_issues = n_total - n_synced + len(sync_manager.load_report)
-        n_ignored = summary.get("ignored", 0)
-
-        header_row = layout.row()
-        header_row.label(text=f"{n_issues} issues", icon='ERROR')
-        if n_ignored:
-            header_row.label(text=f"({n_ignored} ignored)", icon='HIDE_ON')
-
-        untracked_deps = sync_manager.find_untracked_dependencies()
-        if untracked_deps:
-            deps_box = layout.box()
-            deps_box.label(text=f"{len(untracked_deps)} untracked dependency group(s)",
-                           icon='PLUS')
-            for dep in untracked_deps:
-                row = deps_box.row(align=True)
-                row.label(text=f"{dep['child_name']}  (used by {dep['parent_name']})",
-                          icon='NODETREE')
-                track_op = row.operator("gn.sync_track_deps", text="Track",
-                                        icon='LINKED')
-                track_op.group_name = dep["child_name"]
-            deps_box.label(text="Save them before (or with) their parents", icon='INFO')
-
-        layout.separator()
-
-        filters_row1 = layout.row(align=True)
-        filters_row1.prop(prefs, "show_blend_modified", text="Edited", toggle=True, icon='LIGHT')
-        filters_row1.prop(prefs, "show_json_modified", text="In JSON", toggle=True, icon='FILE_REFRESH')
-        filters_row1.prop(prefs, "show_conflict", text="Conflict", toggle=True, icon='ERROR')
-
-        filters_row2 = layout.row(align=True)
-        filters_row2.prop(prefs, "show_orphan", text="Missing", toggle=True, icon='GROUP')
-        filters_row2.prop(prefs, "show_json_missing", text="JSON File", toggle=True, icon='FILE')
-        filters_row2.prop(prefs, "show_ignored", text="Ignored", toggle=True, icon='RESTRICT_VIEW_OFF')
-
-        layout.separator()
-
-        filtered_items = self._build_filtered_list(prefs)
-
-        if not filtered_items:
-            layout.label(text="No issues match current filters", icon='INFO')
-            return
-
-        iss_box = layout.box()
-        iss_head = iss_box.row(align=True)
-        iss_head.prop(prefs, "expand_issues", text="", emboss=False,
-                      icon='DISCLOSURE_TRI_DOWN' if prefs.expand_issues
-                      else 'DISCLOSURE_TRI_RIGHT')
-        iss_head.label(text=f"{len(filtered_items)} group(s) out of sync",
-                       icon='ERROR')
-        if not prefs.expand_issues:
-            layout.separator()
-            layout.operator("gn.sync_check", text="Re-check Issues", icon='FILE_REFRESH')
-            return
-
-        max_rows = 200
-        for uid, blend_name, status, ignored, kind in filtered_items[:max_rows]:
-            box = iss_box.box()
-            icon = STATUS_ICONS.get(status, 'QUESTION')
-            label = STATUS_LABELS.get(status, status.value)
-
-            header = box.row()
-            kind_icon = KIND_ICONS.get(kind)
-            if kind_icon:
-                header.label(text="", icon=kind_icon)
-            header.label(text=blend_name, icon=icon)
-
-            if ignored:
-                header.label(text=label, icon='HIDE_ON')
-                badge = header.row(align=True)
-                badge.enabled = False
-                badge.label(text="IGNORED", icon='RESTRICT_VIEW_ON')
-            else:
-                header.label(text=label)
-
-            actions = box.row(align=True)
-            actions.alignment = 'RIGHT'
-
-            if ignored:
-                actions.operator("gn.sync_unignore", text="Un-ignore", icon='RESTRICT_VIEW_OFF').sync_uuid = uid
-            elif status == SyncStatus.BLEND_MODIFIED:
-                actions.operator("gn.sync_export", text="Save to JSON", icon='EXPORT').sync_uuid = uid
-                actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
-            elif status == SyncStatus.JSON_MODIFIED:
-                actions.operator("gn.sync_import", text="Pull", icon='IMPORT').sync_uuid = uid
-                actions.operator("gn.sync_export", text="Save to JSON", icon='EXPORT').sync_uuid = uid
-                actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
-                box.label(text="The JSON differs from the tracked baseline - "
-                               "Pull applies the JSON, Save keeps the .blend "
-                               "version", icon='INFO')
-            elif status == SyncStatus.CONFLICT:
-                actions.operator("gn.sync_resolve_json", text="Keep JSON", icon='FILE_REFRESH').sync_uuid = uid
-                actions.operator("gn.sync_resolve_blend", text="Keep Blend", icon='LIGHT').sync_uuid = uid
-                actions.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON').sync_uuid = uid
-            elif status == SyncStatus.ORPHAN:
-                actions.operator("gn.sync_import", text="Restore from JSON", icon='IMPORT').sync_uuid = uid
-                actions.operator("gn.sync_unlink", text="Stop Tracking", icon='X').sync_uuid = uid
-            elif status == SyncStatus.JSON_MISSING:
-                actions.operator("gn.sync_export", text="Re-create JSON", icon='EXPORT').sync_uuid = uid
-                actions.operator("gn.sync_unlink", text="Stop Tracking", icon='X').sync_uuid = uid
-
-        hidden = len(filtered_items) - max_rows
-        if hidden > 0:
-            iss_box.label(text=f"…and {hidden} more — narrow down with the filters",
-                          icon='INFO')
-
-        layout.separator()
-        layout.operator("gn.sync_check", text="Refresh Status", icon='FILE_REFRESH')
-
-    def _build_filtered_list(self, prefs):
-        items = []
-        statuses = dict(sync_manager._status_cache)
-        for uid, entry in sync_manager.load_report.items():
-            statuses.setdefault(uid, entry.get("status"))
-        for uid, status in statuses.items():
-            if status == SyncStatus.SYNCED:
-                continue
-
-            ignored = is_ignored(sync_manager.metadata, uid)
-            if ignored and not prefs.show_ignored:
-                continue
-
-            info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
-            blend_name = info.get("blend_name", "?")
-            kind = info.get("kind", "group")
-
-            if status == SyncStatus.BLEND_MODIFIED and not prefs.show_blend_modified:
-                continue
-            if status == SyncStatus.JSON_MODIFIED and not prefs.show_json_modified:
-                continue
-            if status == SyncStatus.CONFLICT and not prefs.show_conflict:
-                continue
-            if status == SyncStatus.ORPHAN and not prefs.show_orphan:
-                continue
-            if status == SyncStatus.JSON_MISSING and not prefs.show_json_missing:
-                continue
-
-            items.append((uid, blend_name, status, ignored, kind))
-
-        items.sort(key=lambda x: (x[3], x[2].value))
-        return items
+        deps = sync_manager.find_untracked_dependencies()
+        if deps:
+            layout.label(text=f"{_count_label(len(deps), 'untracked dependency')}"
+                              " - see Changes", icon='PLUS')
+        else:
+            layout.label(text="No untracked dependencies", icon='CHECKMARK')
 
 
-# ---------------------------------------------------------------------------
 # Project audit (duplicates, JSON health, dependency impact)
 # ---------------------------------------------------------------------------
 
@@ -1197,6 +1172,164 @@ def _audit_add(state, kind: str, text: str) -> None:
     item.text = text
 
 
+_audit_state = {
+    "running": False,
+    "items": [],
+    "index": 0,
+    "records": [],
+    "counts": {},
+    "target": "",
+    "blend_dir": "",
+}
+
+
+def _audit_busy() -> bool:
+    return bool(_audit_state["running"])
+
+
+def _audit_progress() -> tuple[int, int]:
+    return int(_audit_state["index"]), len(_audit_state["items"])
+
+
+def _audit_target(context, metadata, group_name: str) -> str:
+    target = (group_name or "").strip()
+    if target:
+        return target
+    tree = _get_active_tree(context)
+    if tree is not None:
+        uid = find_uuid_for_tree(tree, metadata)
+        if uid:
+            return metadata.get("tracked_groups", {}).get(uid, {}).get(
+                "blend_name", "")
+    return ""
+
+
+def _audit_process(state, items, start, end, records, counts, blend_dir):
+    for uid, info in items[start:end]:
+        name = info.get("blend_name") or uid
+        tree = bpy.data.node_groups.get(name)
+        if tree is not None and group_library_path(tree):
+            counts["linked"] += 1
+            _audit_add(state, "linked",
+                       f"{name} - linked from {group_library_path(tree)} "
+                       "(make it local to track)")
+            continue
+        json_path = resolve_json_path(info.get("json_path", ""), blend_dir)
+        if not json_path or not os.path.isfile(json_path):
+            counts["missing"] += 1
+            _audit_add(state, "missing", f"{name} - file not found")
+            continue
+        kind = info.get("kind", "group")
+        if kind != "group":
+            entry = package_entry(read_json_tolerant(json_path), info)
+            if entry is None:
+                counts["missing"] += 1
+                _audit_add(state, "missing",
+                           f"{name} - {kind} entry not found inside "
+                           f"{os.path.basename(json_path)}")
+            else:
+                records.append({
+                    "name": f"{kind}: {name}",
+                    "hash": canonical_hash_from_json_data(entry)})
+            continue
+        data, err = audit.group_data_from_file(json_path, name)
+        if err == "conflict":
+            counts["conflict"] += 1
+            _audit_add(state, "conflict", f"{name} - git merge markers")
+        elif err == "unreadable":
+            counts["unreadable"] += 1
+            _audit_add(state, "unreadable",
+                       f"{name} - not valid UTF-8/JSON")
+        elif err == "missing-group":
+            counts["missing"] += 1
+            _audit_add(state, "missing",
+                       f"{name} - group not found inside "
+                       f"{os.path.basename(json_path)}")
+        else:
+            records.append({"name": name,
+                            "hash": audit.content_hash_from_json_data(data)})
+
+
+def _audit_finish(state, records, counts, target, metadata):
+    buckets = audit.duplicates_from_records(records)
+    for bucket in buckets:
+        _audit_add(state, "duplicate",
+                   f'{len(bucket["names"])} groups with identical logic: '
+                   + ", ".join(bucket["names"]))
+
+    ext = audit.external_refs(metadata)
+    for entry in ext:
+        _audit_add(state, "external",
+                   f'{entry["name"]} - {len(entry["missing_uuids"])} '
+                   'untracked reference(s)')
+
+    if target:
+        imp = audit.impact(metadata, target)
+        if imp is None:
+            _audit_add(state, "impact", f"{target} - not tracked")
+        else:
+            consumers = []
+            for obj in bpy.data.objects:
+                for mod in obj.modifiers:
+                    if (mod.type == 'NODES'
+                            and mod.node_group is not None
+                            and mod.node_group.name == imp["name"]):
+                        consumers.append(f"{obj.name} ({mod.name})")
+            head = ", ".join(e["name"] for e in imp["direct"][:4])
+            more = len(imp["direct"]) - 4
+            suffix = f" - {head}" if head else ""
+            if more > 0:
+                suffix += f" (+{more} more)"
+            line = (f'{imp["name"]}: {len(imp["direct"])} direct, '
+                    f'{len(imp["transitive"])} total dependents{suffix}')
+            if consumers:
+                extra = len(consumers) - 4
+                line += (f" - used by {len(consumers)} object modifier(s): "
+                         + ", ".join(consumers[:4]))
+                if extra > 0:
+                    line += f" (+{extra} more)"
+            _audit_add(state, "impact", line)
+
+    if not state.details:
+        state.summary = "No findings - project looks healthy"
+    else:
+        state.summary = (
+            f"{_count_label(len(buckets), 'duplicated group')} - "
+            f"{_count_label(len(ext), 'external ref')} - "
+            f"{counts['missing']} missing - {counts['unreadable']} unreadable - "
+            f"{_count_label(counts['conflict'], 'conflict')} - "
+            f"{_count_label(counts['linked'], 'library-linked group')}")
+
+
+def _audit_redraw() -> None:
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+    except Exception:
+        pass
+
+
+def _audit_tick():
+    state = _audit_state
+    if not state["running"]:
+        return None
+    total = len(state["items"])
+    end = min(state["index"] + 10, total)
+    _audit_process(state["scene_state"], state["items"], state["index"], end,
+                   state["records"], state["counts"], state["blend_dir"])
+    state["index"] = end
+    _audit_redraw()
+    if end >= total:
+        _audit_finish(state["scene_state"], state["records"],
+                      state["counts"], state["target"],
+                      sync_manager.metadata)
+        state["running"] = False
+        _audit_redraw()
+        return None
+    return 0.05
+
+
 class GN_OT_AuditProject(bpy.types.Operator):
     """Audit the project: duplicate logic, JSON health, dependency impact."""
 
@@ -1214,120 +1347,61 @@ class GN_OT_AuditProject(bpy.types.Operator):
                     "active node editor tree)")
 
     def execute(self, context):
-        state = context.scene.gnt_audit_state
-        state.summary = ""
-        state.details.clear()
-
+        if _audit_busy():
+            self.report({'WARNING'}, "An audit is already running")
+            return {'CANCELLED'}
+        scene_state = context.scene.gnt_audit_state
+        scene_state.summary = ""
+        scene_state.details.clear()
         metadata = sync_manager.metadata
         tracked = metadata.get("tracked_groups", {})
         if not tracked:
             self.report({'INFO'}, "No tracked groups")
             return {'FINISHED'}
+        target = _audit_target(context, metadata, self.group_name)
+        items = list(tracked.items())
+        _audit_state.update(
+            running=True, items=items, index=0, records=[],
+            counts={"missing": 0, "unreadable": 0, "conflict": 0, "linked": 0},
+            target=target, blend_dir=sync_manager._blend_dir(),
+            scene_state=scene_state)
+        if bpy.app.background:
+            _audit_process(scene_state, items, 0, len(items),
+                           _audit_state["records"], _audit_state["counts"],
+                           _audit_state["blend_dir"])
+            _audit_state["index"] = len(items)
+            _audit_finish(scene_state, _audit_state["records"],
+                          _audit_state["counts"], target, metadata)
+            _audit_state["running"] = False
+            return {'FINISHED'}
+        try:
+            bpy.app.timers.register(_audit_tick, first_interval=0.05,
+                                    persistent=True)
+        except Exception:
+            _audit_process(scene_state, items, 0, len(items),
+                           _audit_state["records"], _audit_state["counts"],
+                           _audit_state["blend_dir"])
+            _audit_state["index"] = len(items)
+            _audit_finish(scene_state, _audit_state["records"],
+                          _audit_state["counts"], target, metadata)
+            _audit_state["running"] = False
+        self.report({'INFO'}, f"Auditing {len(items)} tracked entries...")
+        return {'FINISHED'}
 
-        blend_dir = sync_manager._blend_dir()
-        records = []
-        n_missing = n_unreadable = n_conflict = n_linked = 0
-        for uid, info in tracked.items():
-            name = info.get("blend_name") or uid
-            tree = bpy.data.node_groups.get(name)
-            if tree is not None and group_library_path(tree):
-                n_linked += 1
-                _audit_add(state, "linked",
-                           f"{name} — linked from {group_library_path(tree)} "
-                           "(make it local to track)")
-                continue
-            json_path = resolve_json_path(info.get("json_path", ""), blend_dir)
-            if not json_path or not os.path.isfile(json_path):
-                n_missing += 1
-                _audit_add(state, "missing", f"{name} — file not found")
-                continue
-            kind = info.get("kind", "group")
-            if kind != "group":
-                entry = package_entry(read_json_tolerant(json_path), info)
-                if entry is None:
-                    n_missing += 1
-                    _audit_add(state, "missing",
-                               f"{name} — {kind} entry not found inside "
-                               f"{os.path.basename(json_path)}")
-                else:
-                    records.append({
-                        "name": f"{kind}: {name}",
-                        "hash": canonical_hash_from_json_data(entry)})
-                continue
-            data, err = audit.group_data_from_file(json_path, name)
-            if err == "conflict":
-                n_conflict += 1
-                _audit_add(state, "conflict", f"{name} — git merge markers")
-            elif err == "unreadable":
-                n_unreadable += 1
-                _audit_add(state, "unreadable", f"{name} — not valid UTF-8/JSON")
-            elif err == "missing-group":
-                n_missing += 1
-                _audit_add(state, "missing",
-                           f"{name} — group not found inside "
-                           f"{os.path.basename(json_path)}")
-            else:
-                records.append({"name": name,
-                                "hash": audit.content_hash_from_json_data(data)})
 
-        buckets = audit.duplicates_from_records(records)
-        for b in buckets:
-            _audit_add(state, "duplicate",
-                       f'{len(b["names"])} groups with identical logic: '
-                       + ", ".join(b["names"]))
+class GN_OT_CancelProjectAudit(bpy.types.Operator):
+    """Cancel a running project audit."""
 
-        ext = audit.external_refs(metadata)
-        for e in ext:
-            _audit_add(state, "external",
-                       f'{e["name"]} — {len(e["missing_uuids"])} '
-                       f'untracked reference(s)')
+    bl_idname = "gn.cancel_project_audit"
+    bl_label = "Cancel Audit"
+    bl_options = {'INTERNAL'}
 
-        target = self.group_name.strip()
-        if not target:
-            tree = _get_active_tree(context)
-            if tree is not None:
-                uid = find_uuid_for_tree(tree, metadata)
-                if uid:
-                    target = metadata["tracked_groups"].get(
-                        uid, {}).get("blend_name", "")
-        if target:
-            imp = audit.impact(metadata, target)
-            if imp is None:
-                _audit_add(state, "impact", f"{target} — not tracked")
-            else:
-                consumers = []
-                all_objects = bpy.data.objects
-                for obj in all_objects:
-                    for mod in obj.modifiers:
-                        if (mod.type == 'NODES'
-                                and mod.node_group is not None
-                                and mod.node_group.name == imp["name"]):
-                            consumers.append(f"{obj.name} ({mod.name})")
-                head = ", ".join(e["name"] for e in imp["direct"][:4])
-                more = len(imp["direct"]) - 4
-                suffix = f" — {head}" if head else ""
-                if more > 0:
-                    suffix += f" (+{more} more)"
-                line = (f'{imp["name"]}: {len(imp["direct"])} direct, '
-                        f'{len(imp["transitive"])} total dependents{suffix}')
-                if consumers:
-                    extra = len(consumers) - 4
-                    line += (f" · used by {len(consumers)} object modifier(s): "
-                             + ", ".join(consumers[:4]))
-                    if extra > 0:
-                        line += f" (+{extra} more)"
-                _audit_add(state, "impact", line)
-
-        state.summary = (
-            f'{len(buckets)} duplicate bucket(s) · {len(ext)} external ref(s) '
-            f'· {n_missing} missing · {n_unreadable} unreadable '
-            f'· {n_conflict} conflict(s) · {n_linked} library-linked')
-
-        n_findings = len(state.details)
-        if n_findings:
-            self.report({'WARNING'}, f"Audit: {n_findings} finding(s)")
-        else:
-            self.report({'INFO'}, "Audit: no findings")
+    def execute(self, context):
+        _audit_state["running"] = False
+        state = context.scene.gnt_audit_state
+        state.summary = "Audit cancelled"
+        state.details.clear()
+        _audit_redraw()
         return {'FINISHED'}
 
 
@@ -1339,6 +1413,7 @@ class GN_OT_AuditClear(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
+        _audit_state["running"] = False
         state = context.scene.gnt_audit_state
         state.summary = ""
         state.details.clear()
@@ -1411,6 +1486,9 @@ class GN_OT_SyncResolveBlend(bpy.types.Operator):
                         "Could not write the JSON - check the console/log "
                         "(e.g. unwritable file)")
             return {'CANCELLED'}
+        sync_manager.refresh_cached_statuses({self.sync_uuid})
+        for area in context.screen.areas:
+            area.tag_redraw()
         self.report({'INFO'}, "Conflict resolved - kept the .blend version")
         return {'FINISHED'}
 
@@ -1431,6 +1509,9 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
                         "Could not apply the JSON side - check the console/log "
                         "(library-linked groups must be made local first)")
             return {'CANCELLED'}
+        sync_manager.refresh_cached_statuses({self.sync_uuid})
+        for area in context.screen.areas:
+            area.tag_redraw()
         self.report({'INFO'}, "Conflict resolved - kept the JSON version")
         return {'FINISHED'}
 
@@ -1479,7 +1560,8 @@ class GN_OT_SyncMergeConflict(bpy.types.Operator):
 
 def _merge_custom_value(item):
     if item.value_type == "float":
-        return float(item.value_float)
+        from .codec import _round_float
+        return _round_float(float(item.value_float))
     if item.value_type == "int":
         return int(item.value_int)
     if item.value_type == "bool":
@@ -1567,6 +1649,37 @@ class GN_OT_SyncMergeReportClear(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _focus_board_nodes(names, context) -> None:
+    """Select and frame the marked bars when the GNT Graph is visible."""
+    tree = bpy.data.node_groups.get(GRAPH_TREE_NAME)
+    if tree is None:
+        return
+    selected = False
+    for node in tree.nodes:
+        if (node.type != 'GROUP' or not node.label
+                or node.name.startswith("legend_")):
+            continue
+        hit = _raw_name(node.label) in names
+        node.select = hit
+        selected = selected or hit
+    if not selected:
+        return
+    for area in getattr(context.screen, "areas", []):
+        if area.type != 'NODE_EDITOR':
+            continue
+        if area.spaces.active.node_tree is not tree:
+            continue
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        try:
+            with bpy.context.temp_override(area=area, region=region,
+                                           screen=context.screen,
+                                           window=getattr(context, "window", None)):
+                bpy.ops.node.view_selected()
+        except Exception:
+            pass
+        return
+
+
 def _select_history_revision(context, index) -> None:
     """Mark one revision row and refresh its preview (shared by operators)."""
     state = context.scene.gnt_history_state
@@ -1594,10 +1707,11 @@ def _select_history_revision(context, index) -> None:
             names,
             label=f"HISTORY MODE - {selected.rev} · {selected.date}")
         if marked:
-            note = (f"{marked} group(s) of this file differ in this "
+            note = (f"{_count_label(marked, 'group')} of this file differ in this "
                     "revision - marked on the board")
+            _focus_board_nodes(names, context)
         elif names:
-            note = (f"{len(names)} group(s) differ in this revision "
+            note = (f"{_count_label(len(names), 'group')} differ in this revision "
                     "(none on the current board)")
     else:
         clear_history_diff()
@@ -1638,7 +1752,7 @@ class GN_OT_SyncHistoryOpen(bpy.types.Operator):
             item.subject = rev.get("subject", "")
             item.selected = False
         if state.status == "ok" and len(state.items):
-            state.message = f"{len(state.items)} revision(s)"
+            state.message = _count_label(len(state.items), 'revision')
             _select_history_revision(context, 0)
         from .sync_operators import _tag_ui_redraw
         _tag_ui_redraw(context)
@@ -1716,6 +1830,22 @@ class GN_OT_SyncHistoryRestore(bpy.types.Operator):
 # Panel 2.5: Collaboration (thin git transport)
 # ---------------------------------------------------------------------------
 
+_git_log_cache: dict = {}
+
+
+def _cached_git_log(root, rel_path=None, count=10):
+    """Cached ``git log`` for panel draws (no subprocess on every redraw)."""
+    key = (root, rel_path or "", int(count))
+    if key not in _git_log_cache:
+        from .git_integration import git_log
+        _git_log_cache[key] = git_log(root, rel_path, count)
+    return _git_log_cache[key]
+
+
+def _invalidate_git_log_cache() -> None:
+    _git_log_cache.clear()
+
+
 def _draw_git_log_box(box, entries):
     for e in entries:
         row = box.row(align=True)
@@ -1733,25 +1863,22 @@ def _addon_prefs(context):
 class GN_PT_CollaborationPanel(bpy.types.Panel):
     """Git transport for the tracked JSON files."""
 
-    bl_label = "Collaboration"
+    bl_label = "Git"
     bl_idname = "GN_PT_CollaborationPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
-    bl_category = 'GN Tools'
+    bl_category = 'GNToolkit'
     bl_order = 3
 
     @classmethod
     def poll(cls, context):
-        metadata = sync_manager.metadata
-        tracked = metadata.get("tracked_groups", {})
-        return bool(tracked)
+        return (bool(sync_manager.metadata.get("tracked_groups"))
+                and _supported_editor(context))
 
     def draw(self, context):
         from .git_integration import (
-            get_git_state, ensure_status_job, git_busy, git_log, find_git_repo,
-            active_backend_name,
+            get_git_state, ensure_status_job, git_busy,
         )
-        from . import credentials
 
         layout = self.layout
         prefs = context.scene.gnt_sync_prefs
@@ -1779,11 +1906,16 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                          icon='INFO')
             return
 
+        summary = sync_manager.get_status_summary()
+        n_total = sum(v for k, v in summary.items() if k != "ignored")
+        all_synced = bool(n_total) and summary.get("synced", 0) == n_total
+
         for root, st in sorted(repos.items()):
             box = layout.box()
             head = box.row(align=True)
             if not st.get("ok"):
-                head.label(text=f"Repo: {st.get('name', root)}", icon='ERROR')
+                head.label(text=f"Repository: {st.get('name', root)}",
+                           icon='ERROR')
                 head.label(text=st.get("error", "git status failed"))
                 continue
             if st["tracked_changed"]:
@@ -1792,22 +1924,33 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 icon = 'NETWORK_DRIVE'
             else:
                 icon = 'CHECKMARK'
-            head.label(text=f"Repo: {st['name']}", icon=icon)
+            head.label(text=f"Repository: {st['name']}", icon=icon)
+
             parts = []
             if st["tracked_changed"]:
-                parts.append(f"{len(st['tracked_changed'])} to commit")
+                parts.append(f"{_count_label(len(st['tracked_changed']), 'changed file')}")
             if st["ahead"]:
                 parts.append(f"ahead {st['ahead']}")
             if st["behind"]:
                 parts.append(f"behind {st['behind']}")
-            head.label(text=" · ".join(parts) if parts else "clean")
+            box.label(text=" · ".join(parts) if parts else "Clean",
+                      icon='INFO' if parts else 'CHECKMARK')
+            if st["tracked_changed"] and all_synced:
+                box.label(text="Git sees file changes; GNToolkit is synced "
+                               "with the working JSON", icon='INFO')
+                box.label(text="The JSON may contain uncommitted changes.",
+                          icon='INFO')
+                discard = box.operator("gn.git_discard_layout",
+                                       text="Discard cosmetic-only changes",
+                                       icon='LOOP_BACK')
+                discard.repo = root
 
             actions = box.row(align=True)
             actions.enabled = not busy
-            commit_op = actions.operator("gn.git_commit", text="Git Commit…",
+            commit_op = actions.operator("gn.git_commit", text="Git commit...",
                                          icon='EXPORT')
             commit_op.repo = root
-            sync_op = actions.operator("gn.git_sync", text="Sync Changes",
+            sync_op = actions.operator("gn.git_sync", text="Git sync",
                                        icon='FILE_REFRESH')
             sync_op.repo = root
             reveal_op = actions.operator("gn.git_reveal_repo", text="",
@@ -1827,42 +1970,6 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             layout.label(text="Resolve the conflicts with your Git tooling",
                          icon='INFO')
 
-        addon_prefs = _addon_prefs(context)
-        if addon_prefs is not None:
-            hosts = []
-            for st in repos.values():
-                host = credentials.host_for(st.get("remote_url") or "")
-                if host and host not in hosts:
-                    hosts.append(host)
-            box = layout.box()
-            head = box.row(align=True)
-            head.label(text="Credentials", icon='LOCKED')
-            if hosts:
-                head.label(text="detected: " + ", ".join(hosts))
-            if not (addon_prefs.git_host or "").strip() and hosts:
-                addon_prefs.git_host = hosts[0]
-            box.prop(addon_prefs, "git_host", text="Host")
-            box.prop(addon_prefs, "git_username", text="User")
-            box.prop(addon_prefs, "git_token", text="Token")
-            actions = box.row(align=True)
-            actions.operator("gn.git_save_credentials", text="Save",
-                             icon='CHECKMARK')
-            actions.operator("gn.git_forget_credentials", text="Forget",
-                             icon='TRASH')
-            source = credentials.status_for_host(
-                (addon_prefs.git_host or "").strip())
-            labels = {
-                "vault": "Stored in the OS vault",
-                "preferences": "Stored in Blender preferences (no OS vault)",
-                "session": "In memory for this session",
-                "environment": "Provided by environment variables",
-                "missing": "No token stored for this host",
-            }
-            box.label(text=labels.get(source, source), icon='INFO')
-            if source == "preferences":
-                box.label(text="Warning: the token is stored unencrypted in "
-                               "Blender preferences", icon='ERROR')
-
         if len(repos) == 1:
             repo_box = layout.box()
             repo_head = repo_box.row(align=True)
@@ -1871,8 +1978,10 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                            if prefs.expand_git_repo_log
                            else 'DISCLOSURE_TRI_RIGHT')
             repo_head.label(text="Repository history", icon='TIME')
+            repo_head.operator("gn.git_history_refresh", text="",
+                               icon='FILE_REFRESH')
             if prefs.expand_git_repo_log:
-                entries = git_log(next(iter(repos)), None, 10)
+                entries = _cached_git_log(next(iter(repos)), None, 10)
                 if entries:
                     _draw_git_log_box(repo_box, entries)
                     repo_box.label(text="Shows the last 10 commits (newest first)",
@@ -1880,39 +1989,11 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 else:
                     repo_box.label(text="No commits yet", icon='INFO')
 
-        active = _active_tracked_json(context)
-        if active:
-            tree_name, _json_base, json_path = active
-            root = find_git_repo(json_path)
-            if root:
-                act_box = layout.box()
-                act_head = act_box.row(align=True)
-                act_head.prop(prefs, "expand_git_active_log", text="",
-                              emboss=False,
-                              icon='DISCLOSURE_TRI_DOWN'
-                              if prefs.expand_git_active_log
-                              else 'DISCLOSURE_TRI_RIGHT')
-                act_head.label(text=f"Active: {tree_name} — history",
-                               icon='NODETREE')
-                if prefs.expand_git_active_log:
-                    entries = git_log(root, os.path.relpath(json_path, root), 10)
-                    if entries:
-                        _draw_git_log_box(act_box, entries)
-                        act_box.label(text="Shows the last 10 commits (newest first)",
-                                      icon='INFO')
-                    else:
-                        act_box.label(text="No commits for this file",
-                                      icon='INFO')
-
         layout.separator()
-        engine = active_backend_name()
-        if engine:
-            label = "Engine: Git (system)" if engine == "git" \
-                else "Engine: embedded (dulwich)"
-            layout.label(text=label, icon='INFO')
-        layout.prop(prefs, "fetch_on_load", toggle=True, icon='URL')
-        if addon_prefs is not None:
-            layout.prop(addon_prefs, "network_timeout", text="Network timeout (s)")
+        settings_op = layout.operator("preferences.addon_show",
+                                      text="Credentials & Git settings...",
+                                      icon='PREFERENCES')
+        settings_op.module = __package__
 
 
 # ---------------------------------------------------------------------------
@@ -1972,6 +2053,21 @@ class GN_AddonPrefs(bpy.types.AddonPreferences):
         max=3600,
     )
 
+    check_on_load: bpy.props.BoolProperty(
+        name="Check JSON on open",
+        description="After loading a .blend, compare the JSON hashes in the "
+                    "background and show a notice when files changed outside "
+                    "Blender",
+        default=True,
+    )
+    fetch_on_load: bpy.props.BoolProperty(
+        name="Fetch remotes on open",
+        description="After loading a .blend, contact the Git remotes of the "
+                    "tracked repositories in the background (only when online "
+                    "access is enabled)",
+        default=True,
+    )
+
     git_host: bpy.props.StringProperty(
         name="Host",
         description="Host the credentials apply to (e.g. github.com) — "
@@ -1994,10 +2090,15 @@ class GN_AddonPrefs(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "git_backend")
+        layout.label(text="Git engine", icon='SETTINGS')
+        layout.prop(self, "git_backend", text="")
+        layout.label(text="Network", icon='URL')
         layout.prop(self, "network_timeout")
+        layout.label(text="On file open", icon='FILE_REFRESH')
+        layout.prop(self, "check_on_load")
+        layout.prop(self, "fetch_on_load")
         layout.separator()
-        layout.label(text="Credentials")
+        layout.label(text="Credentials", icon='LOCKED')
         layout.prop(self, "git_host")
         layout.prop(self, "git_username")
         layout.prop(self, "git_token")
@@ -2058,19 +2159,22 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
         description="List the latest commits of the active group's JSON file",
         default=False,
     )
-    check_on_load: bpy.props.BoolProperty(
-        name="Check JSON on open",
-        description="After loading a .blend, compare the JSON hashes in the background "
-                    "and show a notice when files changed outside Blender",
-        default=True,
+    follow_board_selection: bpy.props.BoolProperty(
+        name="Follow board selection",
+        description="Open History automatically when a GNT Graph bar is "
+                    "selected (otherwise use the bar's History button)",
+        default=False,
     )
-    fetch_on_load: bpy.props.BoolProperty(
-        name="Fetch remotes on open",
-        description="After loading a .blend, contact the Git remotes of the tracked "
-                    "repositories in the background (only when online access is enabled)",
-        default=True,
+    expand_change_filters: bpy.props.BoolProperty(
+        name="Show change filters",
+        description="Show the status filters in the Changes list",
+        default=False,
     )
-
+    show_all_changes: bpy.props.BoolProperty(
+        name="Show all changes",
+        description="List every out-of-sync group instead of the first 50",
+        default=False,
+    )
 
 # ---------------------------------------------------------------------------
 # Panel 3: Geometry Validation Issues
@@ -2079,29 +2183,47 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
 class GN_PT_GeometryIssuesPanel(bpy.types.Panel):
     """Panel showing geometry validation issues for tracked groups."""
 
-    bl_label = "Geometry Validation"
+    bl_label = "Geometry Nodes Validation"
     bl_idname = "GN_PT_GeometryIssuesPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
-    bl_category = 'GN Tools'
-    bl_order = 5
+    bl_category = 'GNToolkit'
+    bl_parent_id = "GN_PT_AdvancedPanel"
+    bl_order = 2
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
-        metadata = sync_manager.metadata
-        tracked = metadata.get("tracked_groups", {})
-        return bool(tracked)
+        space = getattr(context, "space_data", None)
+        tree = getattr(space, "node_tree", None)
+        return (bool(sync_manager.metadata.get("tracked_groups"))
+                and getattr(tree, "type", "") == 'GEOMETRY')
 
     def draw_header(self, context):
+        if _validation_busy():
+            done, total = _validation_progress()
+            self.layout.label(text=f"Validating {done}/{total}", icon='TIME')
+            return
+        if not sync_manager.has_geometry_validation_result():
+            self.layout.label(text="Not run", icon='INFO')
+            return
         count = sync_manager.get_geometry_issue_count()
         if count:
             self.layout.label(text=f"({count})", icon='ERROR')
         else:
-            self.layout.label(text="", icon='CHECKMARK')
+            self.layout.label(text="Clean", icon='CHECKMARK')
 
     def draw(self, context):
         layout = self.layout
+        if _validation_busy():
+            done, total = _validation_progress()
+            row = layout.row(align=True)
+            row.label(text=f"Validating {done}/{total}...", icon='TIME')
+            row.operator("gn.cancel_geometry_validation", text="Cancel",
+                         icon='X')
+            layout.label(text="Validation runs in the background; you can "
+                              "close Advanced.", icon='INFO')
+            return
         issues = sync_manager.get_geometry_issues()
 
         # Button to run validation
@@ -2109,15 +2231,14 @@ class GN_PT_GeometryIssuesPanel(bpy.types.Panel):
         row.operator("gn.validate_geometry", text="Validate", icon='VIEWZOOM')
 
         if not issues:
-            has_cache = sync_manager.has_geometry_issues()
-            if has_cache:
+            if sync_manager.has_geometry_validation_result():
                 layout.label(text="No geometry issues found", icon='CHECKMARK')
             else:
                 layout.label(text="Click 'Validate' to check", icon='INFO')
             return
 
         layout.separator()
-        layout.label(text=f"{len(issues)} issue(s) found", icon='ERROR')
+        layout.label(text=f"{_count_label(len(issues), 'issue')} found", icon='ERROR')
         layout.separator()
 
         for issue in issues:
@@ -2143,8 +2264,13 @@ class GN_PT_GeometryIssuesPanel(bpy.types.Panel):
             box.label(text=f"Problem: {issue.details}")
 
             # Recommendation
-            rec_row = box.row()
+            rec_row = box.row(align=True)
             rec_row.label(text=f"Recommendation: {issue.recommendation}", icon='INFO')
+            if issue.sync_uuid and issue.node_name:
+                op = rec_row.operator("gn.validate_focus_issue",
+                                      text="Go to node", icon='VIEWZOOM')
+                op.sync_uuid = issue.sync_uuid
+                op.node_name = issue.node_name
 
             # Available options (if any)
             if issue.available_options:
@@ -2159,6 +2285,140 @@ class GN_PT_GeometryIssuesPanel(bpy.types.Panel):
 # Geometry validation operator
 # ---------------------------------------------------------------------------
 
+class GN_OT_FocusValidationIssue(bpy.types.Operator):
+    """Open the validated group and select the offending node."""
+
+    bl_idname = "gn.validate_focus_issue"
+    bl_label = "Go to Node"
+    bl_description = "Open the group and select the node with this issue"
+    bl_options = {'REGISTER'}
+
+    sync_uuid: bpy.props.StringProperty()
+    node_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        result = bpy.ops.gn.sync_focus_group(sync_uuid=self.sync_uuid)
+        if 'FINISHED' not in result:
+            return result
+        info = sync_manager.metadata.get("tracked_groups", {}).get(
+            self.sync_uuid)
+        tree = resolve_entry_tree(self.sync_uuid, info) if info else None
+        node = tree.nodes.get(self.node_name) if tree is not None else None
+        if node is None:
+            self.report({'WARNING'}, "The node no longer exists")
+            return {'CANCELLED'}
+        for other in tree.nodes:
+            other.select = other == node
+        for area in context.screen.areas:
+            if area.type != 'NODE_EDITOR':
+                continue
+            if area.spaces.active.node_tree is not tree:
+                continue
+            region = next((r for r in area.regions if r.type == 'WINDOW'),
+                          None)
+            try:
+                with bpy.context.temp_override(
+                        area=area, region=region, screen=context.screen,
+                        window=getattr(context, "window", None)):
+                    bpy.ops.node.view_selected()
+            except Exception:
+                pass
+            area.tag_redraw()
+            break
+        return {'FINISHED'}
+
+
+_validation_state = {
+    "running": False,
+    "uids": [],
+    "index": 0,
+    "issues": {},
+    "total": 0,
+}
+
+
+def _validation_busy() -> bool:
+    return bool(_validation_state["running"])
+
+
+def _validation_progress() -> tuple[int, int]:
+    return int(_validation_state["index"]), int(_validation_state["total"])
+
+
+def _validation_redraw() -> None:
+    try:
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+    except Exception:
+        pass
+
+
+def _validation_tick():
+    state = _validation_state
+    if not state["running"]:
+        return None
+    metadata = sync_manager.metadata.get("tracked_groups", {})
+    batch = 2
+    while batch > 0 and state["index"] < state["total"]:
+        uid = state["uids"][state["index"]]
+        info = metadata.get(uid, {})
+        try:
+            issues = validate_tracked_tree(uid, info)
+        except Exception:
+            issues = []
+        if issues:
+            state["issues"][uid] = issues
+        state["index"] += 1
+        batch -= 1
+    sync_manager._geometry_issues_cache = dict(state["issues"])
+    _validation_redraw()
+    if state["index"] >= state["total"]:
+        state["running"] = False
+        sync_manager._geometry_checked = True
+        return None
+    return 0.05
+
+
+def _start_validation() -> int:
+    sync_manager.invalidate_geometry_cache()
+    uids = list(sync_manager.metadata.get("tracked_groups", {}))
+    _validation_state.update(running=True, uids=uids, index=0,
+                             issues={}, total=len(uids))
+    if uids and not bpy.app.background:
+        try:
+            bpy.app.timers.register(_validation_tick, first_interval=0.05,
+                                    persistent=True)
+        except Exception:
+            _run_validation_sync()
+    elif not uids:
+        _validation_state["running"] = False
+        sync_manager._geometry_checked = True
+    return len(uids)
+
+
+def _run_validation_sync() -> int:
+    sync_manager.invalidate_geometry_cache()
+    issues_by_uuid = sync_manager.validate_geometry()
+    _validation_state["running"] = False
+    return sum(len(v) for v in issues_by_uuid.values())
+
+
+class GN_OT_CancelGeometryValidation(bpy.types.Operator):
+    """Cancel a running background validation."""
+
+    bl_idname = "gn.cancel_geometry_validation"
+    bl_label = "Cancel Validation"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        _validation_state["running"] = False
+        sync_manager._geometry_issues_cache.clear()
+        sync_manager._geometry_checked = False
+        _validation_redraw()
+        return {'FINISHED'}
+
+
 class GN_OT_ValidateGeometry(bpy.types.Operator):
     """Run geometry validation on all tracked groups."""
 
@@ -2168,26 +2428,269 @@ class GN_OT_ValidateGeometry(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        sync_manager.invalidate_geometry_cache()
-        issues_by_uuid = sync_manager.validate_geometry()
-
-        total = sum(len(issues) for issues in issues_by_uuid.values())
-        if total:
-            # Build report
-            all_issues = []
-            for issues in issues_by_uuid.values():
-                all_issues.extend(issues)
-            report = format_issue_report(all_issues)
-            self.report({'WARNING'}, f"Validation found {total} issue(s). See console for details.")
-            print(report)
-        else:
-            self.report({'INFO'}, "No geometry issues found")
-
+        if _validation_busy():
+            self.report({'WARNING'}, "Validation is already running")
+            return {'CANCELLED'}
+        if bpy.app.background:
+            total = _run_validation_sync()
+            if total:
+                self.report({'WARNING'},
+                            f"Validation found {_count_label(total, 'issue')} - "
+                            "see Advanced > Geometry Nodes Validation.")
+            else:
+                self.report({'INFO'}, "No geometry issues found")
+            return {'FINISHED'}
+        total = _start_validation()
+        self.report({'INFO'}, f"Validating {total} group(s) in the background...")
         return {'FINISHED'}
 
 
+class GN_OT_GitHistoryRefresh(bpy.types.Operator):
+    """Reload the cached repository history."""
+
+    bl_idname = "gn.git_history_refresh"
+    bl_label = "Refresh Git History"
+    bl_description = "Reload the cached repository history"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        _invalidate_git_log_cache()
+        for area in context.screen.areas:
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
+class GN_OT_SyncImportGroupDialog(bpy.types.Operator):
+    """Modal, wide import picker (replaces the inline sidebar box)."""
+
+    bl_idname = "gn.sync_import_group_dialog"
+    bl_label = "Import Group from JSON"
+    bl_description = "Pick a group and preview its missing dependencies"
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        state = context.scene.gnt_import_state
+        if not state.filepath:
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(
+            self, width=620, confirm_text="Import")
+
+    def draw(self, context):
+        from .sync_operators import (_compute_selection_plan,
+                                     _tracked_elsewhere_notes)
+        state = context.scene.gnt_import_state
+        layout = self.layout
+        layout.label(text=f"Package: {os.path.basename(state.filepath)}",
+                     icon='PACKAGE')
+        layout.label(text=state.filepath, icon='FILE')
+        layout.prop_search(state, "group_name", state, "items", text="Group")
+        if not state.group_name:
+            layout.label(text="Search and select a group to see the plan.",
+                         icon='INFO')
+            return
+        plan = _compute_selection_plan(state)
+        if not plan:
+            layout.label(text="Not found in this package", icon='ERROR')
+            return
+        if plan["existing"]:
+            layout.label(text="Already in the .blend (not touched):",
+                         icon='INFO')
+            for name in plan["existing"]:
+                layout.label(text=f"  {name}",
+                             icon=_picker_item_icon(name, 'CHECKMARK'))
+        if plan["missing"]:
+            layout.label(text="Will be imported:", icon='IMPORT')
+            for name in plan["missing"]:
+                layout.label(text=f"  {name}",
+                             icon=_picker_item_icon(name, 'NODETREE'))
+        if plan["divergent"]:
+            layout.label(text="Differ from package: "
+                              + ", ".join(plan["divergent"]), icon='ERROR')
+        if plan["external"]:
+            layout.label(text="Unconnected refs: "
+                              + ", ".join(plan["external"]),
+                         icon=STATUS_WARNING_ICON)
+        notes = _tracked_elsewhere_notes(state, plan)
+        for name, other_pkg in notes:
+            layout.label(text=f"{name} - tracked to: {other_pkg} "
+                              "(not this package)", icon='INFO')
+        row = layout.row(align=True)
+        track_row = row.row()
+        track_row.enabled = bool(bpy.data.node_groups.get(state.group_name))
+        op = track_row.operator("gn.sync_import_group_track",
+                                text="Track to JSON...", icon='LINKED')
+        op.group_name = state.group_name
+        layout.label(text="Existing groups are never touched - only missing "
+                          "dependencies are imported.", icon='INFO')
+
+    def execute(self, context):
+        state = context.scene.gnt_import_state
+        if not (state.filepath and state.group_name):
+            self.report({'ERROR'}, "Select a group first")
+            return {'CANCELLED'}
+        result = bpy.ops.gn.sync_import_group(
+            filepath=state.filepath, group_name=state.group_name)
+        state.open = False
+        return result
+
+
+class GN_OT_SyncFocusGroup(bpy.types.Operator):
+    """Open the entry's node tree in a node editor."""
+
+    bl_idname = "gn.sync_focus_group"
+    bl_label = "Go to Item"
+    bl_description = "Open this group/material/world tree in a node editor"
+    bl_options = {'REGISTER'}
+
+    sync_uuid: bpy.props.StringProperty()
+
+    def execute(self, context):
+        info = sync_manager.metadata.get("tracked_groups", {}).get(
+            self.sync_uuid)
+        if info is None:
+            self.report({'ERROR'}, "This entry is no longer tracked")
+            return {'CANCELLED'}
+        tree = resolve_entry_tree(self.sync_uuid, info)
+        if tree is None:
+            self.report({'ERROR'}, "The node tree was not found")
+            return {'CANCELLED'}
+        wanted = {
+            "GEOMETRY": 'GeometryNodeTree',
+            "SHADER": 'ShaderNodeTree',
+            "COMPOSITING": 'CompositorNodeTree',
+        }.get(getattr(tree, "type", ""), 'GeometryNodeTree')
+        for area in context.screen.areas:
+            if area.type != 'NODE_EDITOR':
+                continue
+            space = area.spaces.active
+            try:
+                space.tree_type = wanted
+                space.pin = True
+                space.path.clear()
+                space.path.start(tree)
+            except Exception:
+                try:
+                    space.node_tree = tree
+                except Exception:
+                    continue
+            area.tag_redraw()
+            return {'FINISHED'}
+        self.report({'ERROR'}, "No Node Editor area is available")
+        return {'CANCELLED'}
+
+
+class GN_OT_ChangeMenu(bpy.types.Operator):
+    """Per-row action menu for the unified Changes list."""
+
+    bl_idname = "gn.sync_change_menu"
+    bl_label = "Change Actions"
+    bl_options = {'INTERNAL'}
+
+    sync_uuid: bpy.props.StringProperty()
+
+    def invoke(self, context, event):
+        if not self.sync_uuid:
+            return {'CANCELLED'}
+        info = sync_manager.metadata.get("tracked_groups", {}).get(
+            self.sync_uuid)
+        if info is None:
+            return {'CANCELLED'}
+        context.window_manager.popup_menu(
+            self._draw_menu, title=info.get("blend_name", "Actions"))
+        return {'FINISHED'}
+
+    def _draw_menu(self, menu, context):
+        layout = menu.layout
+        uid = self.sync_uuid
+        info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+        status = sync_manager.check_status(uid)
+        ignored = is_ignored(sync_manager.metadata, uid)
+        saveable = status in (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT,
+                              SyncStatus.JSON_MODIFIED, SyncStatus.JSON_MISSING)
+        pullable = status in (SyncStatus.JSON_MODIFIED, SyncStatus.CONFLICT,
+                              SyncStatus.ORPHAN)
+        discardable = status in (SyncStatus.BLEND_MODIFIED,
+                                 SyncStatus.CONFLICT)
+
+        op = layout.operator("gn.sync_focus_group", text="Go to item",
+                             icon='VIEWZOOM')
+        op.sync_uuid = uid
+        op = layout.operator("gn.sync_history_open", text="History",
+                             icon='TIME')
+        op.sync_uuid = uid
+        layout.separator()
+
+        if ignored:
+            op = layout.operator("gn.sync_unignore", text="Un-ignore",
+                                 icon='RESTRICT_VIEW_OFF')
+            op.sync_uuid = uid
+            return
+
+        if saveable:
+            op = layout.operator(
+                "gn.sync_change_unmark" if sync_manager.is_staged(uid)
+                else "gn.sync_change_mark",
+                text="Unmark" if sync_manager.is_staged(uid) else "Mark",
+                icon='REMOVE' if sync_manager.is_staged(uid) else 'CHECKMARK')
+            op.sync_uuid = uid
+        if saveable:
+            op = layout.operator("gn.sync_export", text="Save to JSON",
+                                 icon='EXPORT')
+            op.sync_uuid = uid
+        if pullable:
+            op = layout.operator("gn.sync_import", text="Pull from JSON",
+                                 icon='IMPORT')
+            op.sync_uuid = uid
+        if status == SyncStatus.CONFLICT:
+            op = layout.operator("gn.sync_merge_conflict",
+                                 text="Merge with JSON",
+                                 icon='AUTOMERGE_ON')
+            op.sync_uuid = uid
+            op = layout.operator("gn.sync_resolve_json", text="Keep JSON",
+                                 icon='FILE_REFRESH')
+            op.sync_uuid = uid
+            op = layout.operator("gn.sync_resolve_blend", text="Keep Blend",
+                                 icon='LIGHT')
+            op.sync_uuid = uid
+        if discardable:
+            layout.separator()
+            op = layout.operator("gn.sync_discard_local",
+                                 text="Discard local changes",
+                                 icon='LOOP_BACK')
+            op.sync_uuid = uid
+        layout.separator()
+        op = layout.operator("gn.sync_ignore", text="Ignore", icon='HIDE_ON')
+        op.sync_uuid = uid
+        if status in (SyncStatus.ORPHAN, SyncStatus.JSON_MISSING):
+            op = layout.operator("gn.sync_unlink", text="Stop tracking",
+                                 icon='X')
+            op.sync_uuid = uid
+
+
+class GN_MT_SaveMenu(bpy.types.Menu):
+    """Secondary save actions (never the primary path)."""
+
+    bl_idname = "GN_MT_SaveMenu"
+    bl_label = "Save"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("gn.sync_export_all",
+                        text="Save all tracked groups...", icon='FILE_TICK')
+
+
 classes = (
+    GN_MT_SaveMenu,
+    GN_OT_GitHistoryRefresh,
+    GN_OT_SyncImportGroupDialog,
+    GN_OT_SyncFocusGroup,
+    GN_OT_FocusValidationIssue,
+    GN_OT_CancelGeometryValidation,
+    GN_OT_CancelProjectAudit,
+    GN_OT_ChangeMenu,
     GN_PT_SyncPanel,
+    GN_PT_TrackPanel,
+    GN_PT_ExplorePanel,
     GN_PT_IssuesPanel,
     GN_PT_CollaborationPanel,
     GN_PT_GeometryIssuesPanel,

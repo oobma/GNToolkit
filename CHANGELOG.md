@@ -4,7 +4,92 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **UX overhaul: task-based panels and one Changes list.** The sidebar
+  category is now **GNToolkit** and is split into **Sync** (daily status,
+  Changes, review), **Track** (context-aware tracking setup), **Explore**
+  (graph + JSON history), **Git** (repository actions) and **Advanced**
+  (Package, Project Health, Geometry Nodes Validation). The old
+  `JSON Package` / `Sync Issues` / `Geometry Validation` top-level panels
+  are gone.
+- **One save button that respects marks.** `Save selected (N)` when rows
+  are marked, `Save changed (N)` otherwise; `Save all` is a secondary menu
+  action with confirmation. The `Changes` list gains status filters, a
+  50-row default cap with **Show all**, primary Save/Pull/Merge actions,
+  a Mark/Unmark button and a `...` menu (Go to item, History, Ignore,
+  Discard, Keep JSON/Blend).
+- **Collaboration settings moved to Add-on Preferences.** Credentials,
+  Git engine, network timeout, **Check JSON on open** and **Fetch remotes
+  on open** are no longer permanent forms/toggles in the Git panel; the
+  panel shows repository state, actions, conflict warnings and cached
+  history only. Git history is cached (no `git log`/keyring call on every
+  redraw), and a one-click **Credentials & Git settings...** button opens
+  the add-on preferences.
+- **Context-aware Active entry.** Materials and worlds now show their
+  Active row and History too; tracking follows the editor (Track
+  group/material/world/scene compositor), instead of offering every
+  tracking action in every editor. Texture node trees no longer expose
+  invalid actions.
+- **History lives in Explore.** The time machine moved out of Sync;
+  selecting a revision focuses the marked board bars and the board legend
+  gains a **History diff** entry. **Follow board selection** defaults to
+  off and can be enabled in Explore.
+- **Reroutes are no longer semantic noise.** Semantic diffs, commit
+  messages and JSON history bypass `NodeReroute` pass-throughs, so adding
+  or moving a reroute does not appear as a node change; the graph board
+  draws routing nodes in neutral grey and shows the last graph report
+  (including clipped links) in Explore.
+- **Project Health and validation.** The old Sync Issues list is replaced
+  by **Project Health** (audit, dependencies, no duplicate changes list);
+  **Geometry Nodes Validation** reports `Not run` / `Clean` / `N issues`,
+  no longer claims a clean result before running and no longer sends the
+  user to the console.
+- **Git panel explains Git vs GNT counts.** When Git sees modified files
+  but the sync layer is synced, the row says that the JSON may contain
+  uncommitted changes (Git compares the worktree with HEAD; GNToolkit
+  compares the .blend with the working JSON). A verified
+  **Discard cosmetic-only changes** action restores files only when the
+  diff contains no semantic changes.
+- Pluralization and label consistency across statuses, filters, history
+  and validation (`1 issue`, `4 revisions`, `No changes`, etc.).
+- New/updated tests: live-verification fixes (Pull/Keep/Merge cache,
+  external conflict and re-elevation, custom float rounding, Refresh
+  pump), smoke, Changes list, audit UI, time machine, graph view,
+  shader/embedded context, reroute diff and UI icons; full release gate
+  passed (5.1/5.2/4.2).
+
 ### Added
+
+- **Background project audit.** `Advanced > Project Health > Run` now
+  processes the tracked JSONs in batches, shows `Auditing x/y`, keeps
+  Blender responsive and offers Cancel; headless runs stay synchronous.
+- **Cluster view for the project graph.** `Graph View` gains a
+  **Clusters (by prefix)** scope: one bar per name prefix with the
+  aggregated status and edges, plus a `Clusters...` button in Explore.
+  This complements the >250-group warning for whole-project boards.
+- **Track All Worlds.** The Track panel can now track every local world
+  with a node tree into one master JSON (same contract as Track All
+  Materials: `worlds` section, curated settings, owner UUID).
+- **Background geometry validation with Cancel.** `Validate` processes
+  two groups per UI tick, shows `Validating x/y...`, keeps Blender
+  responsive and exposes a Cancel button; headless runs stay synchronous.
+  Each issue gains **Go to node**, which opens the group and selects the
+  offending node.
+- **Status marks on the graph board.** Non-synced bars are prefixed with
+  `~` (edited), `J` (changed in JSON), `!` (conflict), `M` (missing) or
+  `F` (JSON missing), so the board does not rely on color alone; Explore
+  documents the marks.
+- **Verified cosmetic-only discard (Git).** When Git reports changed
+  tracked JSONs but GNToolkit is synced, the panel explains that Git
+  compares worktree vs HEAD; **Discard cosmetic-only changes** restores
+  files from HEAD only after verifying that every changed entry is
+  semantically equal, and aborts on any node/value change.
+- **Sidecar UUID warning.** The Sync panel warns when metadata entries
+  match local owners only by name and have different UUIDs, recommending
+  restoring the matching sidecar or re-tracking. Automatic repair was
+  deliberately not shipped: a test with a sidecar from another state
+  could associate a local group with the wrong JSON.
 
 - **Compositor node groups are tracked, exported, imported and merged.**
   `COMPOSITING` (`CompositorNodeTree`) joins Geometry Nodes and Shader in
@@ -57,6 +142,28 @@ All notable changes to this project are documented in this file.
   (`cross-version`, 24 checks).
 
 ### Fixed
+
+- **Status no longer goes stale after Pull, Keep JSON/Keep Blend and Merge.**
+  The affected uid is re-checked immediately (and stale `load_report`
+  entries are cleared), so the row disappears and the count is right
+  without pressing Refresh. Batch Pull does the same for every pending
+  entry.
+- **External JSON changes are checked against the .blend side.** If the
+  JSON changed and the group also has local edits, the panel now shows
+  **Conflict** instead of `In JSON` (and keeps re-elevating a previously
+  flagged `In JSON` after a local edit), so a single Pull can never
+  silently overwrite local work.
+- **Merge Custom numeric values use the canonical float rounding.** A
+  custom `9.2` is stored as `9.2`, not the raw float32
+  `9.199999809...`, so the merged JSON and the rebuilt tree hash match
+  and the entry ends Synced.
+- **Refresh Status reports progress and can be cancelled.** Two groups
+  per batch, a persistent timer, a fixed `Checking x/y...` row with
+  Cancel and a native progress bar; the first large batch no longer
+  freezes the UI.
+- **Partial status caches are visible.** The summary uses the real
+  tracked total from metadata and shows “Status partially checked”
+  instead of undercounting after a reload or a targeted refresh.
 
 - **Blender 5.2 dynamic item sockets rebuild faithfully.** Three node
   families whose sockets are created from dynamic item collections lost

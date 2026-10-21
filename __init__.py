@@ -29,7 +29,7 @@ bl_info = {
     "author": "oobma",
     "version": (0, 4, 1),
     "blender": (4, 2, 0),
-    "location": "Node Editor > Sidebar > GN Tools",
+    "location": "Node Editor > Sidebar > GNToolkit",
     "description": "Version control with semantics for Blender node trees.",
     "category": "Node",
 }
@@ -59,7 +59,8 @@ def _on_load_post(scene):
             from .git_integration import queue_status_refresh
             from .sync_operators import ensure_git_pump, git_online_allowed
             try:
-                prefs = bpy.context.scene.gnt_sync_prefs
+                entry = bpy.context.preferences.addons.get(__package__)
+                prefs = entry.preferences if entry is not None else None
                 fetch = bool(getattr(prefs, "fetch_on_load", True))
             except Exception:
                 fetch = True
@@ -77,7 +78,8 @@ def _schedule_json_check():
     try:
         if not sync_manager.metadata.get("tracked_groups"):
             return
-        prefs = bpy.context.scene.gnt_sync_prefs
+        entry = bpy.context.preferences.addons.get(__package__)
+        prefs = entry.preferences if entry is not None else None
         if not getattr(prefs, "check_on_load", True):
             return
     except Exception:

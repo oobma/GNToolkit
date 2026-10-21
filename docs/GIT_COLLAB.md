@@ -7,19 +7,18 @@ them. Two ways to work:
 1. **Manual flow** — any Git client (CLI, GitHub Desktop, VS Code, …);
    the addon only writes/reads the JSON files. Zero addon features
    required.
-2. **Collaboration panel** — the addon's thin Git transport: repository
-   state, commit, sync and history from inside the Sync area of the
-   GN Tools tab.
+2. **Git panel** — the addon's thin Git transport: repository
+   state, commit, sync and history from inside the GNToolkit tab.
 
 Git remains the authority for history and merging — the addon never
 reimplements version control and never runs its own server. With a
 system `git`, credentials are whatever you already configured for it
 (credential manager, SSH keys, …); the bundled engine resolves per-host
-credentials itself — entered from the panel, kept in the OS keyring.
+credentials itself — entered in Add-on Preferences, kept in the OS keyring.
 
 ## Local repo or web repo — same thing
 
-The addon never talks to a server: **Sync Changes** and the manual flow
+The addon never talks to a server: **Git sync** and the manual flow
 just run `git pull` / `git push` against whatever remote the repository
 is configured with. That remote can be:
 
@@ -50,7 +49,7 @@ changes.
    sign in to your host once, authorize, and Windows stores the token —
    every later sync works without asking.
 
-From then on, the Collaboration panel's **Sync Changes** pushes and pulls
+From then on, the Git panel's **Git sync** pushes and pulls
 from the remote exactly as it did from the local one, and your
 colleagues just run:
 
@@ -84,11 +83,11 @@ git clone https://github.com/<user>/<repo>.git
 2. **Publish**: `git init`, `git add NodeGroups Modifiers`,
    `git commit -m "initial"`, add a remote, `git push`.
 3. **On the other machine**: clone the repository, open (or create) the
-   .blend, run **Import Package/Folder** (pick any JSON inside the
-   folder) and **Track Folder…** to start tracking every group against
+   .blend, run **Advanced → Package → Import package/folder...** (pick any JSON inside the
+   folder) and **Track from folder…** to start tracking every group against
    its own file.
 4. **Daily loop**:
-   - Edit groups in the .blend → **Commit** (addon writes the JSONs) →
+   - Edit groups in the .blend → **Save changed** (addon writes the JSONs) →
      `git commit` / `git push` (your client).
    - A colleague pushed changes → `git pull` (your client) → the addon's
      **check on open** notices the JSON files changed ("N group(s) out
@@ -103,20 +102,20 @@ git clone https://github.com/<user>/<repo>.git
    .blend edits against changed JSON — the **Merge** action resolves it
    per item; see “Merging conflicted groups” below.)
 
-## Collaboration panel (thin git transport)
+## Git panel (thin git transport)
 
-Appears in the **GN Tools** tab when groups are tracked. Nothing extra
+Appears in the **GNToolkit** tab when groups are tracked. Nothing extra
 needs to be installed — the transport engine is bundled with the add-on
 (pure Python); the GitHub build additionally uses a system `git`
 automatically when one is present.
 
 - **One row per repository** detected from the tracked JSONs (a project
   can point at several repos), showing: the repository name, the state
-  — `clean`, `N to commit`, `ahead N`, `behind N` — and the buttons:
+  — `clean`, `N changed`, `ahead N`, `behind N` — and the buttons:
   - **Git Commit…** — opens a dialog for the commit message; stages
     **only the tracked JSON files that changed** (never `git add -A`,
     never the .blend) and commits locally.
-  - **Sync Changes** — pull, then push. When the local
+  - **Git sync** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
      (values, modifier inputs, Geometry Nodes/Shader/Compositor groups,
@@ -139,13 +138,18 @@ automatically when one is present.
   - **Reveal** — open the repository folder in the file explorer.
 - **Merge conflicts**: when a tracked JSON carries conflict markers the
   panel shows a warning row per file with a Reveal button.
+- **Cosmetic-only discard**: when Git reports changed tracked JSONs while
+  GNToolkit is synced, the panel explains that Git compares worktree vs
+  HEAD. **Discard cosmetic-only changes** verifies semantic equality
+  against HEAD and restores the files only when no node/value changed;
+  otherwise it aborts and reports the file.
 - **History** (collapsible):
   - *Repository history* — the latest commits of the repository (shown
     when exactly one repository is detected).
-  - *Active: <group> — history* — the latest commits of the active
-    group's JSON file.
+  - *JSON history* — the entry's revisions live in **Explore** (History);
+    the Git panel no longer duplicates a per-file Git log.
 - `ahead`/`behind` reflect the last fetch (like `git status -b`) — run
-  **Sync Changes** (or a fetch in your client) to see the latest remote
+  **Git sync** (or a fetch in your client) to see the latest remote
   state.
 - Git operations never freeze Blender: the row buttons are disabled
   while a job is queued/active and the final result (committed files,
@@ -154,12 +158,12 @@ automatically when one is present.
 
 ### Network access and the on-open fetch
 
-- **Fetch remotes on open** (Collaboration panel, **on by default**):
+- **Fetch remotes on open** (Add-on Preferences, **on by default**):
   opening a .blend fetches every tracked repository's remote in the
   background so the row's `behind N` reflects the shared repository
-  without touching **Sync Changes** first. Offline setups and repositories
+  without touching **Git sync** first. Offline setups and repositories
   without a remote are a silent no-op.
-- The on-open fetch and **Sync Changes** (pull/push) require Blender's
+- The on-open fetch and **Git sync** (pull/push) require Blender's
   *Allow Online Access* setting. Without it the operations report that
   online access is disabled instead of failing halfway.
 - The local `git status` refresh, **Git Commit…** and the whole manual
@@ -172,9 +176,9 @@ automatically when one is present.
   in your client.
 - The .blend is never committed or pushed by the addon.
 - `Git Commit…` commits to the **local** repository; sharing happens
-  with **Sync Changes** (push) or your client.
+  with **Git sync** (push) or your client.
 
-## Merging conflicted groups (Sync panel)
+## Merging conflicted groups (Changes list)
 
 When a tracked group changed on **both sides** — you edited the group in
 the .blend and the JSON changed (a pull, a checkout, another tool) — the

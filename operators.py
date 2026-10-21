@@ -920,23 +920,57 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         return {'PASS_THROUGH'}
 
 
+class GN_PT_AdvancedPanel(bpy.types.Panel):
+    """Parent for one-shot tools (package, project health, validation)."""
+
+    bl_label = "Advanced"
+    bl_idname = "GN_PT_AdvancedPanel"
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'GNToolkit'
+    bl_order = 4
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        space = getattr(context, "space_data", None)
+        tree = getattr(space, "node_tree", None)
+        return is_trackable_tree_type(getattr(tree, "type", ""))
+
+    def draw(self, context):
+        self.layout.label(
+            text="One-shot tools: package, project health and validation",
+            icon='INFO')
+
+
 class GN_PT_MainPanel(bpy.types.Panel):
-    bl_label = "JSON Package"
+    bl_label = "Package"
     bl_idname = "GN_PT_MainPanel"
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
-    bl_category = 'GN Tools'
+    bl_category = 'GNToolkit'
+    bl_parent_id = "GN_PT_AdvancedPanel"
+    bl_order = 0
+    bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="Snapshot", icon='TOOL_SETTINGS')
+        layout.label(text="One-shot export/import of the whole project.",
+                     icon='INFO')
+        layout.label(text="This does not create tracking; use Track for that.")
 
         row = layout.row(align=True)
-        row.operator("gn.export_batch_json", text="Export Package", icon='EXPORT')
-        row.operator("gn.import_batch_json", text="Import Package/Folder", icon='IMPORT')
+        row.operator("gn.export_batch_json", text="Export package...",
+                     icon='EXPORT')
+        row.operator("gn.import_batch_json", text="Import package/folder...",
+                     icon='IMPORT')
 
         row2 = layout.row(align=True)
-        row2.operator("gn.export_active_json", text="Export Active Group", icon='FILE_BACKUP')
+        row2.operator("gn.export_active_json", text="Export active group...",
+                      icon='FILE_BACKUP')
+        row2.operator("gn.sync_import_group_file", text="Import one group...",
+                      icon='IMPORT')
 
 
-classes = (GN_OT_ExportBatchJSON, GN_OT_ExportActiveJSON, GN_OT_ImportBatchJSON, GN_PT_MainPanel)
+classes = (GN_OT_ExportBatchJSON, GN_OT_ExportActiveJSON,
+           GN_OT_ImportBatchJSON, GN_PT_AdvancedPanel, GN_PT_MainPanel)

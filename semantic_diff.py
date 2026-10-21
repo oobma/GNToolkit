@@ -222,11 +222,74 @@ def _diff_group_links(a: dict, b: dict) -> tuple:
             relinked, len(internal))
 
 
+def _bypass_reroutes(data: dict) -> dict:
+    """Copy *data* with NodeReroute pass-throughs removed.
+
+    Reroute nodes are cosmetic routing helpers: their input is reconnected
+    to every consumer of their output. A change that only adds, removes or
+    moves a reroute therefore becomes a no-op.
+    """
+    nodes = data.get("nodes")
+    links = data.get("links")
+    if not isinstance(nodes, list) or not isinstance(links, list):
+        return data
+    reroutes = {n.get("name") for n in nodes
+                if n.get("type") == "NodeReroute"}
+    if not reroutes:
+        return data
+
+    incoming = {}
+    outgoing = {}
+    for link in links:
+        if link.get("to_node") in reroutes:
+            incoming[link.get("to_node")] = link
+        if link.get("from_node") in reroutes:
+            outgoing.setdefault(link.get("from_node"), []).append(link)
+
+    new_links = [l for l in links
+                 if l.get("from_node") not in reroutes
+                 and l.get("to_node") not in reroutes]
+    for reroute, outs in outgoing.items():
+        source = incoming.get(reroute)
+        guard = set()
+        while (source is not None
+               and source.get("from_node") in reroutes
+               and source.get("from_node") not in guard):
+            guard.add(source.get("from_node"))
+            source = incoming.get(source.get("from_node"))
+        if source is None:
+            continue
+        for out in outs:
+            if out.get("to_node") in reroutes:
+                continue
+            copied = dict(out)
+            copied["from_node"] = source.get("from_node")
+            copied["from_socket_id"] = source.get("from_socket_id")
+            copied["from_socket_name"] = source.get("from_socket_name")
+            new_links.append(copied)
+
+    out = dict(data)
+    out["nodes"] = [n for n in nodes if n.get("name") not in reroutes]
+    out["links"] = new_links
+    return out
+
+
+def canonical_hash_ignoring_reroutes(data: dict) -> str:
+    """Canonical hash with reroute nodes bypassed (history/diff only)."""
+    from .hash_utils import canonical_hash_from_json_data
+    if not isinstance(data, dict):
+        return canonical_hash_from_json_data(data)
+    return canonical_hash_from_json_data(_bypass_reroutes(data))
+
+
 def compare_groups(a: dict, b: dict) -> dict | None:
     """Structured semantic difference between two group versions.
 
-    Returns None when nothing changed (layout-only moves do not count).
+    Returns None when nothing changed (layout-only moves and reroutes do
+    not count).
     """
+    a = _bypass_reroutes(a)
+    b = _bypass_reroutes(b)
     interface = _diff_interface(a, b)
     added, removed, changed, moved = _diff_group_nodes(a, b)
     new_links, gone_links, relinked, internal = _diff_group_links(a, b)

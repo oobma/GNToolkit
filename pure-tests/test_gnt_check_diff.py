@@ -107,7 +107,19 @@ check("1: interface addition reported", "+ input 'Demo Id'" in out,
       out.splitlines()[1] if len(out.splitlines()) > 1 else out)
 check("2: added nodes grouped by prefix", "Demo_* (3)" in out)
 check("3: input value change reported", "Value = 1 -> 1.5" in out, out)
-check("4: re-link detected", "Links re-linked (1)" in out)
+check("4: reroute insertion is not a re-link", "Links re-linked" not in out,
+      out)
+
+d = copy.deepcopy(a)
+d["links"] = [{"from_node": "Math.001", "from_socket_id": "Value",
+               "from_socket_name": "Value", "to_node": "Math.001",
+               "to_socket_id": "Value", "to_socket_name": "Value"}]
+path_d = os.path.join(work, "d.json")
+with open(path_d, "w", encoding="utf-8") as f:
+    json.dump(d, f)
+code_relink, out_relink = run_diff(path_a, path_d)
+check("4b: true re-link detected", "Links re-linked (1)" in out_relink,
+      out_relink)
 
 code_same, out_same = run_diff(path_a, path_a)
 check("5: identical versions report no changes",
@@ -163,7 +175,8 @@ else:
     text_git = out_git.getvalue()
     check("8: git revisions supported (--repo/--subdir)",
           code_git == 0 and "Demo Id" in text_git
-          and "re-linked" in text_git,
+          and "Nodes added" in text_git
+          and "re-linked" not in text_git,
           text_git.strip().splitlines()[0] if text_git else "")
 
     out_err = io.StringIO()

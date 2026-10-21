@@ -30,7 +30,7 @@ STATUS_LABELS: dict = {
     "json_modified": "Changed in JSON",
     "conflict": "Conflict",
     "orphan": "Missing in blend",
-    "json_missing": "JSON file missing",
+    "json_missing": "JSON missing",
     "untracked": "Untracked",
 }
 

@@ -75,6 +75,8 @@ class ValidationIssue:
     available_options: list[str] = field(default_factory=list)
     tree_name: str = ""
     """Name of the node tree where the issue was found."""
+    sync_uuid: str = ""
+    """UUID of the tracked entry (for Go to node)."""
 
     def summary(self) -> str:
         """One-line summary for UI display."""
@@ -429,6 +431,21 @@ def validate_node_tree(node_tree, mesh=None, _visited=None, _is_top_level=True) 
     return issues
 
 
+def validate_tracked_tree(uuid_str: str, info: dict) -> list[ValidationIssue]:
+    """Validate one tracked entry; issues carry its UUID."""
+    from .sync_metadata import find_tree_by_uuid
+
+    blend_name = info.get("blend_name", "")
+    tree = find_tree_by_uuid(blend_name, uuid_str)
+    if tree is None:
+        return []
+    mesh = get_mesh_from_node_tree(tree)
+    issues = validate_node_tree(tree, mesh)
+    for issue in issues:
+        issue.sync_uuid = uuid_str
+    return issues
+
+
 def validate_all_tracked_trees() -> dict[str, list[ValidationIssue]]:
     """Validate all tracked node trees via the sync manager.
 
@@ -436,20 +453,11 @@ def validate_all_tracked_trees() -> dict[str, list[ValidationIssue]]:
         Dict mapping UUID to list of issues found.
     """
     from .sync_manager import sync_manager
-    from .sync_metadata import find_tree_by_uuid
 
     all_issues: dict[str, list[ValidationIssue]] = {}
 
     for uuid_str, info in sync_manager.metadata.get("tracked_groups", {}).items():
-        blend_name = info.get("blend_name", "")
-        tree = find_tree_by_uuid(blend_name, uuid_str)
-
-        if tree is None:
-            continue
-
-        mesh = get_mesh_from_node_tree(tree)
-        issues = validate_node_tree(tree, mesh)
-
+        issues = validate_tracked_tree(uuid_str, info)
         if issues:
             all_issues[uuid_str] = issues
 

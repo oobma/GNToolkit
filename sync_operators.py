@@ -489,6 +489,17 @@ class GN_OT_SyncImport(bpy.types.Operator):
 
         tracker = sync_manager.import_from_json(self.sync_uuid, context)
         sync_manager.save()
+        if not tracker.error_count:
+            info = sync_manager.metadata.get("tracked_groups", {}).get(
+                self.sync_uuid, {})
+            json_path = info.get("json_path", "")
+            affected = {self.sync_uuid}
+            if json_path:
+                for uid, other in sync_manager.metadata.get(
+                        "tracked_groups", {}).items():
+                    if other.get("json_path", "") == json_path:
+                        affected.add(uid)
+            sync_manager.refresh_cached_statuses(affected)
         # Force UI redraw so issue disappears immediately
         for area in context.screen.areas:
             area.tag_redraw()
@@ -555,13 +566,13 @@ class GN_OT_SyncExport(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 def _change_rows() -> dict:
-    """Build the Changes list: out-of-sync tracked groups (ignored ones
-    excluded) plus untracked dependency groups.
+    """Build the Changes list: out-of-sync tracked groups plus deps.
 
     Reads the cached statuses only (no recompute); prunes the staged set
     so it never carries groups that left the list.  Returns
-    ``{"rows": [...], "deps": [...], "ignored": n}`` where each row has
-    ``uid/name/status/saveable/pullable/discardable/staged``.
+    ``{"rows": [...], "ignored_rows": [...], "deps": [...],
+    "ignored": n}``.  Every row carries ``uid/name/status/saveable/
+    pullable/discardable/staged/ignored``.
     """
     from .sync_metadata import is_ignored
     statuses = dict(sync_manager._status_cache)
@@ -572,34 +583,47 @@ def _change_rows() -> dict:
     pullable = (SyncStatus.JSON_MODIFIED, SyncStatus.CONFLICT,
                 SyncStatus.ORPHAN)
     discardable = (SyncStatus.BLEND_MODIFIED, SyncStatus.CONFLICT)
+    priority = {
+        SyncStatus.CONFLICT: 0,
+        SyncStatus.BLEND_MODIFIED: 1,
+        SyncStatus.JSON_MODIFIED: 2,
+        SyncStatus.JSON_MISSING: 3,
+        SyncStatus.ORPHAN: 4,
+        SyncStatus.UNTRACKED: 5,
+    }
     rows = []
-    ignored = 0
+    ignored_rows = []
     for uid, status in statuses.items():
         if status == SyncStatus.SYNCED:
             continue
-        if is_ignored(sync_manager.metadata, uid):
-            ignored += 1
-            continue
         info = sync_manager.metadata.get("tracked_groups", {}).get(uid, {})
+        ignored = is_ignored(sync_manager.metadata, uid)
         tree = resolve_entry_tree(uid, info)
-        rows.append({
+        row = {
             "uid": uid,
             "name": info.get("blend_name", "?"),
             "kind": info.get("kind", "group"),
             "status": status,
-            "saveable": status in saveable,
-            "pullable": status in pullable,
-            "discardable": status in discardable,
-            "mergeable": (status == SyncStatus.CONFLICT
-                          and info.get("kind", "group") == "group"),
+            "ignored": ignored,
+            "saveable": status in saveable and not ignored,
+            "pullable": status in pullable and not ignored,
+            "discardable": status in discardable and not ignored,
+            "mergeable": status == SyncStatus.CONFLICT and not ignored,
             "staged": sync_manager.is_staged(uid),
             "animated": bool(tree is not None and tree_has_animation(tree)),
-        })
-    rows.sort(key=lambda r: (r["status"].value, r["name"]))
+        }
+        if ignored:
+            ignored_rows.append(row)
+        else:
+            rows.append(row)
+    sort_key = lambda r: (priority.get(r["status"], 9), r["name"])
+    rows.sort(key=sort_key)
+    ignored_rows.sort(key=sort_key)
     sync_manager.prune_staged(r["uid"] for r in rows if r["saveable"])
     deps = [{"name": d["child_name"], "parent": d["parent_name"]}
             for d in sync_manager.find_untracked_dependencies()]
-    return {"rows": rows, "deps": deps, "ignored": ignored}
+    return {"rows": rows, "ignored_rows": ignored_rows, "deps": deps,
+            "ignored": len(ignored_rows)}
 
 
 def _tag_ui_redraw(context):
@@ -763,7 +787,9 @@ class GN_OT_GraphView(bpy.types.Operator):
         name="Scope",
         items=(('NEIGHBORHOOD', "Around a group",
                 "The selected/active group and its dependencies/dependents"),
-               ('PROJECT', "Whole project", "Every tracked group")),
+               ('PROJECT', "Whole project", "Every tracked group"),
+               ('CLUSTERS', "Clusters (by prefix)",
+                "One bar per name prefix; aggregated status and edges")),
         default='NEIGHBORHOOD',
     )
     hops: bpy.props.IntProperty(name="Hops", default=2, min=1, max=6)
@@ -779,6 +805,14 @@ class GN_OT_GraphView(bpy.types.Operator):
         col.prop(self, "mode")
         if self.mode == 'NEIGHBORHOOD':
             col.prop(self, "hops")
+        elif self.mode == 'PROJECT':
+            n = len(sync_manager.metadata.get("tracked_groups", {}))
+            if n > 250:
+                col.label(text=f"{n} groups: the project board may be hard to "
+                               "read; use Around a group or Clusters.", icon='INFO')
+        else:
+            col.label(text="Cluster view: one bar per name prefix, aggregated "
+                           "status and edges.", icon='INFO')
         col.prop(self, "include_externals")
 
     def execute(self, context):
@@ -1025,13 +1059,47 @@ class GN_OT_SyncCheck(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 _check_pump_handle = None
+_check_progress_active = False
+
+
+def _check_progress_begin():
+    global _check_progress_active
+    if bpy.app.background or _check_progress_active:
+        return
+    try:
+        total = sync_manager.check_progress()[1]
+        if total:
+            bpy.context.window_manager.progress_begin(0, total)
+            _check_progress_active = True
+    except Exception:
+        pass
+
+
+def _check_progress_step(done):
+    if bpy.app.background or not _check_progress_active:
+        return
+    try:
+        bpy.context.window_manager.progress_update(done)
+    except Exception:
+        pass
+
+
+def _check_progress_end():
+    global _check_progress_active
+    if not _check_progress_active:
+        return
+    try:
+        bpy.context.window_manager.progress_end()
+    except Exception:
+        pass
+    _check_progress_active = False
 
 
 def ensure_check_pump():
     global _check_pump_handle
     if _check_pump_handle is not None:
         return
-    handle = bpy.app.timers.register(_check_pump_tick, first_interval=0.05)
+    handle = bpy.app.timers.register(_check_pump_tick, first_interval=0.05, persistent=True)
     if handle is None:
         # No timers in this context (background/script): run synchronously
         # so the caller still gets a complete result.
@@ -1043,6 +1111,7 @@ def ensure_check_pump():
             pass
         return
     _check_pump_handle = handle
+    _check_progress_begin()
 
 
 def stop_check_pump():
@@ -1053,21 +1122,41 @@ def stop_check_pump():
         except Exception:
             pass
         _check_pump_handle = None
+    _check_progress_end()
     sync_manager.cancel_check_all()
+
+
+class GN_OT_CancelSyncCheck(bpy.types.Operator):
+    """Cancel the running status check and clear the partial cache."""
+
+    bl_idname = "gn.sync_cancel_check"
+    bl_label = "Cancel Status Check"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        stop_check_pump()
+        sync_manager.invalidate_cache()
+        for area in context.screen.areas:
+            area.tag_redraw()
+        self.report({'INFO'}, "Status check cancelled")
+        return {'FINISHED'}
 
 
 def _check_pump_tick():
     global _check_pump_handle
     try:
-        done, total = sync_manager.step_check_all(20)
+        done, total = sync_manager.step_check_all(2)
     except Exception:
         sync_manager.cancel_check_all()
         _check_pump_handle = None
+        _check_progress_end()
         return None
     if total and done < total:
+        _check_progress_step(done)
         _tag_git_redraw()
         return 0.05
     _check_pump_handle = None
+    _check_progress_end()
     statuses = sync_manager._status_cache
     n_synced = sum(1 for s in statuses.values() if s == SyncStatus.SYNCED)
     n_issues = len(statuses) - n_synced
@@ -1230,6 +1319,11 @@ def handle_git_job_done(kind, payload, result):
                 f"Git commit failed: {result.get('detail', 'unknown error')}",
                 duration=10.0)
         queue_status_refresh()
+        try:
+            from .sync_ui import _invalidate_git_log_cache
+            _invalidate_git_log_cache()
+        except Exception:
+            pass
         _tag_git_redraw()
         return
     if kind == "sync":
@@ -1270,7 +1364,103 @@ def handle_git_job_done(kind, payload, result):
             _show_status_message(
                 f"Git sync failed: {detail}", duration=10.0)
         queue_status_refresh()
+        try:
+            from .sync_ui import _invalidate_git_log_cache
+            _invalidate_git_log_cache()
+        except Exception:
+            pass
         _tag_git_redraw()
+
+
+def _json_semantically_equal(a, b) -> bool:
+    """True when two JSON payloads differ only in layout/cosmetic data."""
+    import json
+    from .hash_utils import canonical_hash_from_json_data
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    if isinstance(a.get("node_groups"), dict) or isinstance(b.get("node_groups"), dict):
+        ag = a.get("node_groups") or {}
+        bg = b.get("node_groups") or {}
+        if set(ag) != set(bg):
+            return False
+        for name in ag:
+            if canonical_hash_from_json_data(ag[name]) != canonical_hash_from_json_data(bg[name]):
+                return False
+        for key in ("modifiers", "materials", "worlds"):
+            if json.dumps(a.get(key), sort_keys=True) != json.dumps(b.get(key), sort_keys=True):
+                return False
+        return True
+    if "nodes" in a or "nodes" in b:
+        return canonical_hash_from_json_data(a) == canonical_hash_from_json_data(b)
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+class GN_OT_GitDiscardLayout(bpy.types.Operator):
+    """Restore tracked JSON files from HEAD when the diff is layout-only."""
+
+    bl_idname = "gn.git_discard_layout"
+    bl_label = "Discard Cosmetic-only Changes"
+    bl_description = ("Restore the changed tracked JSON files from HEAD when "
+                      "their only differences are cosmetic (layout) data")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    repo: StringProperty(name="Repository")
+
+    def invoke(self, context, event):
+        from .git_integration import get_git_state
+        st = get_git_state().get(self.repo) or {}
+        files = st.get("tracked_changed") or []
+        if not files:
+            self.report({'INFO'}, "No changed tracked JSON files")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_confirm(
+            self, event,
+            title="Discard cosmetic-only changes?",
+            message=(f"Restore {len(files)} JSON file(s) from HEAD? "
+                     "No semantic content will be lost."),
+            confirm_text="Discard")
+
+    def execute(self, context):
+        import json
+        from .file_utils import write_file_bytes
+        from .git_integration import (get_git_state, invalidate_git_state,
+                                      queue_status_refresh, read_blob_at)
+        st = get_git_state().get(self.repo)
+        if not st or not st.get("ok"):
+            self.report({'ERROR'}, "Repository state is unavailable")
+            return {'CANCELLED'}
+        files = st.get("tracked_changed") or []
+        if not files:
+            self.report({'INFO'}, "No changed tracked JSON files")
+            return {'CANCELLED'}
+        root = self.repo
+        pending = []
+        for rel in files:
+            head = read_blob_at(root, "HEAD", rel)
+            if head is None:
+                self.report({'ERROR'}, f"Cannot read HEAD:{rel}")
+                return {'CANCELLED'}
+            try:
+                head_data = json.loads(head.decode("utf-8-sig"))
+                with open(os.path.join(root, rel), "rb") as fh:
+                    current_data = json.loads(fh.read().decode("utf-8-sig"))
+            except Exception:
+                self.report({'ERROR'}, f"Not valid JSON: {rel}")
+                return {'CANCELLED'}
+            if not _json_semantically_equal(head_data, current_data):
+                self.report({'ERROR'},
+                            f"{rel} has semantic changes; commit or review it "
+                            "before discarding layout")
+                return {'CANCELLED'}
+            pending.append((rel, head))
+        for rel, head in pending:
+            write_file_bytes(os.path.join(root, rel), head)
+        invalidate_git_state()
+        queue_status_refresh()
+        sync_manager.invalidate_cache()
+        self.report({'INFO'},
+                    f"Restored {len(pending)} layout-only JSON file(s) from HEAD")
+        return {'FINISHED'}
 
 
 class GN_OT_GitCommit(bpy.types.Operator):
@@ -1609,6 +1799,73 @@ class GN_OT_SyncLinkAllMaterials(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, f"Batch link failed: {e}")
             return {'CANCELLED'}
         msg = (f"Tracking {result['linked']} material(s), "
+               f"{result['skipped']} already tracked, "
+               f"{result['errors']} errors")
+        if result.get("linked_skipped"):
+            msg += (f", {result['linked_skipped']} library-linked skipped - "
+                    "make them local to track")
+        self.report({'INFO'}, msg)
+        _refresh_after_sync_change(context)
+        return {'FINISHED'}
+
+
+def _mass_counts_link_all_worlds() -> dict:
+    worlds = [w for w in bpy.data.worlds
+              if getattr(w, "use_nodes", False) and w.node_tree is not None]
+    linked = sum(1 for w in worlds if w.library is not None)
+    tracked = sum(1 for _uid, info in
+                  sync_manager.metadata.get("tracked_groups", {}).items()
+                  if info.get("kind") == "world")
+    return {"total": len(worlds), "linked": linked, "tracked": tracked}
+
+
+class GN_OT_SyncLinkAllWorlds(bpy.types.Operator, ExportHelper):
+    bl_idname = "gn.sync_link_all_worlds"
+    bl_label = "Track All Worlds"
+    bl_description = ("Track every world with a node tree, writing one master "
+                      "JSON from the current .blend - the addon CREATES the "
+                      "JSON here (first save)")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        counts = _mass_counts_link_all_worlds()
+        if not self.filepath:
+            stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "file"
+            base = sync_manager._blend_dir() or os.getcwd()
+            self.filepath = os.path.join(base, f"{stem}_worlds.json")
+        if counts["total"] - counts["linked"] <= 1:
+            return super().invoke(context, event)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def draw(self, context):
+        layout = self.layout
+        counts = _mass_counts_link_all_worlds()
+        layout.label(text=f"Track {counts['total'] - counts['linked']} world(s)?",
+                     icon='WORLD')
+        col = layout.column(align=True)
+        col.label(text=f"Worlds with nodes: {counts['total']}")
+        if counts["linked"]:
+            col.label(text=f"Library-linked, skipped: {counts['linked']}",
+                      icon='LINK_BLEND')
+        col.label(text=f"Already tracked (re-written): {counts['tracked']}")
+        layout.separator()
+        layout.prop(self, "filepath")
+        layout.label(text="Versions each world's node tree plus its curated "
+                          "settings", icon='INFO')
+
+    def execute(self, context):
+        if self.filepath and not self.filepath.lower().endswith(".json"):
+            self.filepath += ".json"
+        try:
+            result = sync_manager.link_all_worlds(self.filepath, context)
+            sync_manager.save()
+        except Exception as e:
+            self.report({'ERROR'}, f"Batch link failed: {e}")
+            return {'CANCELLED'}
+        msg = (f"Tracking {result['linked']} world(s), "
                f"{result['skipped']} already tracked, "
                f"{result['errors']} errors")
         if result.get("linked_skipped"):
@@ -1979,8 +2236,12 @@ class GN_OT_SyncImportModified(bpy.types.Operator):
 
         context.window_manager.progress_begin(0, len(tracked))
         try:
+            pending = {uid for uid, status in sync_manager._status_cache.items()
+                       if status != SyncStatus.SYNCED}
+            pending.update(sync_manager.load_report)
             result = sync_manager.import_all_modified(context)
             sync_manager.save()
+            sync_manager.refresh_cached_statuses(pending)
             context.window_manager.progress_end()
             _set_failed_imports(context.scene, result.get("failures", []))
             # Force UI redraw so issues disappear immediately
@@ -2609,9 +2870,10 @@ class GN_OT_SyncImportGroupFile(bpy.types.Operator, ImportHelper):
                                 f"'{os.path.basename(self.filepath)}' is not valid JSON")
                 return {'CANCELLED'}
         _selection_plan_cache.clear()
-        _ensure_picker_pump()
-        for area in context.screen.areas:
-            area.tag_redraw()
+        if (not bpy.app.background
+                and getattr(context, "window", None) is not None
+                and getattr(context, "screen", None) is not None):
+            bpy.ops.gn.sync_import_group_dialog('INVOKE_DEFAULT')
         return {'FINISHED'}
 
 
@@ -2806,6 +3068,7 @@ classes = (
     GN_OT_SyncLinkMaterial,
     GN_OT_SyncLinkWorld,
     GN_OT_SyncLinkAllMaterials,
+    GN_OT_SyncLinkAllWorlds,
     GN_OT_SyncUnlink,
     GN_OT_SyncUnlinkAll,
     GN_OT_SyncImport,
@@ -2819,6 +3082,7 @@ classes = (
     GN_OT_SyncIgnore,
     GN_OT_SyncUnignore,
     GN_OT_SyncCheck,
+    GN_OT_CancelSyncCheck,
     GN_OT_SyncTrackDeps,
     GN_OT_SyncLinkAll,
     GN_OT_SyncLinkFolder,
@@ -2834,6 +3098,7 @@ classes = (
     GN_OT_SyncImportGroupFile,
     GN_OT_SyncImportGroupTrack,
     GN_OT_SyncImportGroupClose,
+    GN_OT_GitDiscardLayout,
     GN_OT_GitCommit,
     GN_OT_GitSync,
     GN_OT_RevealRepo,
