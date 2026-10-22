@@ -3,7 +3,7 @@
 This template lives in the repository (it is never shipped inside the
 extension zip). The workflow downloads `gnt_check.py` from a **tagged
 release** of this repository, so the pinned tag matters: it must be the tag
-of the add-on release your team uses — below it is pinned to `v0.4.1`, the
+of the add-on release your team uses — below it is pinned to `v0.4.2`, the
 current release. The commands are stable between tags, but coverage can
 grow; check the release notes for the tag you pin.
 
@@ -69,15 +69,14 @@ item differently, or changed the structure differently); `0` with a
 cleanly.
 The structure itself is never guessed: it is adopted whole from the side
 that changed it — only a both-sides-differs situation is a conflict.
-Merge coverage depends on the pinned tag: in `v0.4.1` it is Geometry
-Nodes group trees, and other group tree types are reported as notices.
-A newer tag may add Shader, Compositor, materials and worlds; check the
-release notes for the tag you pin. Notices do not fail the preview
-(`--strict` makes them exit `1`). Unreadable JSON in any side is a hard
-error (`2`).
+In `v0.4.2` the merge covers Geometry Nodes, Shader and Compositor group
+trees plus materials and worlds per entry. Other tree types are reported
+as notices; notices do not fail the preview (`--strict` makes them exit
+`1`). Coverage can grow between tags; check the release notes for the
+tag you pin. Unreadable JSON in any side is a hard error (`2`).
 
 This command needs a release whose checker includes it — the pin used
-above (`v0.4.1`) includes it; older pins predate it.
+above (`v0.4.2`) includes it; older pins predate it.
 
 ## Example — hosted CI workflow (GitHub Actions)
 
@@ -106,9 +105,9 @@ jobs:
 
       - name: Fetch GNToolkit (pinned to the addon tag)
         run: |
-          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.4.1.zip
+          curl -fsSL -o gnt.zip https://github.com/oobma/GNToolkit/archive/refs/tags/v0.4.2.zip
           unzip -q gnt.zip
-          mv GNToolkit-0.4.1 gnt
+          mv GNToolkit-0.4.2 gnt
 
       - name: JSON-side status check
         run: python gnt/gnt_check.py NodeGroups --baseline project.blend.gntsync --strict

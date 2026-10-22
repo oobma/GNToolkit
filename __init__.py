@@ -27,7 +27,7 @@ from .sync_manager import sync_manager, SyncStatus
 bl_info = {
     "name": "GNToolkit",
     "author": "oobma",
-    "version": (0, 4, 1),
+    "version": (0, 4, 2),
     "blender": (4, 2, 0),
     "location": "Node Editor > Sidebar > GNToolkit",
     "description": "Version control with semantics for Blender node trees.",

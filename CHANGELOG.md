@@ -4,20 +4,7 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-
-- **The history box kept an obsolete "Pull to rebuild" note** after a
-  successful Pull (individual or batch) or Keep JSON; it now switches to
-  Ready with `Pulled`/`Kept JSON - the .blend matches the JSON`.
-- **Track Group could fail silently.** Registering an operator subclass
-  after its base leaves the base without a Python class on Blender
-  4.2/5.1/5.2 (`gn.sync_link` returned FINISHED without tracking). The
-  compositor operator is now registered before the group operator.
-- **The disposable graph board could be tracked and exported.** The
-  `GNT Graph` board and its `GNT Graph Port N` helper trees no longer
-  count for Track All, cannot be tracked (Track Group or API) and are
-  omitted from package/active exports; they also no longer appear as the
-  Active entry when the board is open.
+## [0.4.2] - 2026-10-22
 
 ### Changed
 
@@ -163,6 +150,18 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **The history box kept an obsolete "Pull to rebuild" note** after a
+  successful Pull (individual or batch) or Keep JSON; it now switches to
+  Ready with `Pulled`/`Kept JSON - the .blend matches the JSON`.
+- **Track Group could fail silently.** Registering an operator subclass
+  after its base leaves the base without a Python class on Blender
+  4.2/5.1/5.2 (`gn.sync_link` returned FINISHED without tracking). The
+  compositor operator is now registered before the group operator.
+- **The disposable graph board could be tracked and exported.** The
+  `GNT Graph` board and its `GNT Graph Port N` helper trees no longer
+  count for Track All, cannot be tracked (Track Group or API) and are
+  omitted from package/active exports; they also no longer appear as the
+  Active entry when the board is open.
 - **Status no longer goes stale after Pull, Keep JSON/Keep Blend and Merge.**
   The affected uid is re-checked immediately (and stale `load_report`
   entries are cleared), so the row disappears and the count is right

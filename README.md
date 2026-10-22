@@ -12,10 +12,8 @@ plus the Shader Editor's materials and worlds, are supported.
 ![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
 ![pure tests](https://github.com/oobma/GNToolkit/actions/workflows/pure-tests.yml/badge.svg)
 
-<sub>This page documents the development branch. The latest release is
-[v0.4.1](https://github.com/oobma/GNToolkit/releases); features listed
-under `[Unreleased]` in the [changelog](CHANGELOG.md) may not be in that
-release yet.</sub>
+<sub>The latest release is
+[v0.4.2](https://github.com/oobma/GNToolkit/releases).</sub>
 
 ![The GNToolkit sidebar in Blender's Node Editor - Sync, Track, Explore,
 Git and Advanced](docs/images/sync-panel.png)
