@@ -157,8 +157,9 @@ def main():
     if out_path:
         saved = out_path if out_path.lower().endswith(".blend") else out_path + ".blend"
         print(f"[OK] master saved to {os.path.abspath(saved)}")
-        print("[INFO] open it and use 'Track from Existing JSON' / 'Track All' "
-              "to start versioning")
+        print("[INFO] open it and use 'Track from folder...' (or "
+              "'Track from Existing JSON' for a single package) to start "
+              "versioning")
 
     sys.exit(1 if (result["errors"] or result["failed"]) else 0)
 

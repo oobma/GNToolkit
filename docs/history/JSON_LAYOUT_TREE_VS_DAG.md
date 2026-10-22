@@ -1,5 +1,9 @@
 # JSON Layout Architecture: Tree vs DAG
 
+> **Historical design note (2026-09).** Not current user documentation.
+> The current folder/package behavior is in [../MANUAL.md](../MANUAL.md)
+> and [../JSON_FORMAT.md](../JSON_FORMAT.md).
+
 Technical report on the feasibility of a dependency-based folder layout for
 the GNToolkit JSON storage, compared with the current unified-package model.
 

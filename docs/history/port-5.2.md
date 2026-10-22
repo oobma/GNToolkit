@@ -1,5 +1,10 @@
 # GNToolkit — Blender 5.2 LTS port research
 
+> **Historical engineering note (2026-08).** Not current user
+> documentation. Current compatibility is in
+> [../COMPATIBILITY.md](../COMPATIBILITY.md). Counts below are frozen at
+> the date of each update.
+
 Status: **PORTED — published in GNToolkit 0.2.2.** The same code runs
 the headless suites on Blender 5.1.1 and 5.2.0 LTS, including the
 new-node E2E for the 25 new instantiable 5.2 node classes and every GN

@@ -1,769 +1,187 @@
 # GNToolkit
 
-**Version control with semantics for Blender node trees.**
+**Version your node groups like code - inside Blender.**
 
-Node groups are serialized into deterministic JSON files — the DNA, or
-source of truth — while the .blend stays your working cache (RNA).
-GNToolkit watches both sides: canonical change detection, per-group sync
-statuses, dependency-aware import and a save/pull/conflict loop that
-plugs into Git, all from inside Blender. Geometry Nodes, Shader and
-Compositor node groups, plus the Shader Editor's materials and worlds,
-are supported.
-
-The status layer also runs **headless** through `gnt_check.py`
-(`gnt_check.py` and `scripts/` are GitHub repository tools — they are not
-part of the extension package): the JSON side is pure Python, so the same
-canonical hashes the addon uses in Blender can be checked without opening
-it — `python gnt_check.py <folder> --baseline <project>.gntsync` reports
-every synced/changed/missing group in seconds. Use it in a git hook, a CI
-pipeline or a release gate.
+GNToolkit turns node groups into deterministic JSON: the reviewable
+source of truth, while the `.blend` stays your working file. See what
+changed, save or pull per entry, browse history and resolve conflicts
+without leaving Blender. Geometry Nodes, Shader and Compositor groups,
+plus the Shader Editor's materials and worlds, are supported.
 
 ![Blender](https://img.shields.io/badge/Blender-4.2%E2%80%935.2-orange)
 ![License](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
 ![pure tests](https://github.com/oobma/GNToolkit/actions/workflows/pure-tests.yml/badge.svg)
 
-![The GNToolkit sidebar in Blender's Geometry Nodes editor - Sync,
-Track, Explore, Git and Advanced](docs/images/sync-panel.png)
+<sub>This page documents the development branch. The latest release is
+[v0.4.1](https://github.com/oobma/GNToolkit/releases); features listed
+under `[Unreleased]` in the [changelog](CHANGELOG.md) may not be in that
+release yet.</sub>
 
-## Why this exists
-
-- `.blend` files are binary: no diffs, no review, no merge. Node groups
-  change invisibly between saves, and "which one is the latest?" is a
-  guess.
-- Snapshot exporters answer *"how do I move a node tree out of / into
-  Blender?"* — but they stop there. Nothing tells you whether the JSON
-  still matches the .blend, what depends on what, or whose version wins.
-- GNToolkit adds the missing layer: a git-style working model for node
-  groups, inside Blender.
-
-## What makes it different
-
-1. **Change detection that ignores cosmetic noise.** Canonical SHA-256
-   hashes ignore node positions and creation order — moving a node is
-   not a change, editing a value is. That is what makes the per-group
-   statuses trustworthy: **Synced · Edited locally · Changed in JSON ·
-   Conflict · Missing in blend · Untracked · JSON missing**.
-2. **It tracks a project graph, not a snapshot.** Dependencies are
-   resolved transitively on export and import (rebuilt dependency-first),
-   and the tracked layer covers node groups, modifiers and their use on
-   objects — not just isolated trees.
-3. **A collaboration loop inside Blender.** Track, save, pull and
-   resolve conflicts per group, with a bundled Git transport that stages
-   only the tracked JSONs — a sync that finds a diverged branch merges
-   those files per item and never touches anything else.
-
-## Not just another exporter
-
-| | JSON export/import tools | GNToolkit |
-|---|---|---|
-| Question they answer | "How do I move a node tree out of / into Blender?" | "Is my .blend in sync with the project's JSON — and what changed?" |
-| Change detection | None (a snapshot is a snapshot) | Canonical hash per group — cosmetic moves produce no false positives |
-| Dependencies | Captured at export time | Tracked graph: transitive closure, dependency-first rebuild, reverse edges |
-| Project layer | Node trees | Node trees + modifiers + object usage |
-| State | None | Synced / Edited locally / Changed in JSON / Conflict / Missing / ... |
-| Environment | Blender | Blender **and** plain Python — headless checks in CI/hooks |
-| Git | Share files | Save and pull JSON with a VS Code-style changes list, resolve conflicts, bundled Git transport |
-
-Snapshot tools are great at moving and sharing groups; GNToolkit answers
-the question that comes after: *is the project versioned, and in sync?*
+![The GNToolkit sidebar in Blender's Node Editor - Sync, Track, Explore,
+Git and Advanced](docs/images/sync-panel.png)
 
 ## Who it's for
 
-- Solo artists and developers with a Geometry Nodes- or shader-heavy
-  project who want undo, history and reviewable diffs for their node
-  setups.
-- Teams that share node-group projects through a git repository —
-  JSON diffs are reviewable, the .blend is never merged.
-- Anyone building a reusable library of node groups that needs to be
+- **Solo artists and TAs** with a Geometry Nodes- or shader-heavy project
+  who want history and reviewable diffs for their node setups.
+- **Teams** that share node-group projects through Git - JSON diffs are
+  reviewable, the `.blend` is never merged.
+- **Anyone building a reusable library** of node groups that needs to be
   tracked, documented and shared as plain files.
 
-## Headless checks — no Blender required
+If you build pipelines, jump to [Automation and CI](#automation-and-ci);
+the technical reference lives in [docs/AUTOMATION.md](docs/AUTOMATION.md).
 
-The JSON side of GNToolkit is pure Python (no `bpy`), so status checks can
-run anywhere a Python interpreter exists:
+## Install
+
+Every install is an extension (Blender 4.2+):
+
+1. **From the platform (recommended):** in Blender, **Edit >
+   Preferences > Get Extensions**, search for **GNToolkit** and press
+   **Install**. It is enabled automatically.
+2. **Offline / manual:** download the **`GNToolkit-<version>-github.zip`**
+   asset from the [Releases page](https://github.com/oobma/GNToolkit/releases),
+   then **Edit > Preferences > Extensions > ⌄ > Install from Disk...**.
+
+Open the Node Editor and find the **GNToolkit** tab in the sidebar (`N`).
+
+The platform box bundles the collaboration engine. The GitHub box is the
+same extension plus an optional system-Git engine. Upgrading from a
+pre-0.4.0 manual install? Remove the old `scripts/addons/GNToolkit`
+folder - the extension and the old layout cannot coexist.
+
+## Your first project in 3 steps
+
+1. **Track.** Save the `.blend`, then **Track > Track all groups...** and
+   choose where the master JSON will live. Every trackable node group
+   gets a UUID and is written into that JSON.
+   - Already have a folder export? Use **Track from folder...**.
+   - Already have a package? Use **Track from Existing JSON** (read
+     only).
+   - Materials, worlds and the scene compositor have their own **Track**
+     buttons in the **Track** panel.
+2. **Work normally.** Edit in the `.blend`, then press **Refresh
+   Status**. The **Changes** list shows what diverged, with a 50-row
+   default cap and **Show all**.
+3. **Save or pull.** Use **Save selected (N)** / **Save changed (N)** to
+   write the `.blend` edits into the JSON, or **Pull from JSON** to bring
+   JSON changes into the `.blend`. Conflicts offer **Keep JSON**, **Keep
+   Blend** or **Merge**.
+
+The sidecar `<project>.blend.gntsync` records tracking state; it is
+saved automatically with the project.
+
+### What the statuses mean
+
+| Status | Meaning | Typical action |
+|---|---|---|
+| **Synced** | Both sides match. | - |
+| **Edited locally** | Only the `.blend` changed. | Save to JSON |
+| **Changed in JSON** | Only the JSON changed. | Pull from JSON |
+| **Conflict** | Both sides changed. | Merge, Keep JSON or Keep Blend |
+| **Missing in blend** | The entry no longer exists in the `.blend`. | Restore or stop tracking |
+| **Untracked** | Not tracked against any JSON. | Track |
+| **JSON missing** | The JSON file is gone. | Re-create it or stop tracking |
+
+## What you get
+
+- **Change detection that ignores cosmetic noise.** Canonical SHA-256
+  hashes ignore node positions and creation order; moving a node is not
+  a change, editing a value is.
+- **One Changes list, VS Code style.** Mark entries, save exactly the
+  marked subset, filter by status, discard local edits, pull, open
+  history or ignore. Untracked dependencies get their own **Track** row.
+- **Conflict resolution per item.** Keep one side, or merge values with
+  an Ours / Base / JSON choice; a structural conflict asks for one whole
+  side. **Apply Chosen Merge** writes and rebuilds once every item is
+  decided.
+- **History (time machine).** Browse an entry's JSON revisions, preview
+  the diff and restore a revision. Only the JSON is touched; Pull
+  rebuilds the `.blend` when you decide.
+- **Explore and Project Health.** Draw the project graph, a cluster
+  view or a neighborhood as a disposable node tree; export an SVG poster;
+  run audits (duplicates, JSON health, impact). The board warns when it
+  is stale and offers **Rebuild**.
+- **Import and share.** Single packages or one file per entry, category
+  filters, dependency-first rebuild, **Track from folder...**, selective
+  import with a plan preview (existing entries are never overwritten), and
+  NODES modifier setups attached to objects by name.
+- **Materials, worlds and the scene compositor.** Owner-aware entries
+  with per-entry status, save, pull, conflict and merge; curated owner
+  settings and custom properties travel with the tree. Object material
+  slots are not versioned.
+- **Git collaboration inside Blender.** Commit only the tracked JSONs,
+  sync with the built-in Git panel, and let a diverged branch merge the
+  tracked files per item into a real two-parent merge commit. Credentials
+  and engine details: [GIT_COLLAB.md](docs/GIT_COLLAB.md).
+- **Automation-ready.** The JSON side runs without Blender:
+  `gnt_check.py` checks status, diffs and merge previews in CI or a hook.
+  See [Automation and CI](#automation-and-ci).
+
+### Not just another exporter
+
+| | Snapshot exporters | GNToolkit |
+|---|---|---|
+| Question they answer | "How do I move a node tree in or out of Blender?" | "Is my `.blend` in sync with the project's JSON - and what changed?" |
+| Change detection | None | Canonical hash per entry, cosmetic moves ignored |
+| Dependencies | Captured at export | Tracked graph: transitive closure, dependency-first rebuild |
+| State | None | Per-entry statuses and a Changes list |
+| Environment | Blender | Blender **and** plain Python for CI/hooks |
+| Git | Share files | Review, save/pull, per-item merge, bundled transport |
+
+## Requirements and compatibility
+
+- **Blender 4.2 - 5.2 LTS** (tested on 4.2.1, 5.1.1 and 5.2.0).
+- No external programs required: the collaboration engine is bundled and
+  the JSON side is pure Python.
+- Version boundaries, hash rules, compositor limits and historical port
+  notes: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
+- Format and limits: [docs/JSON_FORMAT.md](docs/JSON_FORMAT.md).
+
+## Documentation
+
+| If you want to... | Read |
+|---|---|
+| Learn every workflow | [User guide](docs/MANUAL.md) |
+| Collaborate with Git | [Git collaboration](docs/GIT_COLLAB.md) |
+| Run checks in CI or automate | [Automation and CI](docs/AUTOMATION.md) |
+| Copy a CI recipe | [CI template](docs/CI_TEMPLATE.md) |
+| Understand the JSON | [JSON format](docs/JSON_FORMAT.md) |
+| Check Blender/hash compatibility | [Compatibility](docs/COMPATIBILITY.md) |
+| Build, test or contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| See a real project diff | [Case study](docs/case-studies/subd-to-compound/README.md) |
+| Browse all docs | [docs/](docs/README.md) |
+
+## Automation and CI
+
+The JSON side is pure Python (no `bpy`), so the canonical hashes can be
+checked anywhere Python 3.10+ exists:
 
 ```bash
-# Check a folder export against a project's .gntsync sidecar
+# Check a folder export against a project's sidecar
 python gnt_check.py NodeGroups/ --baseline project.blend.gntsync
-
-# Machine-readable output for CI
-python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --json
 
 # Validate that every file parses and hashes (no baseline needed)
 python gnt_check.py NodeGroups/ --strict
-
-# Audit the project: dependency impact, duplicate logic, JSON health
-python gnt_check.py --impact "My Group" --baseline project.blend.gntsync
-python gnt_check.py NodeGroups/ --duplicates
-python gnt_check.py NodeGroups/ --baseline project.blend.gntsync --health
-
-# Compare two or more projects by content: shared logic, diverging forks
-python gnt_check.py --cross projectA/NodeGroups projectB/NodeGroups
-
-# Compare the same project exported from two Blender versions: sockets
-# added by the newer version are reported as additive (type + default);
-# removed sockets, shared-socket changes and structure changes exit 1
-python gnt_check.py --cross-version export_52/NodeGroups export_53/NodeGroups
-
-# Preview a semantic 3-way merge (values only; never writes files)
-python gnt_check.py --merge base/NodeGroups ours/NodeGroups theirs/NodeGroups
-python gnt_check.py --merge HEAD~1 HEAD theirs --repo . --subdir NodeGroups
-
-# Draw diagrams (needs Graphviz; SVG by default): whole project or the
-# neighborhood of one group, a single group, or a semantic diff
-python gnt_check.py --render deps NodeGroups/ --focus "My Group" --hops 2
-python gnt_check.py --render diff old.json --new new.json
 ```
 
-Audits answer the project questions that come before a change:
-**impact** (reverse dependency graph + transitive closure, plus the objects
-using it as a modifier — *what breaks if I touch this group?*), **duplicates** (content fingerprints that
-ignore group identity — *is this logic copied under two names?*),
-**health** (unreadable or conflicted JSONs, missing files, references to
-untracked groups) and **cross** (compare two or more projects — *is this
-same group shipped in another project, under any name, and which shared
-groups have diverged?*; `--strict` exits non-zero when forks diverge). All
-support `--json`.
+`gnt_check.py` and `scripts/` are repository tools, not part of the
+extension package; fetch them at the same tag as the add-on. The full
+command reference (audits, cross-project, cross-version, diff, merge
+preview, render, headless export/import, build and the public test
+suite) is in [docs/AUTOMATION.md](docs/AUTOMATION.md). The copyable CI
+recipe is in [docs/CI_TEMPLATE.md](docs/CI_TEMPLATE.md).
 
-The same audits are available inside Blender: the **Project Health**
-panel (Advanced) has an **Audit** section (Run / Clear) that runs in the
-background with progress and Cancel that reports duplicates, JSON
-health and the dependency impact of the group selected in the Node
-Editor.
+## Contributing
 
-`--render` draws the same JSONs as diagrams (project graph with
-added/removed/changed coloring, a focused neighborhood, a single group
-optionally at its stored node positions, or a node-level diff; SVG, or
-PNG on the detail views).  It needs the Graphviz binaries and, unlike the rest of the
-checker, **its placement is not canonical** — a different-looking render
-does not mean the project changed.  The graphs in
-[docs/case-studies](docs/case-studies/subd-to-compound/README.md) are
-produced this way.
-
-The checker is the standalone `gnt_check.py` script from this repository
-— a GitHub repository tool, not part of the extension package; fetch it
-at the same tag as your addon (the canonical hasher must match) and run
-it with any Python 3.10+ interpreter; no Blender needed.
-
-Exit codes: `0` = all synced, `1` = changes or missing groups, `2` =
-errors, `3` = the `.gntsync` baseline was written by a different
-hash-algorithm version (the checker refuses to report false changes:
-use `gnt_check.py` from the add-on's release, or open the project once
-with the current add-on to re-stamp the sidecar). The canonical hashes
-are the same ones the addon computes inside Blender, so a hook and a
-`Refresh Status` always agree. The full status check of a 582-group
-project runs in ~3 seconds.
-
-`gnt_check.py --diff A B` prints a readable summary of what changed
-between two JSON versions (folders or files, standalone files or unified
-packages): interface items, nodes added/removed (grouped by name prefix),
-value/property changes and re-linked connections — layout-only properties
-(position, sizes, selection) are ignored. Handy for reviewing a commit
-without reading hundreds of raw JSON lines. A and B can also be git
-revisions:
-
-```bash
-python gnt_check.py --diff HEAD~1 HEAD --repo /path/to/project --subdir motor/NodeGroups
-```
-
-`gnt_check.py --cross-version OLD NEW` compares two exports of the same
-project made with different Blender versions. Nodes and sockets are
-matched by name, so a socket that the newer Blender inserted is not
-confused with a renamed or reordered one: additive sockets are reported
-with their type and default value, while removed nodes/sockets, type or
-value changes on sockets present in both, interface/link/structure changes
-and added/removed groups are destructive. Exit code 0 = no destructive
-change, 1 = destructive (or any change with `--strict`), 2 = unreadable
-input; `--json` emits the full report. The tool compares JSON exports
-only - it never launches Blender, so export the same `.blend` once per
-version first.
-
-`gnt_check.py --merge BASE OURS THEIRS` previews the semantic merge of
-the three sides without writing anything: the **values** (socket
-defaults, node labels/properties, custom properties, tree properties,
-curated owner settings of materials/worlds) merge per item with a
-base/ours/theirs decision, while the **structure** is never guessed — it
-is adopted whole from the side that changed it, and
-both-changed-differently cases are reported as per-element conflicts (an
-edit that cannot be placed on the adopted structure is an explicit
-conflict, never a silent drop); exact-content renames (same logic under
-a new name) are matched and merged under the new name for node groups.
-Sides are folders, JSON files or git revisions (`--repo`/`--subdir`;
-BASE is typically `git merge-base`); `--json` prints a
-machine-readable report. Geometry Nodes, Shader and Compositor groups,
-materials and worlds are covered; other tree types (for example Texture
-trees) are reported as notices (`--strict` turns them into a failure). Conflicts
-exit `1`; any unreadable JSON in any side exits `2`. The decision core
-is `merge.py` (pure Python, the same canonical rules as the hasher).
-
-### Test suite
-
-The JSON-side logic is covered by a public, Blender-free suite in
-[`pure-tests/`](pure-tests/): canonical hashes (including the 4.2→5.x
-normalization), merge values/package/overrides, the audit helpers, the
-`gnt_check.py` modes (diff, merge, render in dot-only mode, version
-guard) and the exclusion tables — 300+ checks. Every test builds its own
-tiny fixtures in a temporary folder, so it runs anywhere Python 3.10+
-exists:
+The public, Blender-free suite runs anywhere Python 3.10+ exists:
 
 ```bash
 python pure-tests/run_all.py
 ```
 
-The suite runs on every push and pull request (Linux and Windows) via
-GitHub Actions, and it is wired into the maintainer's release gate. The
-Blender-side suites (import fidelity, real-project round trips, UI
-panels) use local fixtures and are not part of the repository.
-
-### Building the release packages - repository tool
-
-Both extension packages are reproducible from this repository:
-
-```bash
-python build_platform.py                  # platform box (Extensions Platform)
-python build_platform.py --include-git    # GitHub box (+ system-Git engine)
-```
-
-They write `dist/GNToolkit-<version>.zip` and
-`dist/GNToolkit-<version>-github.zip` and **fail** on any compliance
-violation (module-path manipulation, threading, OS-level calls,
-system-Git use, non-pure wheels, missing imports, version drift). The
-build is deterministic (same input, same bytes). Run Blender's
-`--command extension validate` on the result if you have Blender
-available.
-
-### Headless export — no UI
-
-The whole .blend can be exported to a folder export (one JSON per group,
-plus `Modifiers/`) without opening Blender's UI:
-
-```bash
-blender --background --factory-startup project.blend --python scripts\export_all_json.py -- --out D:\NodeGroups
-```
-
-The output is the canonical JSON (the source of truth) — ready for
-`gnt_check.py`, git, and `Track from Existing JSON` / `Track from folder…`
-inside Blender:
-
-```bash
-python gnt_check.py D:\NodeGroups\NodeGroups --strict
-```
-
-`--minify` produces compact JSON. `--make-local` first turns every
-library-linked tree that participates in the export (geometry, shader
-and compositor groups, their transitive group-node references and
-geometry-nodes modifiers)
-into a local copy — needed when the groups come from an addon's
-`assets.blend`: library-linked groups can be exported but never pulled
-back. The conversion is only written to the .blend when `--save` is also
-given; without it the source file is left untouched.
-`--exclude-library FRAG` (repeatable) keeps linked trees whose library
-path contains FRAG out of the export and out of the conversion — use it
-for Blender's bundled assets (`datafiles\assets`) or third-party toolsets.
-
-A library spread over several .blend files (each linking the previous
-ones) ports to a single versioned project through the JSON: export every
-source read-only, then rebuild one master .blend where all groups are
-local:
-
-```bash
-blender --background --factory-startup "base.blend"    --python scripts\export_all_json.py -- --out D:\lib
-blender --background --factory-startup "derived.blend" --python scripts\export_all_json.py -- --out D:\lib
-blender --background --factory-startup --python scripts\import_all_json.py -- --in D:\lib --out master.blend
-```
-
-Open `master.blend` and use `Track from Existing JSON` / `Track All` to
-start versioning it. The JSON folder stays one file per group — the
-versioned source of truth; the master .blend is only the working file
-GNToolkit syncs against. Neither source file is modified.
-
-The scripts are `scripts/export_all_json.py` and
-`scripts/import_all_json.py` from this repository — fetch them at the
-same tag as your addon (they are not part of the extension zip) and they
-enable the addon automatically when missing (legacy install, extension
-module or the repo copy next to the script).
-
-### Reviewing node changes in CI
-
-`docs/CI_TEMPLATE.md` has a copyable CI recipe (pinned to the `v0.4.1`
-tag, the current release — update the pin when your team updates the
-add-on, as the template explains) that runs the status check and the
-audits on every proposed change touching `NodeGroups/` or the `.gntsync`
-sidecar — in the CI service of your choice. An accidental overwrite, a
-missing file or an unresolved merge conflict fails the change before
-anyone merges. It is part of this repository — never part of the
-extension zip.
-
-## Features
-
-### Sync — the state layer
-
-- **DNA/RNA sync**: track any node group against a JSON file; per-group
-  statuses (Synced, Edited locally, Changed in JSON, Conflict, Missing
-  in Blend, Untracked, JSON missing) tell you exactly what
-  diverged.
-- **Canonical hashing**: SHA-256 fingerprints that ignore node positions
-  and creation order — only real content changes flip a status.
-- **Deterministic JSON serialization**: nodes are emitted in name order,
-  so renaming/reordering produces minimal, stable git diffs, and
-  re-exporting an unchanged group is byte-identical.
-- **Sync operations**: Track (start), Save changed, Pull from
-  JSON, Save all, Refresh Status.
-- **Check on open**: after loading a .blend, a background JSON-side
-  check shows a non-intrusive notice when JSON files changed outside
-  Blender (toggleable).
-- **Changes list (single list + staging)**: one collapsible list of every
-  out-of-sync group, with status filters, a 50-row default cap and
-  per-row actions. Each row has a primary Save/Pull/Merge button, a
-  Mark/Unmark button and a `...` menu (Go to item, History, Save, Pull,
-  Keep JSON/Blend, Discard, Ignore). The Save button is **Save selected**
-  when rows are marked and **Save changed** otherwise; **Save all** lives
-  in the secondary menu with confirmation. Untracked dependencies appear
-  as rows with their own Track button.
-- **Graph view**: draw the dependency graph ? the whole project, a
-  **cluster view** (one bar per name prefix, aggregated status and edges),
-  or the
-  neighbourhood of the selected group (±hops) — as a disposable node
-  tree coloured by sync status, to inspect "who uses this / what it
-  depends on" without leaving Blender. Groups appear as compact bars
-  sized to fit their names; the levels come from a minimum-length
-  ranking (network simplex — the dot algorithm), the columns are
-  centre-justified and packed by real widths, each collapsed bar reserves
-  its real drawn height (many-socket groups draw taller), unused sockets
-  are hidden by default (the Ctrl+H state), and every cable that jumps
-  over columns travels through its own **routing nodes** (tiny Reroutes)
-  instead of sweeping across the drawing. Nothing is saved; "Clear
-  Graph" removes it, and a completed **Refresh Status** repaints the
-  existing board in place (no rebuild needed).
-- **Graph poster**: the same board exports to a standalone **SVG poster**
-  (no Graphviz needed; opens in any browser) with the status legend and
-  per-status counts; routed cables are drawn as smooth polylines through
-  the same columns — handy for documentation and sharing. The Layout
-  option can export the compact auto layout, or **"As arranged on the
-  board"** to reproduce whatever arrangement the node editor shows
-  (e.g. after an external node arrangement).
-- **Conflict resolution**: keep the .blend or the JSON version with a
-  single click - or **Merge**: the per-item value merge (Geometry
-  Nodes/Shader/Compositor groups, materials and worlds) keeps your local edits,
-  applies the JSON changes on top (the common base is recovered
-  from the JSON file's git history). If items changed differently on
-  both sides, the merge report lists each one with an Ours / Base / JSON
-  choice (plus a custom value for simple scalars) and resolves a
-  conflicting structure by picking one whole side; **Apply Chosen
-  Merge** writes the merged package and rebuilds the group once every
-  conflict is decided.
-- **Time machine**: the **History** button (next to the active group and
-  on every Changes row) opens the entry's JSON revisions (date, author
-  and commit message, newest first) with a readable diff against the
-  current entry and **Restore This Revision** — the old entry is written
-  back into the JSON (only the JSON: the .blend is left alone, so Pull
-  rebuilds it when you decide). On the GNT Graph board, use the bar's History button (or enable
-  **Follow board selection** in Explore) to open the time machine;
-  selecting a revision marks the changed groups and focuses them. Selecting a revision marks on the GNT
-  Graph board the groups of the same file that differ from today and
-  wraps the board in a labelled **HISTORY MODE** frame, so you can see
-  what that revision would bring back (marks and frame clear when the
-  box closes). The rest of the package is untouched,
-  and without a repository or before the file was committed the box
-  says so.
-- **Active JSON file**: the Active row shows the active entry's JSON
-  file with copy-path and Reveal-in-Explorer buttons; the old inventory
-  of every tracked JSON path is gone.
-- **Concurrency-safe**: lock files prevent two Blender sessions from
-  corrupting the same JSON.
-- **Tree kinds and declared limits**: Geometry Nodes, Shader and
-  Compositor node groups are versioned, **and so are the Shader Editor's
-  materials and worlds** (embedded trees, tracked as owner-aware entries:
-  "Track Material"/"Track World"/"Track All Materials"/"Track All Worlds",
-  with per-entry
-  status, save, pull, conflicts and merge). Compositor groups also carry
-  an informational `compositor_scenes` list: on import, a scene without a
-  compositor (or pointing at a missing one) is assigned the rebuilt
-  group; a different valid assignment is never overwritten and scenes are
-  never created. Compositor trees that use **Render Layers/Cryptomatte**
-  also depend on the referenced scene's view layers and passes; those are
-  not versioned (the scene-owner boundary), so a clone into a file
-  without that scene cannot recreate those pass sockets/links — pulling
-  into the project file, where the scene exists, keeps them. In Blender
-  4.2 the scene compositor is not a node group (`Scene.node_tree`), so
-  only reusable compositor groups are covered there. A material/world
-  entry stores its
-  node tree plus a curated allowlist of the owner's settings (mix mode,
-  shadows, culling, refraction/SSS, displacement, viewport display,
-  Freestyle; world color/sun) and its custom properties — the rest of
-  the datablock and object material slots are not versioned, and cloning
-  a missing owner warns about that. Texture node trees are never
-  versioned. **Third-party custom group nodes** (add-ons that
-  define their own node classes) keep their per-instance inner tree: it
-  is versioned embedded with the node, so edits made inside it survive
-  clones and rebuilds, and the inner tree is never a standalone tracked
-  entry. **OSL Script nodes** version their code — the referenced Text
-  travels with the entry and a re-import overwrites local edits (the
-  JSON wins, as everywhere on Pull); `External` mode is reference-only
-  (the `.osl` file lives outside, like images). **Animation**
-  (keyframes/drivers/NLA) is not saved
-  into JSON: animated groups and materials are flagged in the Sync panel
-  and by `gnt_check.py` instead of passing as silently synced.
-
-### Collaboration with Git
-
-- **Self-contained transport** (no server, no reimplementation — the
-  repository stays the authority): the Git panel detects the
-  repository behind the tracked JSONs and shows its state. The engine is
-  bundled with the add-on; nothing extra needs to be installed.
-- **Git Commit…** stages only the tracked JSONs; **Git sync** pulls,
-  pushes, and when the branch diverged it **merges the tracked JSON
-  files per item** (values, modifier input overrides, exact-content
-  renames; Geometry Nodes/Shader/Compositor groups; materials and
-  worlds) and pushes a real two-parent merge commit.
-  Anything that cannot be decided — a conflicting item, or a file
-  outside the tracked JSONs changed on both sides — aborts the operation
-  with a per-item report and nothing is written; commit your JSONs first
-  (the messages say so).
-- **Cosmetic-only discard**: if Git reports changed files while the sync
-  layer is synced, the panel explains that Git compares worktree vs HEAD;
-  **Discard cosmetic-only changes** verifies semantic equality and restores
-  from HEAD only when no node/value changed.
-- Merge-conflict markers in a JSON are detected and reported; per-group
-  and repository history is available. The JSONs are plain files, so the
-  repository also works with any external Git tooling — see
-  `docs/GIT_COLLAB.md`.
-
-### Import & share
-
-- **JSON package snapshots**: export/import of the node groups (Geometry
-  Nodes, Shader and Compositor), NODES modifier setups, materials and
-  worlds to/from a single JSON package, with in-place update of existing
-  groups on import. The export can be **filtered by category** ("Include:"
-  switches — Geometry Nodes groups / Shader groups / Compositor groups /
-  Modifiers / Materials / Worlds, everything on by default), both in the
-  dialog and headless via `scripts/export_all_json.py --categories`;
-  NODES modifiers are exported only together with Geometry Nodes groups.
-- **Export active group** with its full dependency chain.
-- **Folder workflow**: the per-group folder export (`NodeGroups/` +
-  `Modifiers/`) round-trips end to end — track every file of a folder in
-  one click (**Track from folder…**), save changes back to per-group files,
-  and recreate a whole folder export with **Import Package/Folder**
-  (modifiers applied by default to existing objects with matching names).
-- **Selective group import**: pick one group from a JSON package and
-  import it plus its missing dependency closure — searchable native
-  picker with a plan preview (in-blend / to-import / divergent /
-  external refs); existing groups are never overwritten; track-to-JSON
-  built in.
-
-### Robustness
-
-- **Robust JSON reading**: UTF-8 with or without BOM; a file saved in a
-  different encoding (e.g. ANSI) is reported with a clear "re-save as
-  UTF-8" message instead of crashing.
-- **External connection preservation**: links from parent groups survive
-  reimports.
-- **Geometry validation**: generic checks (missing attributes, unlinked
-  inputs, type mismatches) ? warnings only, never blocks. It runs in the
-  background with **Validating x/y** and Cancel, and each issue offers
-  **Go to node**.
-
-## Quick Start
-
-> For a step-by-step walkthrough with the expected behavior at every
-> step, see the [Usage Manual](docs/MANUAL.md).
-
-### Version your project in 3 steps
-
-1. **Start tracking** (like `git init` + first save):
-   - **Track All** — every trackable node group (Geometry Nodes, Shader
-     and Compositor) is tracked against one master JSON **written from
-     the current .blend** (first save).
-     Each group gets a UUID stored on the node tree. The JSON is
-     updated surgically: entries that have no counterpart in the .blend
-     (e.g. groups removed locally) are preserved.
-   - **Track from folder…** — track every group found in a folder export
-     (one file per group); see the folder workflow below.
-   - **Track from Existing JSON** — start tracking using an existing
-     JSON as the source of truth; the JSON is read only and **NOT
-     modified**. Accepts a unified package or a single-group export
-     file. Use this after an **Import Package/Folder** when the JSON is
-     already authoritative. (Equivalent to `git clone`.)
-2. **Work normally** — **Refresh Status** computes the sync state of
-   every tracked group; the Sync panel shows what changed.
-3. **Save or Pull** per group (or mark a subset in the **Changes** list
-   and save it with a single button):
-   - **Save to JSON** (.blend → JSON): save your .blend changes into the
-     JSON.
-   - **Pull** (JSON → .blend): overwrite the .blend version with the
-     JSON.
-    - **Merge**: decide a conflict item by item (Ours / Base / JSON, or a
-      custom simple scalar) and apply the result; a structure conflict
-      asks for one whole side.
-    - **Keep JSON / Keep Blend**: resolve a conflict by choosing a side.
-    - **Ignore**: hide the issue without changing any data.
-   - **Stop Tracking**: remove tracking; the JSON file and the node tree
-     are kept.
-
-Sync metadata is stored in a sidecar file next to the .blend
-(`<project>.blend.gntsync`) and saved automatically on file save.
-
-### Selective import (one group + its dependencies)
-
-**Import Group from JSON…** picks a package and opens a searchable picker
-in the Sync panel:
-
-1. Use the search field (native Blender search widget) to find a group;
-   the plan preview under the field shows what will happen:
-   - **CHECKMARK** — already in the .blend (never touched),
-   - **NODETREE** — will be imported (missing dependencies included),
-   - **ERROR** — exists in the .blend but differs from the package
-     (align it with Track + Pull / Keep JSON),
-   - **STATUS_WARNING** — referenced but not in this package.
-2. **Import** imports the group plus its missing dependency closure.
-   Existing groups are never overwritten; the picker stays open to
-   import several groups in a row.
-3. **Track to JSON…** writes the selected group (and its untracked
-   dependencies) into a package of your choice and starts tracking it —
-   no active-tree dependency.
-4. **Close Picker** closes it. A live refresh redraws the picker every
-   0.5s, so JSON edits on disk show up within a second.
-
-### Changes (mark and save)
-
-The **Changes** list in the Sync panel shows every out-of-sync group
-(nothing is marked by default, like VS Code's Source Control):
-
-- **+** mark a group for the next save; **−** unmark it (the header has
-  mark-all / unmark-all). Marked rows regroup at the top under
-  **Marked (N)**, like VS Code's staged list,
-- **↩** discard the group's local edits and take the JSON version (asks
-  for confirmation first),
-- **→** bring the JSON version into the .blend (Pull),
-- the **History** button (clock icon) opens the time machine for that
-  entry: its JSON revisions, a diff preview and Restore (see the Time
-  machine feature above),
-- one **Save N marked to JSON** button writes exactly the marked groups.
-  A marked conflict is saved with the .blend version (an explicit
-  choice); unmarked groups are left untouched.
-
-Untracked dependency groups appear as their own rows with a **Track**
-button so they can be filed before or with their parents.
-
-### Check on open
-
-With **Check JSON on open** enabled (Add-on Preferences), after opening
-a .blend the addon compares the JSON hashes in the background and shows
-a non-intrusive notice when files changed outside Blender - a status
-bar message and a warning above the Changes list. Use **Pull** on those
-groups to apply the JSON changes.
-
-### Folder workflow (per-group files as sync participants)
-
-A project exported with **Use Folder Structure** is a folder of
-one-file-per-group JSONs that the sync layer treats like a repository:
-
-1. **Export Package** with folder structure → `NodeGroups/*.json` +
-   `Modifiers/*.json`.
-2. **Track from folder…** (Sync panel): pick any file inside the export —
-   every group found in the folder is tracked against its own file
-   (dependency edges recorded; already-tracked groups are skipped).
-3. Work normally: **Save to JSON** writes each edited group back to its
-   own file (a per-group file becomes a one-group package on the first
-   save — all readers accept both shapes), **Pull** restores them.
-4. Recreate the project elsewhere with **Import Package/Folder** (pick
-   any file in the folder) — or use **Track from Existing JSON**, which
-   also accepts a single-group export file.
-
-### Collaboration with Git
-
-The deterministic JSONs are plain files; the add-on bundles its own
-transport for them:
-
-1. Put the exported folder in a Git repository (any Git host, a network
-   share, a local bare repo, …).
-2. The **Git** panel (GNToolkit tab) shows the repository
-   state, commits with **Git Commit…** (only the tracked JSONs are
-   staged) and synchronizes with **Git sync**: pull + push, and when
-   the branch diverged the tracked JSON files merge per item into a real
-   two-parent merge commit — if anything conflicts, nothing is written
-   and the per-item report lands in the merge report box (resolve those
-   with each group's **Merge** or with your Git client).
-3. Conflict markers in a JSON are detected and reported; resolve them
-   with your Git tooling.
-4. Full guide:
-   [docs/GIT_COLLAB.md](https://github.com/oobma/GNToolkit/blob/main/docs/GIT_COLLAB.md).
-
-### JSON package snapshots (no tracking)
-
-1. In the Node Editor sidebar → **GNToolkit**, use:
-   - **Export Package** — writes every trackable node group (Geometry
-     Nodes, Shader and Compositor) and modifier setup, one file per group
-     in `NodeGroups/` + `Modifiers/` folders (**Use Folder Structure**,
-     on by default) or a single JSON package when unticked.
-   - **Export Active Group** — exports the active group plus its
-     dependencies.
-   - **Import Package/Folder** — reconstructs all groups (and modifiers)
-     from JSON. Pick the package file, or **any file inside a folder
-     export** to recreate the whole folder (dependencies resolved
-     automatically, dependency-first). With **Update existing groups**
-     checked, groups that already exist in the file are rebuilt in place
-     from the JSON (modifiers referencing them and external links are
-     preserved); unchecked (default), existing groups are left untouched.
-     **Apply Modifiers** (on by default) attaches the stored modifiers to
-     existing objects with matching names.
-
-## How it works
-
-| Term | Meaning |
-|---|---|
-| **DNA** | The JSON file. The source of truth — readable, diffable, versionable with git. |
-| **RNA** | The .blend working cache where you edit and preview. |
-| **UUID** | A unique ID stored as a custom property on each tracked node tree. |
-| **Canonical hash** | A SHA-256 fingerprint of a group's content, ignoring cosmetic differences (node positions, creation order), so only real changes trigger a status change. |
-| **Sidecar** | The `.gntsync` file that records which groups are tracked, their UUIDs, and their last known hashes. |
-
-Each status is computed by comparing the JSON hash against the stored hash
-and the .blend hash against the stored hash:
-
-| Status | Meaning | Typical action |
-|---|---|---|
-| Synced | Both sides match | — |
-| Edited locally | Only the .blend changed | Save to JSON |
-| Changed in JSON | Only the JSON changed | Pull |
-| Conflict | Both sides changed | Merge (item by item), Keep JSON or Keep Blend |
-| Missing in blend | The node tree no longer exists in the .blend | Restore from JSON or Stop Tracking |
-| Untracked | Not tracked against any JSON | Track |
-| JSON missing | The JSON file is gone | Re-create JSON or Stop Tracking |
-
-## Requirements
-
-- Blender 4.2 – 5.2 LTS (tested on 4.2.1, 5.1.1 and 5.2.0)
-- No external programs required: the collaboration engine is bundled with
-  the add-on, and the JSON side (sync checks, package export/import) is
-  pure Python.
-
-## Compatibility
-
-Blender **4.2 – 5.2 LTS** (tested on 4.2.1, 5.1.1 and 5.2.0; the maintained
-suites are `tests/smoke_test_5.1.py` — 161 checks —,
-`tests/test_52_new_nodes_e2e.py` — 47 checks, 5.2-only — and
-`tests/test_42_smoke.py` — 21 checks, run under 4.2). The 5.2 port
-details are recorded in [docs/port-5.2.md](docs/port-5.2.md). What the
-port required:
-
-- Geometry Nodes modifier inputs/outputs: version-gated between the
-  legacy custom properties (`modifier["identifier"]`) and the 5.2 RNA
-  path (`modifier.properties.inputs/outputs.<id>`).
-- Data-type-driven node sockets (Compare, Random Value, Boolean Math
-  NOT, Capture Attribute, Value to String, Subdivision Surface): the
-  importer and the canonical hash share an *active-socket* rule so 5.1
-  and 5.2 produce identical fingerprints (the rule shipped as
-  HASH_VERSION 5; the algorithm is versioned and currently at 23) and
-  projects track across versions without noise.
-- Version boundaries are explicit: representational differences between
-  Blender versions (socket classes and subtypes, version-gated
-  properties, class-level tree text) are normalized, so the same group
-  hashes identically when tracked from 4.2 and from 5.x. A node model
-  Blender itself changed is a real difference and is reported — e.g.
-  the Principled BSDF gained sockets in 5.2; groups without such model
-  changes track noise-free between 5.1 and 5.2, and a project tracked
-  from 4.2 is recognized as synced when opened in 5.x (note: Blender
-  itself cannot open 5.x-saved .blend files in 4.2).
-
-## Installation
-
-Every install is an **extension** (Blender 4.2+), installed from disk or
-from the Blender Extensions platform.
-
-**From the Blender Extensions platform (recommended):**
-
-1. In Blender: **Edit → Preferences → Get Extensions**, search for
-   **GNToolkit** and press **Install** (it is enabled automatically).
-2. Open the Node Editor and find the **GNToolkit** tab in the sidebar (N).
-
-**From the release zip (offline machines / manual installs):**
-
-1. Go to the [Releases page](https://github.com/oobma/GNToolkit/releases)
-   and download the **`GNToolkit-<version>-github.zip`** asset of the
-   latest release.
-2. In Blender: **Edit → Preferences → Extensions**, open the dropdown
-   (⌄) → **Install from Disk...** and select the downloaded zip.
-3. Open the Node Editor and find the **GNToolkit** tab in the sidebar (N).
-
-The GitHub box is the same extension plus the optional system-Git
-engine; the platform box omits that engine and keeps the bundled one.
-
-**Upgrading from a manual install (pre-0.4.0):** the old "unzip into
-`scripts/addons`" layout is gone. Install the extension and remove the
-old `scripts/addons/GNToolkit` folder — the two cannot coexist.
-
-**From the repository (development):**
-
-1. Clone this repository and build the development package:
-   `python build_platform.py --include-git`.
-2. **Install from Disk...** with
-   `dist/GNToolkit-<version>-github.zip`.
-
-## JSON format
-
-Exports are **unified packages**:
-
-```json
-{
-  "version": "0.2.9",
-  "type": "GN_UNIFIED_PACKAGE",
-  "export_method": "GN_TOOLKIT",
-  "node_groups": {
-    "group_name": { "name": "...", "nodes": [...], "links": [...], ... }
-  },
-  "modifiers": []
-}
-```
-
-Each node group entry contains its interface, nodes (with socket defaults),
-links and tree properties — enough to fully reconstruct the group. A group
-entry also carries a `tree_type` marker when it is not a Geometry Nodes
-tree (absent means Geometry Nodes, so existing exports are unchanged).
-Compositor groups (Blender 5.0+) can also carry an informational
-`compositor_scenes` list (the scenes that use the group); it is not part
-of the canonical hash and drives the non-destructive scene assignment on
-import.
-Tracked materials and worlds live in their own sections (`materials`,
-`worlds`); each entry carries the owner's name and an `owner_settings`
-block with the versioned datablock properties and custom properties.
-
-A package is **node logic, not scene data**. It stores node groups,
-tracked materials/worlds and their NODES modifier setups — which object
-uses them, where in the stack,
-visibility flags and input values — but **not** objects, meshes,
-materials or transforms. On import, stored modifiers attach to the
-objects that already exist with the same name; geometry never travels
-through the package.
-
-## Project structure
-
-| File | Role |
-|---|---|
-| `constants.py` | Versions, shared constants and skip-lists |
-| `serializer.py` | Export: node trees → JSON-safe dictionaries |
-| `importer.py` | Import: JSON → node trees (recursive reconstruction) |
-| `codec.py` | Value conversion between Blender and JSON |
-| `hash_utils.py` | Canonical SHA-256 hashing |
-| `error_tracker.py` | Import error/warning accounting |
-| `socket_utils.py` | Robust socket lookup and dependency graph |
-| `sync_manager.py` | State detection, batch operations, lock handling |
-| `sync_metadata.py` | Sidecar file and UUID tracking |
-| `sync_operators.py` | Sync operators (track, save, pull, resolve, ...) |
-| `sync_ui.py` | Sidebar panels |
-| `graph_utils.py` | Pure graph model, layered layout and SVG poster rendering |
-| `graph_view.py` | Board builder: the disposable graph node tree in the editor |
-| `semantic_diff.py` | Human-readable semantic diff between two JSON versions |
-| `geometry_validator.py` | Generic geometry issue detection |
-| `operators.py` | JSON package export/import operators and main panel |
-
-## Contributing
-
-1. Fork the repository and clone your fork.
-2. Create a branch for your change.
-3. Commit with clear messages (Conventional Commits style:
-   `fix:`, `feat:`, `refactor:`, `perf:`, `docs:`).
-4. Open a pull request — the base branch is `main`.
+Build, test, code style, project layout and documentation rules:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Bundled third-party components
 

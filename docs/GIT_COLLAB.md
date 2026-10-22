@@ -1,8 +1,9 @@
 # GNToolkit — Collaborating with Git
 
-GNToolkit tracks node groups (Geometry Nodes, Shader and Compositor) as deterministic
-JSON files, which makes every Git client a collaboration backend for
-them. Two ways to work:
+GNToolkit tracks node groups (Geometry Nodes, Shader and Compositor) and
+the Shader Editor's materials and worlds as deterministic JSON files,
+which makes every Git client a collaboration backend for them. Two ways
+to work:
 
 1. **Manual flow** — any Git client (CLI, GitHub Desktop, VS Code, …);
    the addon only writes/reads the JSON files. Zero addon features
@@ -11,24 +12,36 @@ them. Two ways to work:
    state, commit, sync and history from inside the GNToolkit tab.
 
 Git remains the authority for history and merging — the addon never
-reimplements version control and never runs its own server. With a
-system `git`, credentials are whatever you already configured for it
-(credential manager, SSH keys, …); the bundled engine resolves per-host
-credentials itself — entered in Add-on Preferences, kept in the OS keyring.
+reimplements version control and never runs its own server. This guide
+follows the current development branch; check the release notes for the
+exact merge coverage of your installed version.
+
+## Which engine do I have?
+
+| Build | Engine | Remotes | Credentials |
+|---|---|---|---|
+| Platform extension | Bundled (pure Python) | HTTPS and local files | Add-on Preferences / OS keyring |
+| GitHub release zip | System `git` when available; otherwise the bundled engine | HTTPS and local files; SSH only with system `git` | Your Git client (credential manager, SSH keys) or add-on preferences |
+
+The engine is selected automatically; you can override it in Add-on
+Preferences. The manual flow with your own Git client always works,
+regardless of the add-on engine.
 
 ## Local repo or web repo — same thing
 
-The addon never talks to a server: **Git sync** and the manual flow
-just run `git pull` / `git push` against whatever remote the repository
-is configured with. That remote can be:
+The addon does not run a server. **Git sync** and the manual flow use
+whatever remote the repository is configured with. That remote can be:
 
 - a local folder or bare repo (`C:\backups\gntoolkit.git`),
 - a network share,
 - a web host — GitHub, GitLab, Bitbucket, Gitea, …
 
-Nothing changes in the addon. The only difference is how git itself
-reaches and authenticates against the remote. If `git push` works from
-your terminal, it works from the panel.
+For the bundled engine the remote must be **HTTPS or a local file
+path**; SSH is rejected. The system-Git engine supports SSH. If `git
+push` works from your terminal and you use the system-Git engine, the
+panel uses the same credentials; with the bundled engine, save the host
+credentials in the add-on preferences (or provide them through the OS
+keyring).
 
 ### Going from local to a web remote (one-time setup)
 
@@ -45,9 +58,11 @@ changes.
    git remote add origin https://github.com/<user>/<repo>.git
    git push -u origin main
    ```
-3. The first push opens the **Git Credential Manager** window (browser):
-   sign in to your host once, authorize, and Windows stores the token —
-   every later sync works without asking.
+3. With the **system-Git engine**, the first push opens the **Git
+   Credential Manager** window (browser): sign in once, authorize, and
+   the credentials are stored for later syncs. With the **bundled
+   engine**, save the host credentials in the add-on preferences (or
+   provide them through the OS keyring); the next sync uses them.
 
 From then on, the Git panel's **Git sync** pushes and pulls
 from the remote exactly as it did from the local one, and your
@@ -59,16 +74,18 @@ git clone https://github.com/<user>/<repo>.git
 
 ### HTTPS vs SSH
 
-- **HTTPS** (recommended): zero setup beyond the one-time credential
-  manager sign-in above.
-- **SSH**: add your key on your host and use its SSH URL
-  (`git@github.com:<user>/<repo>.git` on GitHub). Git handles the key —
-  the addon never sees any credentials.
+- **HTTPS** (recommended): works with both engines. With system Git, the
+  one-time credential manager sign-in above; with the bundled engine,
+  save the token in the add-on preferences.
+- **SSH**: supported by the system-Git engine (GitHub build). The
+  bundled engine rejects SSH remotes; use HTTPS or a local file remote
+  instead.
 
 ### Two gotchas before sharing a repo
 
 - **Save the .blend before tracking** — JSON paths are stored relative
-  to the .blend, so the file must exist on disk first.
+  to the .blend, so save it first for a portable repo. Tracking an
+  unsaved file works locally, with absolute paths until the first save.
 - **Keep the .blend out of the repo** (add it to `.gitignore`): JSONs
   are the shared source of truth; the .blend is personal working state.
   The addon never stages or pushes the .blend, but your own git
@@ -77,11 +94,12 @@ git clone https://github.com/<user>/<repo>.git
 ## Manual flow (works with any Git client)
 
 1. **Export** the project with **Export Package → Use Folder Structure**
-   (one JSON per group under `NodeGroups/`, modifiers under
-   `Modifiers/`) — per-group files give the cleanest diffs and the
+   (one JSON per entry under `NodeGroups/`, `Modifiers/`, `Materials/`
+   and `Worlds/`) — per-group files give the cleanest diffs and the
    fewest conflicts.
-2. **Publish**: `git init`, `git add NodeGroups Modifiers`,
-   `git commit -m "initial"`, add a remote, `git push`.
+2. **Publish**: run `git init`, stage the folders that exist
+   (`git add NodeGroups Modifiers Materials Worlds`), commit with
+   `git commit -m "initial"`, add a remote and `git push`.
 3. **On the other machine**: clone the repository, open (or create) the
    .blend, run **Advanced → Package → Import package/folder...** (pick any JSON inside the
    folder) and **Track from folder…** to start tracking every group against
@@ -96,23 +114,26 @@ git clone https://github.com/<user>/<repo>.git
    leaves conflict markers in that JSON. The addon reports the file
    ("has merge conflicts — resolve them with your git client"); resolve
    the file with your client (or `git checkout --theirs/--ours`) and
-   then **Pull from JSON** again. The addon never merges JSON text.
-   (Editing the *values* of the same group on both sides is a different
-   case: when the addon itself reports the group as **Conflict** — local
-   .blend edits against changed JSON — the **Merge** action resolves it
-   per item; see “Merging conflicted groups” below.)
+   then **Pull from JSON** again. In the manual flow the addon does not
+   resolve Git's text conflict markers. (Editing the *values* of the
+   same group on both sides is a different case: when the addon itself
+   reports the group as **Conflict** — local .blend edits against changed
+   JSON — the **Merge** action resolves it per item; see “Merging
+   conflicted groups” below. The Git panel's **Git sync** also uses that
+   semantic merge on diverged branches.)
 
 ## Git panel (thin git transport)
 
-Appears in the **GNToolkit** tab when groups are tracked. Nothing extra
-needs to be installed — the transport engine is bundled with the add-on
-(pure Python); the GitHub build additionally uses a system `git`
-automatically when one is present.
+Appears in the **GNToolkit** tab when entries are tracked. The transport
+engine is bundled with the add-on (pure Python); the GitHub build
+additionally uses a system `git` automatically when one is present. See
+[Which engine do I have?](#which-engine-do-i-have) for credentials and
+remote support.
 
 - **One row per repository** detected from the tracked JSONs (a project
   can point at several repos), showing: the repository name, the state
   — `clean`, `N changed`, `ahead N`, `behind N` — and the buttons:
-  - **Git Commit…** — opens a dialog for the commit message; stages
+  - **Git commit...** — opens a dialog for the commit message; stages
     **only the tracked JSON files that changed** (never `git add -A`,
     never the .blend) and commits locally.
   - **Git sync** — pull, then push. When the local
@@ -166,7 +187,7 @@ automatically when one is present.
 - The on-open fetch and **Git sync** (pull/push) require Blender's
   *Allow Online Access* setting. Without it the operations report that
   online access is disabled instead of failing halfway.
-- The local `git status` refresh, **Git Commit…** and the whole manual
+- The local `git status` refresh, **Git commit...** and the whole manual
   flow with your own git client work **offline**.
 
 ### Notes and limits
@@ -175,7 +196,7 @@ automatically when one is present.
   non-addon files, branches, rebases, PRs and conflict resolution happen
   in your client.
 - The .blend is never committed or pushed by the addon.
-- `Git Commit…` commits to the **local** repository; sharing happens
+- `Git commit...` commits to the **local** repository; sharing happens
   with **Git sync** (push) or your client.
 
 ## Merging conflicted groups (Changes list)

@@ -4,14 +4,14 @@ This template lives in the repository (it is never shipped inside the
 extension zip). The workflow downloads `gnt_check.py` from a **tagged
 release** of this repository, so the pinned tag matters: it must be the tag
 of the add-on release your team uses — below it is pinned to `v0.4.1`, the
-current release. The template's commands are unchanged between tags, so the
-checks behave the same either way.
+current release. The commands are stable between tags, but coverage can
+grow; check the release notes for the tag you pin.
 
 The JSON side of GNToolkit runs without Blender, so a project repository can
 review node changes in CI: every proposed change touching the tracked JSONs or
 the `.gntsync` sidecar gets its status checked and its health audited before
 anyone merges — no Blender on the runner, seconds of CPU. Any CI service that
-can check out a repository tag and run Python 3.11+ works: the commands below
+can check out a repository tag and run Python 3.10+ works: the commands below
 are the whole integration. The example at the end is written for one hosted CI
 service; only the wrapper changes between services.
 
@@ -53,8 +53,8 @@ and transitively — plus the objects using it as a modifier (from the
 A pull request that branched off is a three-way situation: the merge-base
 plus both tips. `gnt_check.py --merge` previews the semantic merge of the
 three sides on plain values (socket defaults, node properties, custom
-properties, tree properties, and the curated owner settings of
-materials/worlds) and reports, per item, what each side changed —
+properties and tree properties) and reports, per item, what each side
+changed —
 without writing anything and without opening Blender:
 
 ```
@@ -69,12 +69,12 @@ item differently, or changed the structure differently); `0` with a
 cleanly.
 The structure itself is never guessed: it is adopted whole from the side
 that changed it — only a both-sides-differs situation is a conflict.
-Geometry Nodes/Shader groups, materials and worlds are covered; other
-tree types (for example compositor trees) are reported as notices, not
-failures, so a mixed repository keeps passing (`--strict` makes them
-exit `1`). Include the `Materials/` and `Worlds/` folders in `--subdir`
-(or use the repository root) to preview embedded trees. Unreadable JSON
-in any side is a hard error (`2`).
+Merge coverage depends on the pinned tag: in `v0.4.1` it is Geometry
+Nodes group trees, and other group tree types are reported as notices.
+A newer tag may add Shader, Compositor, materials and worlds; check the
+release notes for the tag you pin. Notices do not fail the preview
+(`--strict` makes them exit `1`). Unreadable JSON in any side is a hard
+error (`2`).
 
 This command needs a release whose checker includes it — the pin used
 above (`v0.4.1`) includes it; older pins predate it.

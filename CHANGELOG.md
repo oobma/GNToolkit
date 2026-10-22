@@ -1746,7 +1746,7 @@ zone through a NODES modifier.
 
 - **Blender 5.2 LTS support.** The full headless test suite
   (180/180 checks) passes on Blender 5.1.1 and 5.2.0 with the same
-  code; see `docs/port-5.2.md` for the research and the changes.
+  code; see `docs/history/port-5.2.md` for the research and the changes.
 
 ### Changed
 
@@ -1831,7 +1831,7 @@ zone through a NODES modifier.
   serialized raw (full float32 precision) and is excluded from the
   canonical hash.
 - **New headless E2E for the 5.2 node set** (test #10 of the regression
-  suite, see `docs/port-5.2.md`): `tests/test_52_new_nodes_e2e.py` plus
+  suite, see `docs/history/port-5.2.md`): `tests/test_52_new_nodes_e2e.py` plus
   the generated fixture `tests/gn52_all_nodes.blend` (builder:
   `tests/prepare_52_fixture.py`). The fixture is one object with a NODES
   modifier whose tree covers all 25 instantiable 5.2 node classes and
