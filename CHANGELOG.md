@@ -51,6 +51,9 @@ All notable changes to this project are documented in this file.
 
 - The pending-save notice after Apply now says **Rebuild applied** instead
   of "Pull applied", so a merge-driven rebuild is described correctly.
+- When the historical merge base lacks node identities, the report now
+  explains that graph merge is unavailable and the whole-side fallback is
+  used; re-exporting/committing the base with this version enables it.
 
 ## [0.4.2] - 2026-10-22
 

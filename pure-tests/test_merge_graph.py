@@ -368,6 +368,14 @@ def test_graph_merge():
           res["status"] == "conflicted"
           and any(c["kind"] == "structure" for c in res["conflicts"]))
 
+    legacy_base = deepcopy(base)
+    legacy_base.pop("node_uids", None)
+    res = graph_merge(legacy_base, ours, theirs)
+    check("S3 missing base identities are explained",
+          res["status"] == "conflicted"
+          and any("base has no node identities" in n
+                  for n in res.get("notices") or []))
+
 
 
 def main():

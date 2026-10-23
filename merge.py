@@ -1532,6 +1532,20 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
     s_b, s_o, s_t = (_extract_structure(c) for c in canon)
     v_b, v_o, v_t = (_extract_values(c) for c in canon)
 
+    notices = []
+    if s_o != s_b or s_t != s_b:
+        ready_b = _graph_identity_ready(base)
+        ready_o = _graph_identity_ready(ours)
+        ready_t = _graph_identity_ready(theirs)
+        if ready_o and ready_t and not ready_b:
+            notices.append(
+                "merge base has no node identities - re-export or commit "
+                "the base JSON with this version to enable graph merge")
+        elif not (ready_o and ready_t):
+            notices.append(
+                "one or both JSON sides have no node identities - graph "
+                "merge is unavailable; export both sides with this version")
+
     structure_override = (overrides.get("structure")
                           if isinstance(overrides, dict) else None)
     if structure_override not in ("ours", "theirs") \
@@ -1541,7 +1555,6 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
         if graph is not None:
             return graph
 
-    notices = []
     manual_structure = False
     if s_o == s_t:
         adopted_side, adopted = "ours", ours
@@ -1563,7 +1576,8 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
                            "taken from %s" % adopted_side)
         else:
             return _result(group_name, "conflicted",
-                           conflicts=_structure_conflicts(s_b, s_o, s_t))
+                           conflicts=_structure_conflicts(s_b, s_o, s_t),
+                           notices=notices)
 
     value_overrides = {}
     if isinstance(overrides, dict):
