@@ -83,7 +83,7 @@ destructive change, `1` = destructive (or any change with `--strict`), `2`
 # Readable summary between two JSON versions (folders, files or revisions)
 python gnt_check.py --diff HEAD~1 HEAD --repo /path/to/project --subdir motor/NodeGroups
 
-# Preview a semantic 3-way merge (values only; never writes files)
+# Preview a semantic 3-way merge (values; graph per entity when identities exist; never writes files)
 python gnt_check.py --merge base/NodeGroups ours/NodeGroups theirs/NodeGroups
 python gnt_check.py --merge HEAD~1 HEAD theirs --repo . --subdir NodeGroups
 ```
@@ -95,21 +95,25 @@ properties (position, sizes, selection) are ignored.
 `--merge` previews the semantic merge of the three sides without writing
 anything: the **values** (socket defaults, node labels/properties, custom
 properties, tree properties, curated owner settings of materials/worlds)
-merge per item with a base/ours/theirs decision, while the **structure**
-is never guessed - it is adopted whole from the side that changed it.
-Both-changed-differently cases are reported as per-element conflicts.
-Exact-content renames (same logic under a new name) are matched and
-merged under the new name for node groups. Sides are folders, JSON files
-or git revisions (`--repo`/`--subdir`; BASE is typically
+merge per item with a base/ours/theirs decision. When all three sides
+carry complete node identities (current exports), **nodes and links**
+also merge per entity: disjoint additions/removals/renames/rewires
+combine, while delete/edit, same-node structural divergence,
+rename/rename and link contention are per-element conflicts. Entries
+without identities keep the whole-side structure adoption (never
+guessed). Exact-content renames (same logic under a new name) are matched
+and merged under the new name for node groups. Sides are folders, JSON
+files or git revisions (`--repo`/`--subdir`; BASE is typically
 `git merge-base`); `--json` prints a machine-readable report. Conflicts
 exit `1`; any unreadable JSON in any side exits `2`. Group-tree merge
 covers Geometry Nodes, Shader and Compositor groups on the current
 development branch; other tree types are reported as notices
 (`--strict` turns them into a failure). The v0.4.2 checker covers
-Geometry Nodes, Shader and Compositor groups plus materials and worlds;
-older tags may cover less. Check the release notes for the tag you
-fetch. The decision core is `merge.py` (pure Python, the same canonical
-rules as the hasher).
+Geometry Nodes, Shader and Compositor groups plus materials and worlds,
+with whole-side structure adoption; graph merge and `merge_version` 4
+need a newer checker. Older tags may cover less. Check the release notes
+for the tag you fetch. The decision core is `merge.py` (pure Python, the
+same canonical rules as the hasher).
 
 ### Diagrams
 

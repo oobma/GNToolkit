@@ -254,8 +254,13 @@ revision whose entry hash matches the recorded baseline - no new storage).
   The report lists each item with its Ours / Base / JSON values and an
   **Ours / Base / JSON** choice, plus a custom value for simple scalars
   (float, int, bool, string).
-- If the structure changed differently on both sides, pick one whole
-  side.
+- If the structure changed differently on both sides, resolve each
+  colliding node or link with Ours / Base / JSON / Delete. When the three
+  sides carry node identities (current exports), disjoint structural
+  edits - different nodes added/removed/renamed, different links - are
+  merged per entity first; only the entities that truly collide remain
+  conflicts. Entries exported by older versions keep the whole-side rule
+  (pick one side for the structure).
 - **Apply Chosen Merge** writes the merged package and rebuilds the
   entry once every conflict has a decision.
 
@@ -265,9 +270,12 @@ JSON file to be committed in a Git repository; otherwise it reports why.
 
 Merge covers Geometry Nodes, Shader and Compositor groups and
 material/world embedded trees, tree plus owner settings. It merges
-values; the structure is adopted whole from the side that changed it.
-Exact-content renames (same logic under a new name) are matched and
-merged under the new name for node groups.
+values per item; with node identities (current exports) it also merges
+nodes and links per entity, including renames and value edits on
+different nodes. The structure of an entry without identities is adopted
+whole from the side that changed it. Exact-content renames (same logic
+under a new name) are matched and merged under the new name for node
+groups.
 
 The conflict report produced by **Git sync** is informative: resolve
 those items with each entry's Merge or with your Git client.

@@ -90,9 +90,11 @@ saved automatically with the project.
   marked subset, filter by status, discard local edits, pull, open
   history or ignore. Untracked dependencies get their own **Track** row.
 - **Conflict resolution per item.** Keep one side, or merge values with
-  an Ours / Base / JSON choice; a structural conflict asks for one whole
-  side. **Apply Chosen Merge** writes and rebuilds once every item is
-  decided.
+  an Ours / Base / JSON choice. With node identities (current exports),
+  disjoint structural edits also merge per node/link, and a real
+  collision is resolved per entity (Ours / Base / JSON / Delete).
+  Entries from older exports keep the whole-side rule. **Apply Chosen
+  Merge** writes and rebuilds once every item is decided.
 - **History (time machine).** Browse an entry's JSON revisions, preview
   the diff and restore a revision. Only the JSON is touched; Pull
   rebuilds the `.blend` when you decide.

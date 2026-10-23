@@ -67,13 +67,19 @@ Exit `1` means at least one real conflict (both sides changed the same
 item differently, or changed the structure differently); `0` with a
 `merged` hash per group/entry means the JSON sides can be combined
 cleanly.
-The structure itself is never guessed: it is adopted whole from the side
-that changed it — only a both-sides-differs situation is a conflict.
+The structure itself is never guessed. When the three sides carry node
+identities (current exports), disjoint structural edits merge per node
+and link; a real collision (same node, same socket, delete/edit,
+rename/rename) is a conflict. Entries without identities are adopted
+whole from the side that changed them - only a both-sides-differs
+situation is a conflict.
 In `v0.4.2` the merge covers Geometry Nodes, Shader and Compositor group
-trees plus materials and worlds per entry. Other tree types are reported
-as notices; notices do not fail the preview (`--strict` makes them exit
-`1`). Coverage can grow between tags; check the release notes for the
-tag you pin. Unreadable JSON in any side is a hard error (`2`).
+trees plus materials and worlds per entry, with whole-side structure
+adoption. Graph merge (per-node/link identity) and `merge_version` 4 need
+a checker newer than that tag. Other tree types are reported as notices;
+notices do not fail the preview (`--strict` makes them exit `1`).
+Coverage can grow between tags; check the release notes for the tag you
+pin. Unreadable JSON in any side is a hard error (`2`).
 
 This command needs a release whose checker includes it — the pin used
 above (`v0.4.2`) includes it; older pins predate it.

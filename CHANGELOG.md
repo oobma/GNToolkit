@@ -4,6 +4,47 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Stable node identity for graph merges (S1).** Tracked trees now carry
+  a `gnt_node_uid` custom property per node and a `node_uids` map in the
+  JSON entry. The map is outside the canonical hash (no `HASH_VERSION`
+  change), survives renames, is restored on import, and is carried by
+  the merge independently of the adopted structure. Nodes without a
+  persisted id get a deterministic UUIDv5 at export, keeping exports
+  byte-identical across processes.
+- **Graph matcher and per-entity diff (S2).** Pure helpers in `merge.py`
+  match nodes by UID, name+type, signature and topology, and report
+  added/removed/renamed/changed nodes and links for a 3-way graph merge.
+- **Graph merge (S3).** When all three sides carry complete node
+  identities, a three-way merge decides nodes and links per entity:
+  disjoint adds/removals/renames/rewires and value edits merge cleanly;
+  delete/edit, structural divergence on the same node, rename/rename and
+  link contention stay explicit conflicts. Names, links and value keys
+  are remapped by UID. Entries without identities keep the previous
+  whole-side structure behavior. `MERGE_VERSION` is now 4.
+- **Verified merge application (S4).** After writing a merged entry the
+  add-on rebuilds it and compares the live canonical hash with the
+  merged hash. A rebuild failure or hash mismatch restores the original
+  JSON (and re-imports it); a write error leaves the file untouched and
+  is reported instead of raising.
+- **Per-entity conflict editor (S5).** Graph conflicts appear in the
+  merge report with an Ours / Base / JSON / Delete choice per node or
+  link; Apply waits until every entity is decided, then writes and
+  rebuilds the chosen merge.
+- Tests: `pure-tests/test_node_identity.py` (8),
+  `pure-tests/test_merge_graph.py` (42) and
+  `tests/test_node_identity_blender.py` (17) plus
+  `tests/test_merge_graph_blender.py` (15), both on 5.1 and 5.2;
+  `tests/test_merge_conflict.py` covers the graph apply and the
+  per-entity editor (41).
+
+### Changed
+
+- The export/track/import paths assign node identities; JSON gains the
+  additive `node_uids` map on the first export (canonical hashes and
+  baselines do not move).
+
 ## [0.4.2] - 2026-10-22
 
 ### Changed

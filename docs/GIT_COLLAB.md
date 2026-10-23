@@ -227,12 +227,18 @@ baseline revision in history) the Merge action reports why.
 
 Merge covers Geometry Nodes/Shader/Compositor node groups and
 material/world embedded trees, per item (tree plus owner settings).
-Merges are values only — socket defaults, node labels/properties, custom
-properties, tree properties, curated owner settings; the structure is
-adopted whole from the side that changed it and never guessed.
-Exact-content renames (same logic under a new name) are paired and
-merged under the new name for Geometry Nodes, Shader and Compositor
-groups; a rename that also edited values on the same side still reads as
-delete + add, and animated groups are flagged but not merged specially.
-A compositor entry's informational `compositor_scenes` list is not part
+Values merge per item - socket defaults, node labels/properties, custom
+properties, tree properties, curated owner settings. When the three
+sides carry node identities (current exports), nodes and links merge per
+entity too: disjoint adds/removals/renames/rewires and edits on
+different nodes combine; delete/edit, same-node structural divergence,
+rename/rename and link contention are listed per node or link and
+resolved with Ours / Base / JSON / Delete in the merge report. Entries
+without identities are adopted whole from the side that changed them and
+never guessed. Exact-content renames (same logic under a new name) are
+paired and merged under the new name for Geometry Nodes, Shader and
+Compositor groups; a rename that also edited values on the same side
+still reads as delete + add, and animated groups are flagged but not
+merged specially. A compositor entry's informational `compositor_scenes`
+list is not part
 of the hash and travels with the adopted side.

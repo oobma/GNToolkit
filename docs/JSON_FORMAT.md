@@ -59,6 +59,12 @@ to fully reconstruct the group.
   on import.
 - References between groups are stored by name (`node_tree_reference`);
   a package never embeds the referenced group's content.
+- Entries may carry a `node_uids` map (node name -> stable id). It is
+  additive, outside the canonical hash, and ignored by older readers;
+  the id survives renames because it also lives on the node as the
+  bookkeeping `gnt_node_uid` custom property. Nodes without a persisted
+  id get a deterministic UUIDv5 at export, so exports stay byte-identical
+  across processes.
 
 ## Materials and worlds
 
