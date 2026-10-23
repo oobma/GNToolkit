@@ -13,7 +13,7 @@ plus the Shader Editor's materials and worlds, are supported.
 ![pure tests](https://github.com/oobma/GNToolkit/actions/workflows/pure-tests.yml/badge.svg)
 
 <sub>The latest release is
-[v0.4.2](https://github.com/oobma/GNToolkit/releases).</sub>
+[v0.4.3](https://github.com/oobma/GNToolkit/releases).</sub>
 
 ![The GNToolkit sidebar in Blender's Node Editor - Sync, Track, Explore,
 Git and Advanced](docs/images/sync-panel.png)

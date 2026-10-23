@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-23
+
 ### Added
 
 - **Stable node identity for graph merges (S1).** Tracked trees now carry
