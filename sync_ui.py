@@ -642,6 +642,12 @@ def _draw_changes_list(layout, context) -> None:
         row.prop(prefs, "show_ignored", text="Show", toggle=True)
 
 
+_GRAPH_CONFLICT_KINDS = frozenset((
+    "node/delete-edit", "node/field", "node/rename-rename",
+    "link/contention", "identity/name",
+))
+
+
 def _draw_merge_report(layout, context) -> None:
     """Draw the last in-addon merge outcome (Scene.gnt_merge_state)."""
     state = getattr(context.scene, "gnt_merge_state", None)
@@ -671,6 +677,18 @@ def _draw_merge_report(layout, context) -> None:
             has_structure = True
         elif kind == "identity":
             has_identity = True
+        if kind in _GRAPH_CONFLICT_KINDS:
+            if drawn_others >= 20:
+                skipped += 1
+                continue
+            drawn_others += 1
+            box.label(text=f"{item.item}: base {item.base}, ours "
+                           f"{item.ours}, JSON {item.theirs}", icon='ERROR')
+            if editable:
+                box.row(align=True).prop(item, "decision", expand=True)
+                if item.decision == "none":
+                    undecided += 1
+            continue
         if kind == "value":
             if drawn_values >= 20:
                 skipped += 1
@@ -1072,11 +1090,16 @@ class GN_AuditState(bpy.types.PropertyGroup):
 
 
 def _merge_decision_items(self, context):
+    if self.kind == "identity/name":
+        return [("none", "...", "Not decided yet"),
+                ("delete", "Delete", "Drop the colliding node")]
     items = [("none", "...", "Not decided yet"),
              ("ours", "Ours", "Keep the local .blend value"),
              ("base", "Base", "Restore the pre-edit value"),
              ("theirs", "JSON", "Take the value from the JSON file")]
-    if self.value_type in ("float", "int", "bool", "string"):
+    if self.kind in _GRAPH_CONFLICT_KINDS:
+        items.append(("delete", "Delete", "Remove the node or link"))
+    elif self.value_type in ("float", "int", "bool", "string"):
         items.append(("custom", "Custom", "Type your own value"))
     return items
 
@@ -1529,12 +1552,11 @@ class GN_OT_SyncResolveJSON(bpy.types.Operator):
 class GN_OT_SyncMergeConflict(bpy.types.Operator):
     bl_idname = "gn.sync_merge_conflict"
     bl_label = "Merge with JSON"
-    bl_description = ("Merge this conflicted entry per item (socket defaults, "
-                      "node labels/properties, custom properties, owner "
-                      "settings): local .blend edits are kept and the JSON "
-                      "changes applied; the common base comes from the JSON "
-                      "file's git history. Nothing is written when items "
-                      "conflict")
+    bl_description = ("Merge this conflicted entry per item (values, and "
+                      "nodes/links when the sides carry identities): local "
+                      ".blend edits are kept and the JSON changes applied; "
+                      "the common base comes from the JSON file's git "
+                      "history. Nothing is written when items conflict")
     bl_options = {'REGISTER', 'UNDO'}
 
     sync_uuid: bpy.props.StringProperty(name="UUID")
@@ -1595,10 +1617,17 @@ class GN_OT_SyncMergeApply(bpy.types.Operator):
                                    "in the entry row first")
             return {'CANCELLED'}
         values = {}
+        entities = {}
         undecided = 0
         has_structure = False
         for item in state.items:
-            if item.kind == "value":
+            if item.kind in _GRAPH_CONFLICT_KINDS:
+                if item.key and item.decision in ("ours", "base", "theirs",
+                                                  "delete"):
+                    entities[item.key] = item.decision
+                else:
+                    undecided += 1
+            elif item.kind == "value":
                 if item.key and item.decision in ("ours", "base", "theirs"):
                     values[item.key] = item.decision
                 elif item.key and item.decision == "custom":
@@ -1612,6 +1641,8 @@ class GN_OT_SyncMergeApply(bpy.types.Operator):
                                        "merged - use Keep JSON or Keep Blend")
                 return {'CANCELLED'}
         overrides = {"values": values}
+        if entities:
+            overrides["entities"] = entities
         if has_structure:
             if state.structure_decision in ("ours", "theirs"):
                 overrides["structure"] = state.structure_decision
