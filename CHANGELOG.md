@@ -47,6 +47,11 @@ All notable changes to this project are documented in this file.
   additive `node_uids` map on the first export (canonical hashes and
   baselines do not move).
 
+### Fixed
+
+- The pending-save notice after Apply now says **Rebuild applied** instead
+  of "Pull applied", so a merge-driven rebuild is described correctly.
+
 ## [0.4.2] - 2026-10-22
 
 ### Changed

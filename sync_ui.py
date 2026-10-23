@@ -432,7 +432,7 @@ def _draw_sync_alerts(layout, context) -> None:
     """Top-of-panel safety notices (pending save, failed imports)."""
     if sync_manager.has_pending_save():
         box = layout.box()
-        box.label(text="Pull applied - save the .blend to persist (Ctrl+S)",
+        box.label(text="Rebuild applied - save the .blend to persist (Ctrl+S)",
                   icon='ERROR')
 
     failed = getattr(context.scene, "gnt_failed_imports", None)
