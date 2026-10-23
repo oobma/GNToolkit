@@ -739,7 +739,7 @@ check("54: rename reports are deterministic and inputs untouched",
       json.dumps(r1, sort_keys=True) == json.dumps(r2, sort_keys=True)
       and json.dumps(maps, sort_keys=True) == snapshot)
 
-check("55: MERGE_VERSION is 3", merge.MERGE_VERSION == 3)
+check("55: MERGE_VERSION is 4", merge.MERGE_VERSION == 4)
 
 print()
 print(f"=== RESULTS: {len(PASSED)} passed, {len(FAILED)} failed ===")

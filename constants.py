@@ -689,6 +689,11 @@ HASH_VERSION: int = 23
 SIDECAR_EXTENSION = ".gntsync"
 SIDECAR_TEXT_BLOCK_NAME = "__gnt_sync_metadata__.json"
 
+# Stable node identity (graph merge): custom property on the node, excluded
+# from the canonical hash by the gnt_* rule; the portable map travels in
+# the entry as top-level ``node_uids``.
+NODE_UID_PROP = "gnt_node_uid"
+
 # Lock file settings for preventing concurrent JSON writes
 LOCK_TIMEOUT_SECONDS = 5.0
 # Interactive reads retry for less time than writers wait (UI responsiveness)

@@ -123,7 +123,7 @@ check("4: --json reports the documented schema",
       code_json == 1 and payload["mode"] == "merge"
       and payload["sides"]["base"] == base_dir
       and payload["hash_version"] == gnt_check._current_hash_version()
-      and payload["merge_version"] == 3
+      and payload["merge_version"] == 4
       and payload["groups"]["G"]["status"] == "conflicted"
       and payload["groups"]["G"]["conflicts"][0]["kind"] == "value"
       and payload["summary"]["conflicted"] == 1 and payload["ok"] is False)

@@ -56,7 +56,8 @@ def _embedded_folder_entry(kind: str, owner) -> dict:
         "type": "GN_UNIFIED_PACKAGE",
         "export_method": PACKAGE_EXPORT_METHOD,
         EMBEDDED_KINDS[kind]: {
-            owner.name: serialize_embedded_entry(owner, kind, derived=False),
+            owner.name: serialize_embedded_entry(owner, kind, derived=False,
+                                             assign_uids=True),
         },
     }
 
@@ -329,7 +330,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                         context.workspace.status_text_set(
                             f"Exporting: {tree.name}")
                         data = _ensure_package_shape(
-                            serialize_node_tree(tree, derived=False))
+                            serialize_node_tree(tree, derived=False,
+                                                assign_uids=True))
                         stem = ng_names.allocate(tree.name, "node_group")
                         write_json_file(os.path.join(ng_dir, f"{stem}.json"),
                                         data, dump_args)
@@ -402,7 +404,8 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                     for i, tree in enumerate(trees):
                         context.window_manager.progress_update(i)
                         master_data["node_groups"][tree.name] = \
-                            serialize_node_tree(tree, derived=False)
+                            serialize_node_tree(tree, derived=False,
+                                                assign_uids=True)
 
                 if modifiers_on:
                     master_data["modifiers"] = []
@@ -422,7 +425,9 @@ class GN_OT_ExportBatchJSON(bpy.types.Operator, ExportHelper):
                         continue
                     for owner in _embedded_export_owners(kind):
                         master_data.setdefault(section, {})[owner.name] = \
-                            serialize_embedded_entry(owner, kind, derived=False)
+                            serialize_embedded_entry(owner, kind,
+                                                     derived=False,
+                                                     assign_uids=True)
                         count_emb += 1
                 write_json_file(self.filepath, master_data, dump_args)
                 self.report({'INFO'},
@@ -497,7 +502,7 @@ class GN_OT_ExportActiveJSON(bpy.types.Operator, ExportHelper):
 
         for d_name, d_tree in deps.items():
             master_data["node_groups"][d_name] = \
-                serialize_node_tree(d_tree, derived=False)
+                serialize_node_tree(d_tree, derived=False, assign_uids=True)
 
         obj = context.active_object
         if obj:

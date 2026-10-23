@@ -29,7 +29,8 @@ from .constants import (ADDON_VERSION, EMBEDDED_KINDS, HASH_VERSION,
                         is_graph_tree_name, is_group_node_bl_idname,
                         is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
-from .file_utils import sanitize_filename, snapshot_files, write_json_file
+from .file_utils import (sanitize_filename, snapshot_files, write_file_bytes,
+                         write_json_file)
 from .hash_utils import (
     canonical_hash_from_tree,
     canonical_hash_from_json_path,
@@ -1026,7 +1027,8 @@ class SyncManager:
         master_data = _ensure_package_shape(master_data)
 
         # Serialize ONLY the primary tree (no full dependency chain)
-        master_data["node_groups"][tree.name] = serialize_node_tree(tree)
+        master_data["node_groups"][tree.name] = serialize_node_tree(
+            tree, assign_uids=True)
 
         write_json_file(abs_path, master_data)
 
@@ -1157,7 +1159,8 @@ class SyncManager:
         master_data = _ensure_package_shape(master_data)
 
         info = {"kind": kind, "blend_name": owner.name}
-        package_put(master_data, info, serialize_embedded_entry(owner, kind))
+        package_put(master_data, info, serialize_embedded_entry(
+            owner, kind, assign_uids=True))
         write_json_file(abs_path, master_data)
 
         blend_hash = canonical_hash_from_embedded(owner, kind)
@@ -1906,7 +1909,8 @@ class SyncManager:
             if data is None:
                 raise ValueError(f"Cannot read {parent_json}")
             data = _ensure_package_shape(data)
-            data.setdefault("node_groups", {})[child.name] = serialize_node_tree(child)
+            data.setdefault("node_groups", {})[child.name] = serialize_node_tree(
+                child, assign_uids=True)
             write_json_file(parent_json, data)
             return parent_json, "added-to-package"
 
@@ -1922,7 +1926,8 @@ class SyncManager:
                     read_json_tolerant(candidate), child.name):
                 raise ValueError(f"No free filename for '{child.name}' in {directory}")
         if not os.path.isfile(candidate):
-            write_json_file(candidate, serialize_node_tree(child))
+            write_json_file(candidate, serialize_node_tree(
+                child, assign_uids=True))
             return candidate, "created"
         return candidate, "tracked-existing"
 
@@ -2144,10 +2149,12 @@ class SyncManager:
 
             # Serialize ONLY the modified entry (no dependency chain)
             if kind == "group":
-                master_data["node_groups"][blend_name] = serialize_node_tree(tree)
+                master_data["node_groups"][blend_name] = serialize_node_tree(
+                    tree, assign_uids=True)
             else:
                 package_put(master_data, info,
-                            serialize_embedded_entry(owner, kind))
+                            serialize_embedded_entry(
+                                owner, kind, assign_uids=True))
             serialized_dict = {blend_name: package_entry(master_data, info)}
 
             write_json_file(json_path, master_data)
@@ -2277,8 +2284,8 @@ class SyncManager:
 
         def _serialize_ours():
             if kind == "group":
-                return serialize_node_tree(tree)
-            return serialize_embedded_entry(owner, kind)
+                return serialize_node_tree(tree, assign_uids=True)
+            return serialize_embedded_entry(owner, kind, assign_uids=True)
 
         json_path = resolve_json_path(info.get("json_path", ""),
                                       self._blend_dir())
@@ -2381,6 +2388,11 @@ class SyncManager:
             report["reason"] = "the JSON file is locked by another session"
             return report
         try:
+            with open(json_path, "rb") as fh:
+                original_bytes = fh.read()
+        except OSError:
+            original_bytes = None
+        try:
             fresh = read_json_tolerant(json_path)
             if fresh is None:
                 report["status"] = "unavailable"
@@ -2389,14 +2401,35 @@ class SyncManager:
             fresh = _ensure_entry_package_shape(fresh, kind)
             package_put(fresh, info, result["merged"])
             write_json_file(json_path, fresh)
+        except OSError as exc:
+            report["status"] = "unavailable"
+            report["reason"] = "the JSON file could not be written: %s" % exc
+            return report
         finally:
             lock.release()
 
         tracker = self.import_from_json(sync_uuid)
-        if tracker is not None and tracker.error_count:
-            report["notices"].append(
-                "the merged JSON was written but the .blend rebuild "
-                "reported %d error(s)" % tracker.error_count)
+        rebuilt_hash = entry_blend_hash(sync_uuid, info)
+        if tracker is None or tracker.error_count or \
+                (result.get("merged_hash")
+                 and rebuilt_hash != result["merged_hash"]):
+            restored = False
+            if original_bytes is not None:
+                try:
+                    write_file_bytes(json_path, original_bytes)
+                    self.import_from_json(sync_uuid)
+                    restored = True
+                except OSError:
+                    restored = False
+            report["status"] = "unavailable"
+            report["reason"] = (
+                "the merged JSON could not be rebuilt faithfully"
+                + ("; the JSON was restored" if restored
+                   else "; the JSON could not be restored"))
+            self._merge_sessions.pop(sync_uuid, None)
+            self.refresh_cached_statuses({sync_uuid})
+            self._dirty = True
+            return report
         self._merge_sessions.pop(sync_uuid, None)
         self.refresh_cached_statuses({sync_uuid})
         self._dirty = True
@@ -2756,7 +2789,8 @@ class SyncManager:
             }
         done = 0
         for name, tree in all_groups.items():
-            master_data["node_groups"][name] = serialize_node_tree(tree)
+            master_data["node_groups"][name] = serialize_node_tree(
+                tree, assign_uids=True)
             done += 1
             if done % 50 == 0 or done == total:
                 _log.info("[Link All] serialized %d/%d groups", done, total)
@@ -2929,7 +2963,8 @@ class SyncManager:
         for owner in owners:
             info = {"kind": "material", "blend_name": owner.name}
             package_put(master_data, info,
-                        serialize_embedded_entry(owner, "material"))
+                        serialize_embedded_entry(owner, "material",
+                                                 assign_uids=True))
         write_json_file(abs_path, master_data)
         json_mtime = os.path.getmtime(abs_path)
         stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
@@ -3027,7 +3062,8 @@ class SyncManager:
         for owner in owners:
             info = {"kind": "world", "blend_name": owner.name}
             package_put(master_data, info,
-                        serialize_embedded_entry(owner, "world"))
+                        serialize_embedded_entry(owner, "world",
+                                                 assign_uids=True))
         write_json_file(abs_path, master_data)
         json_mtime = os.path.getmtime(abs_path)
         stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
@@ -3205,11 +3241,13 @@ class SyncManager:
                     kind_e = entry_kind(info_e)
                     name_e = info_e.get("blend_name", "")
                     if kind_e == "group":
-                        master_data["node_groups"][name_e] = serialize_node_tree(tree_e)
+                        master_data["node_groups"][name_e] = serialize_node_tree(
+                            tree_e, assign_uids=True)
                         serialized_dict[name_e] = master_data["node_groups"][name_e]
                     else:
                         package_put(master_data, info_e,
-                                    serialize_embedded_entry(owner_e, kind_e))
+                                    serialize_embedded_entry(
+                                        owner_e, kind_e, assign_uids=True))
                         serialized_dict[name_e] = package_entry(master_data, info_e)
 
                 write_json_file(json_path, master_data)
@@ -3346,11 +3384,13 @@ class SyncManager:
                     kind_e = entry_kind(info_e)
                     name_e = info_e.get("blend_name", "")
                     if kind_e == "group":
-                        master_data["node_groups"][name_e] = serialize_node_tree(tree_e)
+                        master_data["node_groups"][name_e] = serialize_node_tree(
+                            tree_e, assign_uids=True)
                         serialized_dict[name_e] = master_data["node_groups"][name_e]
                     else:
                         package_put(master_data, info_e,
-                                    serialize_embedded_entry(owner_e, kind_e))
+                                    serialize_embedded_entry(
+                                        owner_e, kind_e, assign_uids=True))
                         serialized_dict[name_e] = package_entry(master_data, info_e)
 
                 write_json_file(json_path, master_data)

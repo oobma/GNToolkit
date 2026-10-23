@@ -29,6 +29,8 @@ CASES = [
     ("merge values", "test_merge_values.py"),
     ("merge package", "test_merge_package.py"),
     ("merge overrides", "test_merge_overrides.py"),
+    ("node identity", "test_node_identity.py"),
+    ("merge graph", "test_merge_graph.py"),
     ("gnt_check version guard", "test_gnt_check_version_guard.py"),
     ("gnt_check diff", "test_gnt_check_diff.py"),
     ("gnt_check merge", "test_gnt_check_merge.py"),

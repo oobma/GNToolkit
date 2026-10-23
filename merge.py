@@ -42,7 +42,7 @@ import json
 from .audit import content_hash_from_json_data
 from .hash_utils import canonical_hash_from_json_data, canonicalize_node_tree_data
 
-MERGE_VERSION = 3
+MERGE_VERSION = 4
 
 _ABSENT = object()
 
@@ -490,6 +490,358 @@ def _result(name, status, *, adopted_structure=None, merged=None,
     }
 
 
+def _merge_node_uids(base: dict, ours: dict, theirs: dict,
+                     merged: dict) -> None:
+    """Carry node identities independently of the adopted structure.
+
+    Preference: ours, then theirs, then base.  Only names present in the
+    merged tree survive.  Identity is bookkeeping (outside the canonical
+    hash), so preserving it never changes the merge result.
+    """
+    names = {n.get("name", "") for n in merged.get("nodes", [])}
+    maps = (ours.get("node_uids") or {}, theirs.get("node_uids") or {},
+            base.get("node_uids") or {})
+    out = {}
+    for name in sorted(names):
+        for mapping in maps:
+            uid = mapping.get(name)
+            if isinstance(uid, str) and uid:
+                out[name] = uid
+                break
+    if out:
+        merged["node_uids"] = out
+    else:
+        merged.pop("node_uids", None)
+
+
+# ---------------------------------------------------------------------------
+# Graph identity, matching and per-entity diff (pure, read-only)
+# ---------------------------------------------------------------------------
+
+_UI_NODE_PROPS = frozenset((
+    "bl_width_default", "bl_width_min", "bl_width_max",
+    "bl_height_default", "bl_height_min", "bl_height_max",
+    "vector_dimensions",
+))
+
+
+def _entry_uids(entry: dict) -> dict:
+    value = entry.get("node_uids")
+    if not isinstance(value, dict):
+        return {}
+    return {name: uid for name, uid in value.items()
+            if isinstance(name, str) and isinstance(uid, str) and uid}
+
+
+def _entity_id(entry: dict, name: str) -> str:
+    return _entry_uids(entry).get(name) or "name:" + name
+
+
+def _node_signature(node: dict) -> tuple:
+    props = {k: v for k, v in (node.get("properties") or {}).items()
+             if not str(k).startswith("bl_") and k not in _UI_NODE_PROPS}
+    ins = tuple(sorted((s.get("name", ""), s.get("type", ""))
+                       for s in node.get("inputs", [])))
+    outs = tuple(sorted((s.get("name", ""), s.get("type", ""))
+                        for s in node.get("outputs", [])))
+    try:
+        prop_text = json.dumps(props, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        prop_text = repr(sorted(props))
+    return (node.get("type", ""), ins, outs, prop_text)
+
+
+def _neighbor_names(entry: dict, name: str) -> set:
+    out = set()
+    for link in entry.get("links", []):
+        if link.get("from_node") == name:
+            out.add(link.get("to_node", ""))
+        if link.get("to_node") == name:
+            out.add(link.get("from_node", ""))
+    out.discard("")
+    return out
+
+
+def _normalize_link(link: dict) -> tuple:
+    return (link.get("from_node", ""),
+            link.get("from_socket_name", link.get("from_socket_id", "")),
+            link.get("to_node", ""),
+            link.get("to_socket_name", link.get("to_socket_id", "")))
+
+
+def _connected_inputs(entry: dict) -> set:
+    return {(link.get("to_node", ""),
+             link.get("to_socket_name", link.get("to_socket_id", "")))
+            for link in entry.get("links", [])}
+
+
+def match_entry_nodes(base: dict, side: dict, use_uids: bool = True) -> dict:
+    """Match base nodes to side nodes: UID, name+type, signature, topology.
+
+    Returns ``{"matches": {base_name: side_name},
+    "ambiguous_base": [...], "ambiguous_side": [...]}``.  Ambiguity is
+    never guessed: the caller must treat it as a conflict.
+    """
+    b_nodes = {n.get("name", ""): n for n in base.get("nodes", [])}
+    s_nodes = {n.get("name", ""): n for n in side.get("nodes", [])}
+    matches = {}
+    ambiguous_b = set()
+    ambiguous_s = set()
+    used_side = set()
+
+    if use_uids:
+        b_by_uid = {}
+        s_by_uid = {}
+        for name, uid in _entry_uids(base).items():
+            if name in b_nodes:
+                b_by_uid.setdefault(uid, []).append(name)
+        for name, uid in _entry_uids(side).items():
+            if name in s_nodes:
+                s_by_uid.setdefault(uid, []).append(name)
+        for uid in sorted(b_by_uid):
+            bnames = sorted(b_by_uid[uid])
+            snames = sorted(s_by_uid.get(uid, []))
+            if len(bnames) == 1 and len(snames) == 1:
+                matches[bnames[0]] = snames[0]
+                used_side.add(snames[0])
+            elif bnames and snames:
+                for bname in bnames:
+                    if bname in snames and bname not in used_side:
+                        matches[bname] = bname
+                        used_side.add(bname)
+                for bname in bnames:
+                    if bname not in matches:
+                        ambiguous_b.add(bname)
+                for sname in snames:
+                    if sname not in used_side:
+                        ambiguous_s.add(sname)
+
+    for bname in sorted(b_nodes):
+        if bname in matches or bname in ambiguous_b:
+            continue
+        snode = s_nodes.get(bname)
+        if snode is not None and snode.get("type") == b_nodes[bname].get("type") \
+                and bname not in used_side:
+            matches[bname] = bname
+            used_side.add(bname)
+
+    buckets = {}
+    for sname in sorted(s_nodes):
+        if sname in used_side or sname in ambiguous_s:
+            continue
+        buckets.setdefault(_node_signature(s_nodes[sname]), []).append(sname)
+    for bname in sorted(b_nodes):
+        if bname in matches or bname in ambiguous_b:
+            continue
+        candidates = [n for n in buckets.get(_node_signature(b_nodes[bname]), [])
+                      if n not in used_side and n not in ambiguous_s]
+        if len(candidates) == 1:
+            matches[bname] = candidates[0]
+            used_side.add(candidates[0])
+
+    remaining_b = [n for n in sorted(b_nodes)
+                   if n not in matches and n not in ambiguous_b]
+    remaining_s = [n for n in sorted(s_nodes)
+                   if n not in used_side and n not in ambiguous_s]
+    for bname in remaining_b:
+        bnode = b_nodes[bname]
+        b_neigh = _neighbor_names(base, bname)
+        scored = []
+        for sname in remaining_s:
+            if sname in used_side:
+                continue
+            snode = s_nodes[sname]
+            if snode.get("type") != bnode.get("type"):
+                continue
+            s_neigh = _neighbor_names(side, sname)
+            union = b_neigh | s_neigh
+            score = len(b_neigh & s_neigh) / len(union) if union else 0.0
+            scored.append((score, sname))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        if not scored:
+            continue
+        best_score = scored[0][0]
+        best = [name for score, name in scored if score == best_score]
+        if best_score >= 0.5 and len(best) == 1:
+            matches[bname] = best[0]
+            used_side.add(best[0])
+        elif best_score >= 0.5:
+            ambiguous_b.add(bname)
+            ambiguous_s.update(best)
+
+    return {"matches": matches,
+            "ambiguous_base": sorted(ambiguous_b),
+            "ambiguous_side": sorted(ambiguous_s)}
+
+
+def _norm_node(node: dict, connected: set) -> dict:
+    props = {k: v for k, v in (node.get("properties") or {}).items()
+             if not str(k).startswith("bl_") and k not in _UI_NODE_PROPS}
+    inputs = []
+    for sock in node.get("inputs", []):
+        item = {"name": sock.get("name", ""),
+                "type": sock.get("type", ""),
+                "bl_idname": sock.get("bl_idname", "")}
+        if (node.get("name", ""), sock.get("name", "")) not in connected:
+            item["default"] = sock.get("default_value")
+        inputs.append(item)
+    outputs = []
+    for sock in node.get("outputs", []):
+        outputs.append({"name": sock.get("name", ""),
+                        "type": sock.get("type", ""),
+                        "bl_idname": sock.get("bl_idname", ""),
+                        "default": sock.get("default_value")})
+    custom = {k: v for k, v in (node.get("custom_properties") or {}).items()
+              if not str(k).startswith("gnt_")}
+    return {
+        "type": node.get("type", ""),
+        "label": node.get("label", ""),
+        "properties": props,
+        "inputs": sorted(inputs, key=lambda x: (x["name"], x["type"])),
+        "outputs": sorted(outputs, key=lambda x: (x["name"], x["type"])),
+        "custom_properties": custom,
+        "zone_items": node.get("zone_items") or [],
+        "menu_items_data": node.get("menu_items_data") or [],
+        "inner_tree": node.get("inner_tree"),
+    }
+
+
+def _socket_map(items) -> dict:
+    seen = {}
+    out = {}
+    for item in items or []:
+        prefix = (item.get("name"), item.get("type"))
+        occ = seen.get(prefix, 0)
+        seen[prefix] = occ + 1
+        out[(prefix[0], prefix[1], occ)] = item
+    return out
+
+
+def _changed_fields(a: dict, b: dict) -> set:
+    out = set()
+    for key in ("type", "label", "properties", "inputs", "outputs",
+                "custom_properties", "zone_items", "menu_items_data",
+                "inner_tree"):
+        if a.get(key) == b.get(key):
+            continue
+        if key == "properties":
+            av = a.get(key) or {}
+            bv = b.get(key) or {}
+            for prop in sorted(set(av) | set(bv)):
+                if av.get(prop) != bv.get(prop):
+                    out.add("prop:" + prop)
+        elif key in ("inputs", "outputs"):
+            av = _socket_map(a.get(key))
+            bv = _socket_map(b.get(key))
+            prefix = "input:" if key == "inputs" else "output:"
+            for item in sorted(set(av) | set(bv)):
+                if av.get(item) != bv.get(item):
+                    suffix = "[#%d]" % item[2] if item[2] else ""
+                    out.add(prefix + item[0] + suffix)
+        elif key == "custom_properties":
+            av = a.get(key) or {}
+            bv = b.get(key) or {}
+            for prop in sorted(set(av) | set(bv)):
+                if av.get(prop) != bv.get(prop):
+                    out.add("custom:" + prop)
+        else:
+            out.add(key)
+    return out
+
+
+def diff_entries(base: dict, side: dict, use_uids: bool = True) -> dict:
+    """Per-entity difference base -> side (pure, deterministic).
+
+    ``added``/``removed`` map entity ids to node names; ``renamed`` maps
+    base name to side name; ``changed`` maps entity ids to field keys;
+    ``touched`` contains entity ids and link keys; ``field_keys`` is the
+    fine-grained map used by the 3-way decision.
+    """
+    matched = match_entry_nodes(base, side, use_uids=use_uids)
+    matches = matched["matches"]
+    amb_b = set(matched["ambiguous_base"])
+    amb_s = set(matched["ambiguous_side"])
+    b_nodes = {n.get("name", ""): n for n in base.get("nodes", [])}
+    s_nodes = {n.get("name", ""): n for n in side.get("nodes", [])}
+    b_conn = _connected_inputs(base)
+    s_conn = _connected_inputs(side)
+
+    added = {}
+    removed = {}
+    renamed = {}
+    changed = {}
+    field_keys = {}
+    touched = set()
+
+    def _touch(entity, field):
+        touched.add(entity)
+        field_keys.setdefault(entity, set()).add(field)
+
+    for bname in sorted(b_nodes):
+        if bname in amb_b:
+            _touch(_entity_id(base, bname), "ambiguous")
+            continue
+        if bname not in matches:
+            entity = _entity_id(base, bname)
+            removed[entity] = bname
+            _touch(entity, "removed")
+            continue
+        sname = matches[bname]
+        snode = s_nodes[sname]
+        entity = _entity_id(base, bname) or _entity_id(side, sname)
+        if sname != bname:
+            renamed[bname] = sname
+            _touch(entity, "name")
+        fields = _changed_fields(_norm_node(b_nodes[bname], b_conn),
+                                 _norm_node(snode, s_conn))
+        if fields:
+            changed[entity] = sorted(fields)
+            for field in sorted(fields):
+                _touch(entity, field)
+
+    matched_side = set(matches.values())
+    for sname in sorted(s_nodes):
+        if sname in amb_s:
+            _touch(_entity_id(side, sname), "ambiguous")
+            continue
+        if sname not in matched_side:
+            entity = _entity_id(side, sname)
+            added[entity] = sname
+            _touch(entity, "added")
+
+    def link_key(entry, link):
+        f_node, f_sock, t_node, t_sock = _normalize_link(link)
+        return (_entity_id(entry, f_node), f_sock,
+                _entity_id(entry, t_node), t_sock)
+
+    base_links = {link_key(base, link) for link in base.get("links", [])}
+    side_links = {link_key(side, link) for link in side.get("links", [])}
+    links_added = side_links - base_links
+    links_removed = base_links - side_links
+    added_targets = {}
+    for key in sorted(links_added):
+        entity = "link:" + repr(key)
+        _touch(entity, "added")
+        added_targets.setdefault((key[2], key[3]), set()).add(key)
+    for key in sorted(links_removed):
+        _touch("link:" + repr(key), "removed")
+
+    return {
+        "matches": matches,
+        "ambiguous_base": sorted(amb_b),
+        "ambiguous_side": sorted(amb_s),
+        "added": added,
+        "removed": removed,
+        "renamed": renamed,
+        "changed": changed,
+        "field_keys": field_keys,
+        "touched": touched,
+        "links_added": links_added,
+        "links_removed": links_removed,
+        "added_targets": added_targets,
+    }
+
+
 def _structure_conflicts(s_base: dict, s_ours: dict, s_theirs: dict,
                          limit: int = 50) -> list:
     """Human-readable per-element report of two divergent structures.
@@ -582,8 +934,559 @@ def _structure_conflicts(s_base: dict, s_ours: dict, s_theirs: dict,
 
 
 # ---------------------------------------------------------------------------
-# Core: one entry
+# Core: graph merge (S3) - nodes/links per UID, values remapped by identity
 # ---------------------------------------------------------------------------
+
+def _graph_identity_ready(entry: dict) -> bool:
+    nodes = entry.get("nodes") or []
+    if not nodes:
+        return False
+    uids = _entry_uids(entry)
+    names = {n.get("name", "") for n in nodes}
+    return names <= set(uids) and len(set(uids.values())) == len(uids)
+
+
+def _by_uid(entry: dict) -> dict:
+    nodes = {n.get("name", ""): n for n in entry.get("nodes", [])}
+    out = {}
+    for name, uid in _entry_uids(entry).items():
+        node = nodes.get(name)
+        if node is not None:
+            out[uid] = node
+    return out
+
+
+def _node_structure(node: dict) -> dict:
+    out = {}
+    for key, value in node.items():
+        if key in ("name", "label", "location", "parent", "hide",
+                   "properties", "custom_properties"):
+            continue
+        if key in ("inputs", "outputs"):
+            sockets = []
+            for sock in value or []:
+                sockets.append({k: v for k, v in sock.items()
+                                if k not in ("default_value", "identifier",
+                                             "hide")})
+            out[key] = sorted(sockets, key=lambda s: (
+                s.get("name", ""), s.get("type", ""),
+                s.get("bl_idname", "")))
+        else:
+            out[key] = value
+    return out
+
+
+def _nodes_equal(entry_a: dict, node_a: dict, entry_b: dict,
+                 node_b: dict) -> bool:
+    if node_a.get("name") != node_b.get("name"):
+        return False
+    return _norm_node(node_a, _connected_inputs(entry_a)) == \
+        _norm_node(node_b, _connected_inputs(entry_b))
+
+
+def _merged_node_name(base: dict, ours: dict, theirs: dict):
+    bn = base.get("name", "")
+    on = ours.get("name", "")
+    tn = theirs.get("name", "")
+    if on == tn:
+        return on, ""
+    if on == bn:
+        return tn, ""
+    if tn == bn:
+        return on, ""
+    return None, "node/rename-rename"
+
+
+def _opaque_structure(canonical: dict) -> dict:
+    out = {}
+    items = canonical.get("interface_items")
+    if items is not None:
+        out["interface_items"] = [
+            {k: v for k, v in item.items() if k != "properties"}
+            for item in items if isinstance(item, dict)]
+    for key in ("derived_node_groups", "texts", "compositor_scenes"):
+        if key in canonical:
+            out[key] = canonical[key]
+    return out
+
+
+def _entity_override(overrides, key: str):
+    if not isinstance(overrides, dict):
+        return None
+    entities = overrides.get("entities")
+    if not isinstance(entities, dict):
+        return None
+    decision = entities.get(key)
+    if decision in ("ours", "theirs", "base", "delete"):
+        return decision
+    return None
+
+
+def _resolve_entity(overrides, key, candidates):
+    decision = _entity_override(overrides, key)
+    if decision is None:
+        return False, None, ""
+    chosen = candidates.get(decision)
+    if decision == "delete" or chosen is None:
+        return True, None, ""
+    return True, deepcopy(chosen), chosen.get("name", "")
+
+
+def _graph_conflict(kind: str, item: str, key: str, *, uid: str = "",
+                    base="", ours="", theirs="") -> dict:
+    conflict = {"kind": kind, "item": item, "key": key,
+                "base": base, "ours": ours, "theirs": theirs}
+    if uid:
+        conflict["uid"] = uid
+    return conflict
+
+
+def _link_map(entry: dict) -> dict:
+    out = {}
+    for link in entry.get("links", []):
+        from_node, from_sock, to_node, to_sock = _normalize_link(link)
+        key = (_entity_id(entry, from_node), from_sock,
+               _entity_id(entry, to_node), to_sock)
+        out[key] = link
+    return out
+
+
+def _remap_value_key(key, mapping):
+    if key[0] in ("label", "nodeprop", "nodecustom", "sockdef"):
+        name = mapping.get(key[1])
+        if not name:
+            return None
+        return (key[0], name) + key[2:]
+    return key
+
+
+def _merge_graph_entries(base: dict, ours: dict, theirs: dict,
+                         group_name: str, canonical: tuple,
+                         overrides: dict | None = None) -> dict | None:
+    """Per-entity 3-way merge; requires complete, unique UID maps."""
+    if not (_graph_identity_ready(base) and _graph_identity_ready(ours)
+            and _graph_identity_ready(theirs)):
+        return None
+
+    canon_b, canon_o, canon_t = canonical
+    b_by_uid = _by_uid(base)
+    o_by_uid = _by_uid(ours)
+    t_by_uid = _by_uid(theirs)
+    merged_by_uid = {}
+    merged_name = {}
+    applied = []
+    conflicts = []
+    notices = []
+    failed_uids = set()
+    resolved_uids = set()
+    target_decisions = {}
+
+    for uid in sorted(set(b_by_uid) | set(o_by_uid) | set(t_by_uid)):
+        b = b_by_uid.get(uid)
+        o = o_by_uid.get(uid)
+        t = t_by_uid.get(uid)
+        node = None
+        name = ""
+
+        if b is not None and o is not None and t is not None:
+            b_struct = _node_structure(b)
+            o_struct = _node_structure(o)
+            t_struct = _node_structure(t)
+            o_changed = not _nodes_equal(base, b, ours, o)
+            t_changed = not _nodes_equal(base, b, theirs, t)
+            if not o_changed and not t_changed:
+                node, name = b, b.get("name", "")
+            elif o_changed and not t_changed:
+                node, name = o, o.get("name", "")
+            elif t_changed and not o_changed:
+                node, name = t, t.get("name", "")
+            else:
+                chosen_name, rename_error = _merged_node_name(b, o, t)
+                if rename_error:
+                    resolved, chosen_node, chosen_name = _resolve_entity(
+                        overrides, "node:" + uid,
+                        {"ours": o, "theirs": t, "base": b})
+                    if not resolved:
+                        conflicts.append(_graph_conflict(
+                            rename_error,
+                            "node '%s' renamed differently on both sides" %
+                            b.get("name", ""),
+                            "node:" + uid, uid=uid,
+                            base=b.get("name", ""), ours=o.get("name", ""),
+                            theirs=t.get("name", "")))
+                        failed_uids.add(uid)
+                        continue
+                    resolved_uids.add(uid)
+                    if chosen_node is None:
+                        applied.append({"item": "node '%s' removed" %
+                                        b.get("name", ""), "from": "chosen",
+                                        "value": "(removed)"})
+                        failed_uids.add(uid)
+                        continue
+                    node, name = chosen_node, chosen_name
+                else:
+                    if o_struct != b_struct and t_struct != b_struct \
+                            and o_struct != t_struct:
+                        resolved, chosen_node, chosen_name = _resolve_entity(
+                            overrides, "field:" + uid + ":structure",
+                            {"ours": o, "theirs": t, "base": b})
+                        if not resolved:
+                            conflicts.append(_graph_conflict(
+                                "node/field",
+                                "node '%s' changed structurally differently "
+                                "on both sides" % b.get("name", ""),
+                                "field:" + uid + ":structure", uid=uid,
+                                base="structure", ours="structure",
+                                theirs="structure"))
+                            failed_uids.add(uid)
+                            continue
+                        resolved_uids.add(uid)
+                        if chosen_node is None:
+                            applied.append({"item": "node '%s' removed" %
+                                            b.get("name", ""),
+                                            "from": "chosen",
+                                            "value": "(removed)"})
+                            failed_uids.add(uid)
+                            continue
+                        node, name = chosen_node, chosen_name
+                    else:
+                        if o_struct != b_struct:
+                            source = o
+                        elif t_struct != b_struct:
+                            source = t
+                        else:
+                            source = o
+                        node = deepcopy(source)
+                        name = chosen_name
+        elif b is not None and o is not None:
+            if _nodes_equal(base, b, ours, o):
+                applied.append({"item": "node '%s' removed" % b.get("name", ""),
+                                "from": "theirs", "value": "(removed)"})
+                continue
+            resolved, chosen_node, chosen_name = _resolve_entity(
+                overrides, "node:" + uid,
+                {"ours": o, "theirs": t, "base": b})
+            if resolved:
+                resolved_uids.add(uid)
+                if chosen_node is None:
+                    applied.append({"item": "node '%s' removed" %
+                                    b.get("name", ""), "from": "chosen",
+                                    "value": "(removed)"})
+                    failed_uids.add(uid)
+                    continue
+                node, name = chosen_node, chosen_name
+            else:
+                conflicts.append(_graph_conflict(
+                    "node/delete-edit",
+                    "node '%s' deleted on theirs but edited on ours" %
+                    b.get("name", ""), "node:" + uid, uid=uid,
+                    base=b.get("name", ""), ours=o.get("name", ""),
+                    theirs="(removed)"))
+                failed_uids.add(uid)
+                continue
+        elif b is not None and t is not None:
+            if _nodes_equal(base, b, theirs, t):
+                applied.append({"item": "node '%s' removed" % b.get("name", ""),
+                                "from": "ours", "value": "(removed)"})
+                continue
+            resolved, chosen_node, chosen_name = _resolve_entity(
+                overrides, "node:" + uid,
+                {"ours": o, "theirs": t, "base": b})
+            if resolved:
+                resolved_uids.add(uid)
+                if chosen_node is None:
+                    applied.append({"item": "node '%s' removed" %
+                                    b.get("name", ""), "from": "chosen",
+                                    "value": "(removed)"})
+                    failed_uids.add(uid)
+                    continue
+                node, name = chosen_node, chosen_name
+            else:
+                conflicts.append(_graph_conflict(
+                    "node/delete-edit",
+                    "node '%s' deleted on ours but edited on theirs" %
+                    b.get("name", ""), "node:" + uid, uid=uid,
+                    base=b.get("name", ""), ours="(removed)",
+                    theirs=t.get("name", "")))
+                failed_uids.add(uid)
+                continue
+        elif b is not None:
+            applied.append({"item": "node '%s' removed" % b.get("name", ""),
+                            "from": "both", "value": "(removed)"})
+            continue
+        elif o is not None and t is not None:
+            if _nodes_equal(ours, o, theirs, t):
+                node, name = deepcopy(o), o.get("name", "")
+            else:
+                resolved, chosen_node, chosen_name = _resolve_entity(
+                    overrides, "node:" + uid,
+                    {"ours": o, "theirs": t, "base": None})
+                if resolved:
+                    resolved_uids.add(uid)
+                    if chosen_node is None:
+                        applied.append({"item": "node '%s' removed" %
+                                        o.get("name", ""), "from": "chosen",
+                                        "value": "(removed)"})
+                        failed_uids.add(uid)
+                        continue
+                    node, name = chosen_node, chosen_name
+                else:
+                    conflicts.append(_graph_conflict(
+                        "node/field",
+                        "node '%s' added on both sides with different content"
+                        % o.get("name", ""), "node:" + uid, uid=uid,
+                        base="(absent)", ours=o.get("name", ""),
+                        theirs=t.get("name", "")))
+                    failed_uids.add(uid)
+                    continue
+        elif o is not None:
+            node, name = deepcopy(o), o.get("name", "")
+        elif t is not None:
+            node, name = deepcopy(t), t.get("name", "")
+
+        if node is None:
+            continue
+        node = deepcopy(node)
+        node["name"] = name
+        merged_by_uid[uid] = node
+        merged_name[uid] = name
+
+    names = {}
+    for uid, name in merged_name.items():
+        if name in names:
+            if _entity_override(overrides, "node:" + uid) == "delete":
+                merged_by_uid.pop(uid, None)
+                merged_name.pop(uid, None)
+                applied.append({"item": "node '%s' removed" % name,
+                                "from": "chosen", "value": "(removed)"})
+                failed_uids.add(uid)
+                continue
+            conflicts.append(_graph_conflict(
+                "identity/name",
+                "two merged nodes would be named '%s'" % name,
+                "node:" + uid, uid=uid,
+                base="", ours=name, theirs=""))
+            failed_uids.add(uid)
+            continue
+        names[name] = uid
+
+    merged_nodes = [merged_by_uid[uid] for uid in sorted(
+        merged_by_uid, key=lambda u: (merged_name[u], u))]
+    node_uids = {merged_name[uid]: uid for uid in sorted(
+        merged_by_uid, key=lambda u: (merged_name[u], u))}
+
+    base_links = _link_map(base)
+    ours_links = _link_map(ours)
+    theirs_links = _link_map(theirs)
+    all_links = set(base_links) | set(ours_links) | set(theirs_links)
+    kept = {}
+    added_o = {k for k in ours_links if k not in base_links}
+    added_t = {k for k in theirs_links if k not in base_links}
+    removed_o = {k for k in base_links if k not in ours_links}
+    removed_t = {k for k in base_links if k not in theirs_links}
+
+    def _targets(keys):
+        out = {}
+        for key in keys:
+            out.setdefault((key[2], key[3]), set()).add(key)
+        return out
+
+    added_o_by_target = _targets(added_o)
+    added_t_by_target = _targets(added_t)
+    removed_o_by_target = _targets(removed_o)
+    removed_t_by_target = _targets(removed_t)
+    for target in sorted(set(added_o_by_target) | set(added_t_by_target),
+                         key=repr):
+        decision = _entity_override(overrides, "link:" + repr(target))
+        if decision:
+            target_decisions[target] = decision
+            continue
+        o_keys = added_o_by_target.get(target, set())
+        t_keys = added_t_by_target.get(target, set())
+        if o_keys and t_keys and o_keys != t_keys:
+            conflicts.append(_graph_conflict(
+                "link/contention",
+                "two different links added to the same socket", "link:" +
+                repr(target), base="", ours=repr(sorted(o_keys)),
+                theirs=repr(sorted(t_keys))))
+        if target in removed_o_by_target and target in added_t_by_target:
+            conflicts.append(_graph_conflict(
+                "link/contention",
+                "one side removed the link to a socket the other side "
+                "rewired", "link:" + repr(target), base="",
+                ours="removed", theirs="added"))
+        if target in removed_t_by_target and target in added_o_by_target:
+            conflicts.append(_graph_conflict(
+                "link/contention",
+                "one side removed the link to a socket the other side "
+                "rewired", "link:" + repr(target), base="",
+                ours="added", theirs="removed"))
+
+    for key in sorted(all_links, key=repr):
+        in_b = key in base_links
+        in_o = key in ours_links
+        in_t = key in theirs_links
+        if in_o and in_t:
+            kept[key] = ours_links[key]
+        elif not in_b and (in_o or in_t):
+            kept[key] = ours_links[key] if in_o else theirs_links[key]
+
+    for target, decision in target_decisions.items():
+        for key in list(kept):
+            if (key[2], key[3]) == target:
+                del kept[key]
+        source = {"ours": ours_links, "theirs": theirs_links,
+                  "base": base_links}.get(decision)
+        if source is not None:
+            for key, raw in source.items():
+                if (key[2], key[3]) == target:
+                    kept[key] = raw
+        applied.append({"item": "links to '%s.%s'" % (
+            merged_name.get(target[0], target[0]), target[1]),
+            "from": decision, "value": "(chosen)"})
+
+    for target in sorted({(key[2], key[3]) for key in kept}, key=repr):
+        if target in target_decisions:
+            continue
+        if len([k for k in kept if (k[2], k[3]) == target]) > 1:
+            base_count = len([k for k in base_links if (k[2], k[3]) == target])
+            if base_count <= 1:
+                conflicts.append(_graph_conflict(
+                    "link/contention",
+                    "more than one link would feed the same socket",
+                    "link:" + repr(target)))
+
+    link_order = []
+    for key in base_links:
+        if key in kept and key not in link_order:
+            link_order.append(key)
+    for key in ours_links:
+        if key in kept and key not in link_order:
+            link_order.append(key)
+    for key in theirs_links:
+        if key in kept and key not in link_order:
+            link_order.append(key)
+    merged_links = []
+    for key in link_order:
+        raw = kept[key]
+        if key[0] in failed_uids or key[2] in failed_uids:
+            continue
+        from_name = merged_name.get(key[0])
+        to_name = merged_name.get(key[2])
+        if not from_name or not to_name:
+            conflicts.append(_graph_conflict(
+                "link/contention",
+                "a link points to a node removed by the merge",
+                "link:" + repr(key)))
+            continue
+        link = deepcopy(raw)
+        link["from_node"] = from_name
+        link["to_node"] = to_name
+        merged_links.append(link)
+
+    opaque_b = _opaque_structure(canon_b)
+    opaque_o = _opaque_structure(canon_o)
+    opaque_t = _opaque_structure(canon_t)
+    opaque_source = None
+    if opaque_o != opaque_b and opaque_t != opaque_b:
+        if opaque_o != opaque_t:
+            conflicts.append(_graph_conflict(
+                "structure",
+                "interface/derived/texts changed differently on both sides",
+                "structure:opaque", base="changed", ours="changed",
+                theirs="changed"))
+        else:
+            opaque_source = ours
+    elif opaque_o != opaque_b:
+        opaque_source = ours
+    elif opaque_t != opaque_b:
+        opaque_source = theirs
+
+    merged = deepcopy(base)
+    merged["name"] = group_name or base.get("name", "")
+    merged["nodes"] = merged_nodes
+    merged["links"] = merged_links
+    merged["node_uids"] = node_uids
+    if opaque_source is not None:
+        for key in ("interface_items", "derived_node_groups", "texts",
+                    "compositor_scenes"):
+            if key in opaque_source:
+                merged[key] = deepcopy(opaque_source[key])
+            else:
+                merged.pop(key, None)
+
+    base_map = {name: merged_name[uid] for name, uid in
+                _entry_uids(base).items() if uid in merged_name}
+    ours_map = {name: merged_name[uid] for name, uid in
+                _entry_uids(ours).items() if uid in merged_name}
+    theirs_map = {name: merged_name[uid] for name, uid in
+                  _entry_uids(theirs).items() if uid in merged_name}
+    merged_name_to_uid = {name: uid for uid, name in merged_name.items()}
+
+    def _values(canonical_entry, mapping):
+        out = {}
+        for key, value in _extract_values(canonical_entry).items():
+            remapped = _remap_value_key(key, mapping)
+            if remapped is None:
+                continue
+            if remapped[0] in ("label", "nodeprop", "nodecustom", "sockdef"):
+                uid = merged_name_to_uid.get(remapped[1])
+                if uid in resolved_uids:
+                    continue
+            out[remapped] = value
+        return out
+
+    v_b = _values(canon_b, base_map)
+    v_o = _values(canon_o, ours_map)
+    v_t = _values(canon_t, theirs_map)
+    value_overrides = {}
+    if isinstance(overrides, dict) and isinstance(overrides.get("values"), dict):
+        value_overrides = overrides["values"]
+
+    for key in sorted(set(v_b) | set(v_o) | set(v_t), key=value_key_id):
+        b = v_b.get(key, _ABSENT)
+        o = v_o.get(key, _ABSENT)
+        t = v_t.get(key, _ABSENT)
+        decision = value_overrides.get(value_key_id(key))
+        manual = decision is not None
+        if not manual:
+            if o == t:
+                if b == o:
+                    continue
+                winner, winner_side = o, "ours"
+            elif b == o:
+                winner, winner_side = t, "theirs"
+            elif b == t:
+                winner, winner_side = o, "ours"
+            else:
+                _add_value_conflict(conflicts, key, v_t, b, o, t)
+                continue
+        else:
+            resolved, winner, winner_side = _apply_override_choice(
+                decision, b, o, t)
+            if not resolved:
+                _add_value_conflict(conflicts, key, v_t, b, o, t)
+                continue
+        if winner is _ABSENT:
+            if _apply_value(merged, key, _ABSENT):
+                applied.append({"item": _item_label(key),
+                                "from": winner_side, "value": "(removed)"})
+            else:
+                _add_value_conflict(conflicts, key, v_t, b, o, t)
+        elif _apply_value(merged, key, deepcopy(winner)):
+            applied.append({"item": _item_label(key),
+                            "from": winner_side, "value": _short(winner)})
+        else:
+            _add_value_conflict(conflicts, key, v_t, b, o, t)
+
+    if conflicts:
+        return _result(group_name, "conflicted", adopted_structure="graph",
+                       applied=applied, conflicts=conflicts, notices=notices)
+    return _result(group_name, "merged", adopted_structure="graph",
+                   merged=merged,
+                   merged_hash=canonical_hash_from_json_data(merged),
+                   applied=applied, notices=notices)
+
 
 def merge_group_entries(base: dict, ours: dict, theirs: dict,
                         name: str | None = None,
@@ -628,6 +1531,15 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
              for entry in (base, ours, theirs)]
     s_b, s_o, s_t = (_extract_structure(c) for c in canon)
     v_b, v_o, v_t = (_extract_values(c) for c in canon)
+
+    structure_override = (overrides.get("structure")
+                          if isinstance(overrides, dict) else None)
+    if structure_override not in ("ours", "theirs") \
+            and (s_o != s_b or s_t != s_b):
+        graph = _merge_graph_entries(base, ours, theirs, group_name,
+                                     tuple(canon), overrides)
+        if graph is not None:
+            return graph
 
     notices = []
     manual_structure = False
@@ -707,6 +1619,7 @@ def merge_group_entries(base: dict, ours: dict, theirs: dict,
     if dropped:
         notices.append("%d value(s) of the discarded structure were dropped"
                        % dropped)
+    _merge_node_uids(base, ours, theirs, merged)
     if conflicts:
         return _result(group_name, "conflicted", conflicts=conflicts,
                        applied=applied, notices=notices)

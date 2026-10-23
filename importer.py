@@ -25,6 +25,7 @@ from .constants import (
     EXPLICITLY_HANDLED_PROPS,
     INTERFACE_SOCKET_TYPE_REMAP,
     NON_RECREATABLE_FALLBACKS,
+    NODE_UID_PROP,
     is_group_node_bl_idname,
     parse_interface_socket_variant,
 )
@@ -41,6 +42,7 @@ from .socket_utils import (
     attempt_create_item,
     find_robust_socket,
 )
+from .serializer import ensure_node_uids
 from .hash_utils import node_socket_is_active
 
 _log = logging.getLogger("GNToolkit.importer")
@@ -2883,6 +2885,14 @@ def _import_node_tree_gen(
                 f"not found in the package",
                 level="DEBUG",
             )
+
+    uid_map = data.get("node_uids")
+    if isinstance(uid_map, dict):
+        for node_name, uid in uid_map.items():
+            node = node_map.get(node_name)
+            if node is not None and isinstance(uid, str) and uid:
+                node[NODE_UID_PROP] = uid
+    ensure_node_uids(ng)
 
     # --- Step 2: Default values ---
     yield (0.45, "defaults")

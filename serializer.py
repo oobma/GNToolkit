@@ -8,6 +8,9 @@ re-imported by ``gn_toolkit.importer``.
 
 from __future__ import annotations
 
+import json
+import uuid
+
 import bpy
 
 from .codec import clean_value
@@ -15,6 +18,7 @@ from .constants import (
     BUILTIN_GROUP_BL_IDNAMES,
     MATERIAL_SETTINGS_PROPS,
     NODE_PROPS_TO_SKIP,
+    NODE_UID_PROP,
     TREE_PROPS_TO_SKIP,
     INTERFACE_SKIP_PROPS,
     OPTIONAL_SOCKET_PROPS,
@@ -766,7 +770,65 @@ def collect_derived_untracked(tree) -> dict:
     return derived
 
 
-def serialize_node_tree(tree, derived=None):
+def node_uid_map(tree) -> dict:
+    """Current name -> stable UID map of a tree (only nodes that have one)."""
+    return {node.name: node.get(NODE_UID_PROP, "")
+            for node in sorted(tree.nodes, key=lambda n: n.name)
+            if isinstance(node.get(NODE_UID_PROP, ""), str)
+            and node.get(NODE_UID_PROP, "")}
+
+
+def _deterministic_node_uid(tree, node, ordinal=0) -> str:
+    """UUIDv5 fallback for a node without a persisted identity.
+
+    The seed includes the serialized content (minus layout) so two
+    branches that independently create a node with the same auto name but
+    different content do not collide; identical creations may share the
+    identity and merge as one.
+    """
+    try:
+        payload = serialize_node(node)
+        payload.pop("location", None)
+        payload.pop("parent", None)
+        for direction in ("inputs", "outputs"):
+            for sock in payload.get(direction, []):
+                if isinstance(sock, dict):
+                    sock.pop("identifier", None)
+                    sock.pop("hide", None)
+        fingerprint = json.dumps(payload, sort_keys=True, default=str)
+    except Exception:
+        fingerprint = "%s:%s" % (getattr(node, "name", ""),
+                                 getattr(node, "bl_idname", ""))
+    seed = "gntoolkit:node:%s:%s" % (getattr(tree, "name", ""), fingerprint)
+    if ordinal:
+        seed += ":dup:%d" % ordinal
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
+
+def ensure_node_uids(tree) -> dict:
+    """Assign a UID to every node that lacks one and deduplicate collisions.
+
+    Existing properties are preserved (a rename keeps the identity).  A
+    node without a property gets a deterministic UUIDv5 derived from the
+    tree/node/type, so exporting the same unsaved .blend in two processes
+    stays byte-identical; once the .blend is saved, the property is the
+    stable identity.  Duplicates receive the next deterministic ordinal.
+    """
+    seen = set()
+    for node in sorted(tree.nodes, key=lambda n: n.name):
+        uid = node.get(NODE_UID_PROP, "")
+        ordinal = 0
+        if not isinstance(uid, str) or not uid or uid in seen:
+            uid = _deterministic_node_uid(tree, node)
+            while uid in seen:
+                ordinal += 1
+                uid = _deterministic_node_uid(tree, node, ordinal)
+            node[NODE_UID_PROP] = uid
+        seen.add(uid)
+    return node_uid_map(tree)
+
+
+def serialize_node_tree(tree, derived=None, assign_uids=False):
     """Serialize an entire Blender node tree into a JSON-safe dictionary.
 
     Embedded dependencies: by default (``derived=None``) a *tracked* tree
@@ -779,8 +841,17 @@ def serialize_node_tree(tree, derived=None):
     that already ship every dependency as its own entry); a dict gives
     the exact name→tree set (used when a group is being tracked and its
     full dependency closure must be recorded).
+
+    ``assign_uids`` assigns stable node identities before serializing
+    (export/track/merge paths).  Read-only hash/status paths keep it
+    False and only report the identities already present.
     """
+    if assign_uids:
+        ensure_node_uids(tree)
     data = _serialize_node_tree_core(tree)
+    uids = node_uid_map(tree)
+    if uids:
+        data["node_uids"] = uids
     if derived is None:
         if tree.name in tracked_blend_names():
             derived = collect_derived_untracked(tree)
@@ -823,7 +894,8 @@ def serialize_owner_settings(owner, kind: str) -> dict:
     return out
 
 
-def serialize_embedded_entry(owner, kind: str, derived=None) -> dict:
+def serialize_embedded_entry(owner, kind: str, derived=None,
+                             assign_uids=False) -> dict:
     """Serialize an owner's node tree as one package entry.
 
     The entry is the tree dump plus an ``owner_settings`` section; its
@@ -832,11 +904,13 @@ def serialize_embedded_entry(owner, kind: str, derived=None) -> dict:
     when it collides with a group).  ``derived`` follows
     ``serialize_node_tree``; a tracked embedded entry embeds its local
     untracked group dependencies like a tracked group does.
+    ``assign_uids`` follows ``serialize_node_tree``.
     """
     tree = owner.node_tree
     if derived is None:
         derived = collect_derived_untracked(tree)
-    data = serialize_node_tree(tree, derived=derived)
+    data = serialize_node_tree(tree, derived=derived,
+                               assign_uids=assign_uids)
     data["name"] = owner.name
     data["owner_settings"] = serialize_owner_settings(owner, kind)
     return data
