@@ -36,8 +36,8 @@ All notable changes to this project are documented in this file.
   rebuilds the chosen merge.
 - Tests: `pure-tests/test_node_identity.py` (8),
   `pure-tests/test_merge_graph.py` (54, including the identity property
-  over random graphs), `pure-tests/test_gnt_check_diff.py` (16, rename
-  presentation) and
+  over random graphs), `pure-tests/test_gnt_check_diff.py` (20, rename
+  presentation + commit summaries) and
   `tests/test_node_identity_blender.py` (17) plus
   `tests/test_merge_graph_blender.py` (15), both on 5.1 and 5.2;
   `tests/test_merge_conflict.py` covers the graph apply and the
@@ -48,6 +48,15 @@ All notable changes to this project are documented in this file.
 - The export/track/import paths assign node identities; JSON gains the
   additive `node_uids` map on the first export (canonical hashes and
   baselines do not move).
+- **Git panel exposes HEAD and the working tree.** The repository box now
+  shows `HEAD: <hash> <subject>`, the current branch, its upstream (with
+  `ahead`/`behind` when one is configured) and `Working tree: clean` or
+  `N tracked JSON changed`. The `.blend` and `.gntsync` remain outside Git
+  by design.
+- **Git commit messages describe the commit, not the last save.** The
+  suggested message is computed from the tracked JSON diff against HEAD
+  (the actual commit content), so a History restore/revert no longer
+  reuses the save-time suggestion.
 - **Renames in human diffs and commit suggestions.** `gnt_check --diff`,
   the history preview and the commit-message suggestion match nodes with
   the same identity rules as the merge (UIDs first, then type/signature/

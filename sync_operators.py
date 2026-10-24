@@ -9,6 +9,7 @@ resolving, and checking the sync state of tracked node groups.
 from __future__ import annotations
 
 import bpy
+import json
 import os
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -169,6 +170,48 @@ def _collect_commit_suggestion():
         message = ""
     sync_manager.commit_suggestion = message
     return message
+
+
+def _commit_suggestion_from_head(repo: str) -> str:
+    """Suggested message for the JSON changes a Git commit would write.
+
+    Reads the tracked JSON files that differ from HEAD and compares the
+    HEAD version with the working file.  This describes the commit content
+    in the right direction (HEAD -> working), unlike the save-time
+    suggestion cached by ``_collect_commit_suggestion`` (live .blend vs
+    JSON), which can be stale after a History restore or a Pull.
+    """
+    try:
+        from . import semantic_diff
+        from .git_integration import changed_tracked_paths, read_blob_at
+        changed = changed_tracked_paths(repo)
+        if not changed:
+            return ""
+        old_groups = {}
+        new_groups = {}
+        for rel, path in changed:
+            fallback = os.path.basename(path)[:-5]
+            blob = read_blob_at(repo, "HEAD", rel)
+            if blob:
+                try:
+                    old_data = json.loads(blob.decode("utf-8-sig"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    old_data = None
+                if isinstance(old_data, dict):
+                    semantic_diff.add_group_data(old_groups, old_data,
+                                                 fallback)
+            try:
+                with open(path, "r", encoding="utf-8-sig") as fh:
+                    new_data = json.load(fh)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                new_data = None
+            if isinstance(new_data, dict):
+                semantic_diff.add_group_data(new_groups, new_data, fallback)
+        message = semantic_diff.summarize_commit_groups(old_groups,
+                                                        new_groups)
+        return message or "Update tracked JSON"
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1514,9 +1557,8 @@ class GN_OT_GitCommit(bpy.types.Operator):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        suggestion = getattr(sync_manager, "commit_suggestion", "")
-        if suggestion:
-            self.message = suggestion[:300]
+        suggestion = _commit_suggestion_from_head(self.repo)
+        self.message = (suggestion or "Update node groups")[:300]
         return context.window_manager.invoke_props_dialog(self, width=520)
 
     def execute(self, context):

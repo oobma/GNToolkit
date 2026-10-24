@@ -1967,15 +1967,36 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 icon = 'CHECKMARK'
             head.label(text=f"Repository: {st['name']}", icon=icon)
 
-            parts = []
+            head_hash = st.get("head") or ""
+            head_subject = st.get("head_subject") or ""
+            if head_hash:
+                if len(head_subject) > 42:
+                    head_subject = head_subject[:39] + "..."
+                head_text = f"HEAD: {head_hash}"
+                if head_subject:
+                    head_text += f" — {head_subject}"
+            else:
+                head_text = "HEAD: (no commits yet)"
+            box.label(text=head_text, icon='DOT')
+
+            branch = st.get("branch") or "(detached)"
+            upstream = st.get("upstream") or ""
+            if upstream:
+                branch_text = f"Branch: {branch}  ·  upstream: {upstream}"
+                branch_text += (f"  ·  ahead {st.get('ahead', 0)}, "
+                                f"behind {st.get('behind', 0)}")
+            else:
+                branch_text = f"Branch: {branch}  ·  upstream: (none)"
+            box.label(text=branch_text, icon='NETWORK_DRIVE')
+
             if st["tracked_changed"]:
-                parts.append(f"{_count_label(len(st['tracked_changed']), 'changed file')}")
-            if st["ahead"]:
-                parts.append(f"ahead {st['ahead']}")
-            if st["behind"]:
-                parts.append(f"behind {st['behind']}")
-            box.label(text=" · ".join(parts) if parts else "Clean",
-                      icon='INFO' if parts else 'CHECKMARK')
+                working = (f"{len(st['tracked_changed'])} tracked JSON "
+                           "changed")
+                working_icon = 'FILE_REFRESH'
+            else:
+                working = "clean (tracked JSON)"
+                working_icon = 'CHECKMARK'
+            box.label(text=f"Working tree: {working}", icon=working_icon)
             if st["tracked_changed"] and all_synced:
                 box.label(text="Git sees file changes; GNToolkit is synced "
                                "with the working JSON", icon='INFO')

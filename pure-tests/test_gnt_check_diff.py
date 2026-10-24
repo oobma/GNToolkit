@@ -195,6 +195,20 @@ check("7g: rename matched by UID",
       "Nodes renamed (1)" in out_uid
       and "Math -> MathRenamed" in out_uid, out_uid)
 
+commit_summary = sd.summarize_commit_groups({"G": a}, {"G": rename_edit})
+check("7h: commit summary describes HEAD -> working",
+      "1 node(s) renamed" in commit_summary
+      and "1 node(s) changed" in commit_summary, commit_summary)
+check("7i: commit summary adds new groups",
+      sd.summarize_commit_groups({}, {"G": a}) == "add G (2 nodes)",
+      sd.summarize_commit_groups({}, {"G": a}))
+check("7j: commit summary removes groups",
+      sd.summarize_commit_groups({"G": a}, {}) == "G: removed",
+      sd.summarize_commit_groups({"G": a}, {}))
+check("7k: commit summary ignores identical groups",
+      sd.summarize_commit_groups({"G": a}, {"G": copy.deepcopy(a)}) == "",
+      sd.summarize_commit_groups({"G": a}, {"G": copy.deepcopy(a)}))
+
 if shutil.which("git") is None:
     print("[SKIP] git not available; revision mode not tested")
 else:

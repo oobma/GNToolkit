@@ -442,6 +442,35 @@ def suggest_message(changed: list, new_groups: list,
     return message
 
 
+def summarize_commit_groups(old_groups: dict, new_groups: dict,
+                            limit: int = 5, max_len: int = 260) -> str:
+    """Compact message for the group changes a commit writes (HEAD -> work).
+
+    ``old_groups`` and ``new_groups`` are ``{name: entry}`` maps (the same
+    shape produced by :func:`add_group_data`).  The direction is old -> new,
+    so the message describes what the commit actually changes, unlike the
+    save-time suggestion cached from the live .blend.
+    """
+    changed = []
+    new = []
+    for name in sorted(set(old_groups) | set(new_groups)):
+        old = old_groups.get(name)
+        current = new_groups.get(name)
+        if old is not None and not isinstance(old, dict):
+            continue
+        if current is not None and not isinstance(current, dict):
+            continue
+        if old is None and current is not None:
+            new.append((name, len(current.get("nodes", []) or [])))
+        elif current is None and old is not None:
+            changed.append("%s: removed" % name)
+        elif old is not None and current is not None:
+            result = compare_groups(old, current)
+            if result is not None:
+                changed.append(summarize_group(name, result))
+    return suggest_message(changed, new, limit=limit, max_len=max_len)
+
+
 def add_group_data(groups: dict, data, fallback_name: str) -> None:
     """Merge one JSON document (standalone or package) into *groups*."""
     if not isinstance(data, dict):

@@ -193,6 +193,28 @@ def repos_for_tracked(metadata=None, blend_dir=None):
     return {root: sorted(paths) for root, paths in repos.items()}
 
 
+def changed_tracked_paths(repo_root: str):
+    """Tracked JSON paths changed in the working tree, as (rel, abs) pairs.
+
+    Local only (no fetch/push).  Used by the Git Commit dialog to describe
+    the JSON the commit is about to write, not the pending .blend edits.
+    """
+    try:
+        paths = repos_for_tracked().get(repo_root) or []
+        status = _backend().status(repo_root)
+    except Exception:
+        return []
+    if not status.get("ok"):
+        return []
+    changed = set(status.get("changed") or [])
+    out = []
+    for path in paths:
+        rel = os.path.relpath(path, repo_root).replace(os.sep, "/")
+        if rel in changed:
+            out.append((rel, path))
+    return out
+
+
 def detect_conflict_markers(paths):
     """Absolute paths whose content carries git merge-conflict markers."""
     hits = []
@@ -395,6 +417,17 @@ def _build_repo_entry(root, paths, st):
     st.setdefault("ahead", 0)
     st.setdefault("behind", 0)
     st.setdefault("branch", "")
+    st["upstream"] = st.get("upstream") or ""
+    st.setdefault("head", "")
+    st.setdefault("head_subject", "")
+    if st.get("ok"):
+        try:
+            entries = _backend().log(root, None, 1)
+        except Exception:
+            entries = []
+        if entries:
+            st["head"] = entries[0].get("hash", "")
+            st["head_subject"] = entries[0].get("subject", "")
     return st
 
 

@@ -131,11 +131,15 @@ additionally uses a system `git` automatically when one is present. See
 remote support.
 
 - **One row per repository** detected from the tracked JSONs (a project
-  can point at several repos), showing: the repository name, the state
-  — `clean`, `N changed`, `ahead N`, `behind N` — and the buttons:
+  can point at several repos), showing: the repository name, `HEAD`
+  (short hash + subject), the branch and its upstream with
+  `ahead`/`behind`, and `Working tree: clean` / `N tracked JSON changed`.
+  The `.blend` and `.gntsync` stay outside Git by design. The buttons:
   - **Git commit...** — opens a dialog for the commit message; stages
     **only the tracked JSON files that changed** (never `git add -A`,
-    never the .blend) and commits locally.
+    never the .blend) and commits locally. The message is pre-filled from
+    the tracked JSON diff against HEAD (the actual commit), so a History
+    restore/revert is described in the right direction; edit it freely.
   - **Git sync** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
