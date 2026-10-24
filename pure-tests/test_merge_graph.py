@@ -6,6 +6,7 @@ Usage: python pure-tests\\test_merge_graph.py
 
 import json
 import os
+import random
 import sys
 from copy import deepcopy
 
@@ -378,6 +379,210 @@ def test_graph_merge():
 
 
 
+def multi_entry():
+    """A base with three links feeding the same (multi-input) socket."""
+    base = base_entry()
+    add_node(base, "D", "uid-d")
+    add_link(base, "A", "D", "Value", "Value")
+    add_link(base, "B", "D", "Vector", "Value")
+    add_link(base, "C", "D", "Result", "Value")
+    return base
+
+
+def reorder_target(entry, target, names):
+    """Put the target's incoming links in *names* order (rest untouched)."""
+    rest = [l for l in entry["links"] if l["to_node"] != target]
+    by_name = {l["from_node"]: l for l in entry["links"]
+               if l["to_node"] == target}
+    entry["links"] = rest + [by_name[name] for name in names]
+    return entry
+
+
+def target_order(entry, target="D"):
+    return [l["from_node"] for l in entry.get("links", [])
+            if l["to_node"] == target]
+
+
+def test_link_order():
+    base = multi_entry()
+    target_key = "link:" + repr(("uid-d", "Value"))
+
+    ours = reorder_target(deepcopy(base), "D", ["B", "C", "A"])
+    res = graph_merge(base, ours, deepcopy(base))
+    merged = res.get("merged") or {}
+    check("S6 one-sided link reorder is applied",
+          res["status"] == "merged" and not res["conflicts"]
+          and target_order(merged) == ["B", "C", "A"],
+          str(target_order(merged)))
+    check("S6 reorder is reported as applied",
+          any("link order" in a.get("item", "")
+              for a in res.get("applied") or []))
+
+    res = graph_merge(base, deepcopy(base), ours)
+    merged = res.get("merged") or {}
+    check("S6 one-sided link reorder (theirs) is applied",
+          res["status"] == "merged"
+          and target_order(merged) == ["B", "C", "A"])
+
+    theirs = reorder_target(deepcopy(base), "D", ["C", "A", "B"])
+    res = graph_merge(base, ours, theirs)
+    order_conflicts = [c for c in res.get("conflicts") or []
+                       if c.get("kind") == "link/order"]
+    check("S6 divergent link reorder conflicts",
+          res["status"] == "conflicted" and len(order_conflicts) == 1
+          and order_conflicts[0].get("key") == target_key)
+    check("S6 order conflict shows the three orders",
+          bool(order_conflicts and order_conflicts[0].get("base")
+               and order_conflicts[0].get("ours")
+               and order_conflicts[0].get("theirs")))
+
+    res = graph_merge(base, ours, deepcopy(ours))
+    merged = res.get("merged") or {}
+    check("S6 identical reorder on both sides merges",
+          res["status"] == "merged"
+          and target_order(merged) == ["B", "C", "A"])
+
+    for decision, expected in (("ours", ["B", "C", "A"]),
+                               ("theirs", ["C", "A", "B"]),
+                               ("base", ["A", "B", "C"])):
+        res = graph_merge(base, ours, theirs,
+                          overrides={"entities": {target_key: decision}})
+        merged = res.get("merged") or {}
+        check("S6 order override %s" % decision,
+              res["status"] == "merged"
+              and target_order(merged) == expected,
+              str(target_order(merged)))
+
+    theirs_add = add_node(deepcopy(base), "E", "uid-e")
+    add_link(theirs_add, "E", "D", "Result", "Value")
+    res = graph_merge(base, ours, theirs_add)
+    merged = res.get("merged") or {}
+    check("S6 reorder + disjoint add keeps both",
+          res["status"] == "merged"
+          and target_order(merged) == ["B", "C", "A", "E"],
+          str(target_order(merged)))
+
+
+def _rand_node(name, value):
+    return node(name, "ShaderNodeMath",
+                [("Value", "VALUE", "NodeSocketFloat", value)],
+                [("Value", "VALUE", "NodeSocketFloat")])
+
+
+def _random_entry(rng, count):
+    names = ["N%d" % i for i in range(count)]
+    nodes = [_rand_node(name, round(rng.uniform(0.0, 1.0), 3))
+             for name in names]
+    uids = {name: "uid-%d" % i for i, name in enumerate(names)}
+    multi = names[1]
+    links = []
+    used = set()
+    for _ in range(rng.randint(0, count)):
+        target = rng.choice(names)
+        if target != multi and target in used:
+            continue
+        source = rng.choice([n for n in names if n != target])
+        links.append({"from_node": source, "from_socket_name": "Value",
+                      "to_node": target, "to_socket_name": "Value"})
+        used.add(target)
+    for _ in range(rng.randint(0, 2)):
+        source = rng.choice([n for n in names if n != multi])
+        if not any(l["from_node"] == source and l["to_node"] == multi
+                   for l in links):
+            links.append({"from_node": source, "from_socket_name": "Value",
+                          "to_node": multi, "to_socket_name": "Value"})
+    return {"name": "G", "nodes": nodes, "links": links,
+            "interface_items": [], "tree_properties": {},
+            "node_uids": uids}, multi
+
+
+def _mutate_entry(rng, base, multi):
+    entry = deepcopy(base)
+    for _ in range(rng.randint(0, 3)):
+        op = rng.choice(["add", "remove", "rename", "value", "link",
+                         "unlink", "reorder"])
+        names = [n["name"] for n in entry["nodes"]]
+        if op == "add":
+            name = "X%d" % rng.randint(0, 100000)
+            while name in names:
+                name += "_"
+            entry["nodes"].append(_rand_node(name, 0.5))
+            entry["node_uids"][name] = "uid-" + name
+            source = rng.choice(names)
+            entry["links"].append({"from_node": source,
+                                   "from_socket_name": "Value",
+                                   "to_node": name, "to_socket_name": "Value"})
+        elif op == "remove" and len(names) > 2:
+            candidates = [n for n in names if n != multi]
+            if candidates:
+                name = rng.choice(candidates)
+                entry["nodes"] = [n for n in entry["nodes"]
+                                  if n["name"] != name]
+                entry["links"] = [l for l in entry["links"]
+                                  if l["from_node"] != name
+                                  and l["to_node"] != name]
+                entry["node_uids"].pop(name, None)
+        elif op == "rename" and entry["nodes"]:
+            n = rng.choice(entry["nodes"])
+            old, new = n["name"], n["name"] + "_r"
+            if new in names:
+                continue
+            n["name"] = new
+            for l in entry["links"]:
+                if l["from_node"] == old:
+                    l["from_node"] = new
+                if l["to_node"] == old:
+                    l["to_node"] = new
+            uid = entry["node_uids"].pop(old, None)
+            if uid:
+                entry["node_uids"][new] = uid
+            if multi == old:
+                multi = new
+        elif op == "value" and entry["nodes"]:
+            rng.choice(entry["nodes"])["inputs"][0]["default_value"] = \
+                round(rng.uniform(0.0, 2.0), 3)
+        elif op == "link" and len(names) > 1:
+            target = rng.choice(names)
+            if target != multi:
+                entry["links"] = [l for l in entry["links"]
+                                  if l["to_node"] != target]
+            source = rng.choice([n for n in names if n != target])
+            if not any(l["from_node"] == source and l["to_node"] == target
+                       for l in entry["links"]):
+                entry["links"].append({"from_node": source,
+                                       "from_socket_name": "Value",
+                                       "to_node": target,
+                                       "to_socket_name": "Value"})
+        elif op == "unlink" and entry["links"]:
+            entry["links"].pop(rng.randrange(len(entry["links"])))
+        elif op == "reorder":
+            target_links = [l for l in entry["links"] if l["to_node"] == multi]
+            if len(target_links) > 1:
+                rest = [l for l in entry["links"] if l["to_node"] != multi]
+                rng.shuffle(target_links)
+                entry["links"] = rest + target_links
+    return entry
+
+
+def test_merge_identity():
+    rng = random.Random(20261024)
+    failures = 0
+    cases = 0
+    for _ in range(40):
+        base, multi = _random_entry(rng, rng.randint(3, 7))
+        side = _mutate_entry(rng, base, multi)
+        for args in ((base, base, side), (base, side, base)):
+            res = merge.merge_group_entries(*args)
+            cases += 1
+            merged = res.get("merged")
+            if merged is None or (
+                    hu.canonical_hash_from_json_data(merged)
+                    != hu.canonical_hash_from_json_data(side)):
+                failures += 1
+    check("S7 identity merge(base,base,X) == X and merge(base,X,base) == X",
+          failures == 0, "%d/%d cases" % (failures, cases))
+
+
 def main():
     base = base_entry()
 
@@ -458,6 +663,8 @@ def main():
     check("diff is deterministic", first == second)
 
     test_graph_merge()
+    test_link_order()
+    test_merge_identity()
 
     print("\n%d passed, %d failed" % (len(PASSED), len(FAILED)))
     if FAILED:

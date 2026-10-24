@@ -233,7 +233,10 @@ sides carry node identities (current exports), nodes and links merge per
 entity too: disjoint adds/removals/renames/rewires and edits on
 different nodes combine; delete/edit, same-node structural divergence,
 rename/rename and link contention are listed per node or link and
-resolved with Ours / Base / JSON / Delete in the merge report. Entries
+resolved with Ours / Base / JSON / Delete in the merge report. The order
+of the links feeding a multi-input socket (Join Geometry, Mix, ...)
+follows the side that reordered it; a divergent reorder on both sides is
+a `link/order` conflict with the same Ours / Base / JSON choices. Entries
 without identities are adopted whole from the side that changed them and
 never guessed. Exact-content renames (same logic under a new name) are
 paired and merged under the new name for Geometry Nodes, Shader and

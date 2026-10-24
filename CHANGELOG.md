@@ -35,7 +35,8 @@ All notable changes to this project are documented in this file.
   link; Apply waits until every entity is decided, then writes and
   rebuilds the chosen merge.
 - Tests: `pure-tests/test_node_identity.py` (8),
-  `pure-tests/test_merge_graph.py` (42) and
+  `pure-tests/test_merge_graph.py` (54, including the identity property
+  over random graphs) and
   `tests/test_node_identity_blender.py` (17) plus
   `tests/test_merge_graph_blender.py` (15), both on 5.1 and 5.2;
   `tests/test_merge_conflict.py` covers the graph apply and the
@@ -54,6 +55,14 @@ All notable changes to this project are documented in this file.
 - When the historical merge base lacks node identities, the report now
   explains that graph merge is unavailable and the whole-side fallback is
   used; re-exporting/committing the base with this version enables it.
+- **Multi-input link order is part of the merge.** The order of the
+  links feeding the same socket (Join Geometry, Mix, ...) is semantic:
+  a reorder done on one side is applied, and a divergent reorder on both
+  sides is an explicit `link/order` conflict with Ours / Base / JSON
+  choices. Previously the merged entry silently kept the base order.
+- Adding a link to a multi-input socket no longer reports a false
+  "more than one link would feed the same socket" conflict; adding
+  different links from both sides still conflicts.
 
 ## [0.4.2] - 2026-10-22
 

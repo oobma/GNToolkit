@@ -99,10 +99,13 @@ merge per item with a base/ours/theirs decision. When all three sides
 carry complete node identities (current exports), **nodes and links**
 also merge per entity: disjoint additions/removals/renames/rewires
 combine, while delete/edit, same-node structural divergence,
-rename/rename and link contention are per-element conflicts. Entries
-without identities keep the whole-side structure adoption (never
-guessed). Exact-content renames (same logic under a new name) are matched
-and merged under the new name for node groups. Sides are folders, JSON
+rename/rename and link contention are per-element conflicts. The order of
+the links feeding a multi-input socket (Join Geometry, Mix, ...) follows
+the side that reordered it; a divergent reorder on both sides is a
+`link/order` conflict. Entries without identities keep the whole-side
+structure adoption (never guessed). Exact-content renames (same logic
+under a new name) are matched and merged under the new name for node
+groups. Sides are folders, JSON
 files or git revisions (`--repo`/`--subdir`; BASE is typically
 `git merge-base`); `--json` prints a machine-readable report. Conflicts
 exit `1`; any unreadable JSON in any side exits `2`. Group-tree merge

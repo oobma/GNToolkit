@@ -14,10 +14,19 @@ Implements the merge semantics (specs 2026-10-16 and 2026-10-19):
 * EMBEDDED ENTRIES: ``materials`` and ``worlds`` merge the tree and the
   owner settings per item (spec 2026-10-19, second extension); adds and
   removals follow the same one-side rules as node groups.
-* Anything STRUCTURAL (nodes, links, interface presence, zones, menus,
-  inner trees, texts, derived groups) is never fused: it is adopted
-  whole from the side that changed it, or reported as a conflict when
-  both sides changed it differently.
+* STRUCTURE: when all three sides carry complete node identities, nodes
+  and links are decided per entity (adds/removals/renames/rewires merge
+  when they do not collide; delete/edit, same-node structural
+  divergence, rename/rename and link contention stay explicit
+  conflicts).  Entries without identities keep the legacy whole-side
+  behavior: the structure is adopted from the side that changed it, or
+  reported as a conflict when both sides changed it differently.
+  Interface presence, zones, menus, inner trees, texts and derived
+  groups are still adopted whole.
+* MULTI-INPUT ORDER: the order of the links that feed the same socket is
+  semantic (Join Geometry, Mix, ...).  A one-sided reorder is applied;
+  a divergent reorder is an explicit ``link/order`` conflict.  Adding a
+  link to a multi-input socket is not a conflict by itself.
 * Single source of truth: decisions compare the canonical forms produced
   by ``hash_utils.canonicalize_node_tree_data``, so every fold, exclusion
   and normalization of the hash algorithm applies here too.  Nothing is
@@ -26,7 +35,8 @@ Implements the merge semantics (specs 2026-10-16 and 2026-10-19):
   structure becomes an explicit conflict, never a silent drop.
 * MANUAL RESOLUTION (editor, spec 2026-10-17): an optional ``overrides``
   argument resolves conflicted items per value key (ours/theirs/base or a
-  custom scalar) and a conflicted structure as one whole side.  Without
+  custom scalar), a conflicted structure as one whole side, and graph
+  conflicts per node or link entity (``overrides["entities"]``).  Without
   it the output is byte-identical to the automatic merge.
 
 Preview only: nothing here writes to disk.  ``merge_group_entries``
@@ -1051,6 +1061,30 @@ def _link_map(entry: dict) -> dict:
     return out
 
 
+def _link_orders(entry: dict) -> dict:
+    """Map every target socket to its links in serialized order.
+
+    The order of the links that feed the same socket is semantic for
+    multi-input sockets (Join Geometry, Mix, ...), so the merge treats
+    each target's list as an ordered value, not just a set.
+    """
+    out = {}
+    for link in entry.get("links", []):
+        from_node, from_sock, to_node, to_sock = _normalize_link(link)
+        key = (_entity_id(entry, from_node), from_sock,
+               _entity_id(entry, to_node), to_sock)
+        bucket = out.setdefault((key[2], key[3]), [])
+        if key not in bucket:
+            bucket.append(key)
+    return out
+
+
+def _order_label(order, names) -> str:
+    """Readable source list for a link-order conflict."""
+    return " -> ".join("%s.%s" % (names.get(key[0], key[0]), key[1])
+                       for key in order) or "(empty)"
+
+
 def _remap_value_key(key, mapping):
     if key[0] in ("label", "nodeprop", "nodecustom", "sockdef"):
         name = mapping.get(key[1])
@@ -1345,16 +1379,69 @@ def _merge_graph_entries(base: dict, ours: dict, theirs: dict,
             merged_name.get(target[0], target[0]), target[1]),
             "from": decision, "value": "(chosen)"})
 
-    for target in sorted({(key[2], key[3]) for key in kept}, key=repr):
+    base_orders = _link_orders(base)
+    ours_orders = _link_orders(ours)
+    theirs_orders = _link_orders(theirs)
+    order_sources = {}
+    for target in sorted({(key[2], key[3]) for key in kept}
+                         | set(target_decisions), key=repr):
+        kept_target = [k for k in kept if (k[2], k[3]) == target]
         if target in target_decisions:
+            decision = target_decisions[target]
+            if decision in ("ours", "theirs", "base"):
+                order_sources[target] = decision
             continue
-        if len([k for k in kept if (k[2], k[3]) == target]) > 1:
-            base_count = len([k for k in base_links if (k[2], k[3]) == target])
-            if base_count <= 1:
-                conflicts.append(_graph_conflict(
-                    "link/contention",
-                    "more than one link would feed the same socket",
-                    "link:" + repr(target)))
+        decision = _entity_override(overrides, "link:" + repr(target))
+        if decision in ("ours", "theirs", "base"):
+            order_sources[target] = decision
+            continue
+        if decision == "delete":
+            for key in list(kept):
+                if (key[2], key[3]) == target:
+                    del kept[key]
+            applied.append({"item": "links to '%s.%s'" % (
+                merged_name.get(target[0], target[0]), target[1]),
+                "from": "chosen", "value": "(removed)"})
+            continue
+        if not kept_target:
+            continue
+        b_order = base_orders.get(target, [])
+        o_order = ours_orders.get(target, [])
+        t_order = theirs_orders.get(target, [])
+        common_o = set(b_order) & set(o_order)
+        common_t = set(b_order) & set(t_order)
+        o_reordered = ([k for k in o_order if k in common_o]
+                       != [k for k in b_order if k in common_o])
+        t_reordered = ([k for k in t_order if k in common_t]
+                       != [k for k in b_order if k in common_t])
+        if not o_reordered and not t_reordered:
+            continue
+        if o_reordered and not t_reordered:
+            order_sources[target] = "ours"
+            applied.append({"item": "link order to '%s.%s'" % (
+                merged_name.get(target[0], target[0]), target[1]),
+                "from": "ours", "value": "(reordered)"})
+            continue
+        if t_reordered and not o_reordered:
+            order_sources[target] = "theirs"
+            applied.append({"item": "link order to '%s.%s'" % (
+                merged_name.get(target[0], target[0]), target[1]),
+                "from": "theirs", "value": "(reordered)"})
+            continue
+        common = common_o & common_t & set(kept_target)
+        o_rel = [k for k in o_order if k in common]
+        t_rel = [k for k in t_order if k in common]
+        if o_rel == t_rel:
+            order_sources[target] = "ours"
+        else:
+            conflicts.append(_graph_conflict(
+                "link/order",
+                "links to '%s.%s' reordered differently on both sides" % (
+                    merged_name.get(target[0], target[0]), target[1]),
+                "link:" + repr(target),
+                base=_order_label(b_order, merged_name),
+                ours=_order_label(o_order, merged_name),
+                theirs=_order_label(t_order, merged_name)))
 
     link_order = []
     for key in base_links:
@@ -1366,6 +1453,22 @@ def _merge_graph_entries(base: dict, ours: dict, theirs: dict,
     for key in theirs_links:
         if key in kept and key not in link_order:
             link_order.append(key)
+    for target, source in order_sources.items():
+        source_order = {"ours": ours_orders, "theirs": theirs_orders,
+                        "base": base_orders}[source].get(target, [])
+        kept_target = [k for k in kept if (k[2], k[3]) == target]
+        final = [k for k in source_order if k in kept_target]
+        seen = set(final)
+        for key in kept_target:
+            if key not in seen:
+                final.append(key)
+                seen.add(key)
+        positions = [i for i, key in enumerate(link_order)
+                     if (key[2], key[3]) == target]
+        if len(positions) != len(final):
+            continue
+        for position, key in zip(positions, final):
+            link_order[position] = key
     merged_links = []
     for key in link_order:
         raw = kept[key]

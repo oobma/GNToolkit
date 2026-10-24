@@ -259,8 +259,11 @@ revision whose entry hash matches the recorded baseline - no new storage).
   sides carry node identities (current exports), disjoint structural
   edits - different nodes added/removed/renamed, different links - are
   merged per entity first; only the entities that truly collide remain
-  conflicts. Entries exported by older versions keep the whole-side rule
-  (pick one side for the structure).
+  conflicts. The order of the links feeding a multi-input socket
+  (Join Geometry, Mix, ...) follows the side that reordered it; a
+  divergent reorder on both sides is a `link/order` conflict with
+  Ours / Base / JSON choices. Entries exported by older versions keep
+  the whole-side rule (pick one side for the structure).
 - **Apply Chosen Merge** writes the merged package and rebuilds the
   entry once every conflict has a decision.
 

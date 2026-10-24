@@ -644,7 +644,7 @@ def _draw_changes_list(layout, context) -> None:
 
 _GRAPH_CONFLICT_KINDS = frozenset((
     "node/delete-edit", "node/field", "node/rename-rename",
-    "link/contention", "identity/name",
+    "link/contention", "link/order", "identity/name",
 ))
 
 
@@ -1097,7 +1097,7 @@ def _merge_decision_items(self, context):
              ("ours", "Ours", "Keep the local .blend value"),
              ("base", "Base", "Restore the pre-edit value"),
              ("theirs", "JSON", "Take the value from the JSON file")]
-    if self.kind in _GRAPH_CONFLICT_KINDS:
+    if self.kind in _GRAPH_CONFLICT_KINDS and self.kind != "link/order":
         items.append(("delete", "Delete", "Remove the node or link"))
     elif self.value_type in ("float", "int", "bool", "string"):
         items.append(("custom", "Custom", "Type your own value"))
