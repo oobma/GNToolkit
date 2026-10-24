@@ -215,6 +215,24 @@ def changed_tracked_paths(repo_root: str):
     return out
 
 
+def staged_foreign_paths(repo_root: str):
+    """Repo-relative staged paths that are NOT tracked JSON.
+
+    ``git commit`` commits the whole index, so a file staged by another
+    tool would ride along.  The commit operator calls this guard and
+    refuses instead of touching somebody else's staged work.
+    """
+    try:
+        paths = repos_for_tracked().get(repo_root) or []
+        tracked = {os.path.relpath(p, repo_root).replace(os.sep, "/")
+                   for p in paths}
+        staged = {p.replace(os.sep, "/")
+                  for p in _backend().staged_names(repo_root)}
+    except Exception:
+        return []
+    return sorted(staged - tracked)
+
+
 def detect_conflict_markers(paths):
     """Absolute paths whose content carries git merge-conflict markers."""
     hits = []
@@ -420,6 +438,11 @@ def _build_repo_entry(root, paths, st):
     st["upstream"] = st.get("upstream") or ""
     st.setdefault("head", "")
     st.setdefault("head_subject", "")
+    st.setdefault("staged", [])
+    st.setdefault("staged_tracked", [])
+    st.setdefault("staged_foreign", [])
+    tracked_rel = {os.path.relpath(p, root).replace(os.sep, "/")
+                   for p in paths}
     if st.get("ok"):
         try:
             entries = _backend().log(root, None, 1)
@@ -428,6 +451,14 @@ def _build_repo_entry(root, paths, st):
         if entries:
             st["head"] = entries[0].get("hash", "")
             st["head_subject"] = entries[0].get("subject", "")
+        try:
+            staged = {p.replace(os.sep, "/")
+                      for p in _backend().staged_names(root)}
+        except Exception:
+            staged = set()
+        st["staged"] = sorted(staged)
+        st["staged_tracked"] = sorted(staged & tracked_rel)
+        st["staged_foreign"] = sorted(staged - tracked_rel)
     return st
 
 

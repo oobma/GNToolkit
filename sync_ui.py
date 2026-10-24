@@ -1989,6 +1989,19 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 branch_text = f"Branch: {branch}  ·  upstream: (none)"
             box.label(text=branch_text, icon='NETWORK_DRIVE')
 
+            staged = st.get("staged") or []
+            foreign = st.get("staged_foreign") or []
+            if foreign:
+                box.label(text=(f"Index: {len(staged)} staged "
+                                f"({len(foreign)} outside tracked JSON)"),
+                          icon='ERROR')
+                box.label(text="Unstage the foreign paths with your Git "
+                               "client first", icon='INFO')
+            elif staged:
+                box.label(text=f"Index: {len(staged)} staged", icon='INFO')
+            else:
+                box.label(text="Index: clean", icon='CHECKMARK')
+
             if st["tracked_changed"]:
                 working = (f"{len(st['tracked_changed'])} tracked JSON "
                            "changed")
@@ -2008,7 +2021,8 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
                 discard.repo = root
 
             actions = box.row(align=True)
-            actions.enabled = not busy
+            actions.enabled = (not busy
+                               and not st.get("staged_foreign"))
             commit_op = actions.operator("gn.git_commit", text="Git commit...",
                                          icon='EXPORT')
             commit_op.repo = root

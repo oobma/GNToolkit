@@ -133,13 +133,18 @@ remote support.
 - **One row per repository** detected from the tracked JSONs (a project
   can point at several repos), showing: the repository name, `HEAD`
   (short hash + subject), the branch and its upstream with
-  `ahead`/`behind`, and `Working tree: clean` / `N tracked JSON changed`.
+  `ahead`/`behind`, `Index: clean` / `N staged`, and
+  `Working tree: clean` / `N tracked JSON changed`.
   The `.blend` and `.gntsync` stay outside Git by design. The buttons:
   - **Git commit...** — opens a dialog for the commit message; stages
     **only the tracked JSON files that changed** (never `git add -A`,
-    never the .blend) and commits locally. The message is pre-filled from
-    the tracked JSON diff against HEAD (the actual commit), so a History
-    restore/revert is described in the right direction; edit it freely.
+    never the .blend) and commits locally. If the index already has
+    staged changes outside the tracked JSON, the commit is refused (the
+    panel disables the button and shows the foreign count): commit or
+    unstage them with your Git tooling first. The message is pre-filled
+    from the tracked JSON diff against HEAD (the actual commit), so a
+    History restore/revert is described in the right direction; edit it
+    freely.
   - **Git sync** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item

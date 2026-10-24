@@ -172,6 +172,15 @@ def _collect_commit_suggestion():
     return message
 
 
+def _foreign_staged_message(foreign):
+    shown = ", ".join(foreign[:4])
+    if len(foreign) > 4:
+        shown += ", ..."
+    return ("Your Git index already has staged changes outside the tracked "
+            "JSON (%s). Commit or unstage them with your Git tooling first."
+            % shown)
+
+
 def _commit_suggestion_from_head(repo: str) -> str:
     """Suggested message for the JSON changes a Git commit would write.
 
@@ -1557,6 +1566,11 @@ class GN_OT_GitCommit(bpy.types.Operator):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
+        from .git_integration import staged_foreign_paths
+        foreign = staged_foreign_paths(self.repo)
+        if foreign:
+            self.report({'ERROR'}, _foreign_staged_message(foreign))
+            return {'CANCELLED'}
         suggestion = _commit_suggestion_from_head(self.repo)
         self.message = (suggestion or "Update node groups")[:300]
         return context.window_manager.invoke_props_dialog(self, width=520)
@@ -1564,6 +1578,11 @@ class GN_OT_GitCommit(bpy.types.Operator):
     def execute(self, context):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
+            return {'CANCELLED'}
+        from .git_integration import staged_foreign_paths
+        foreign = staged_foreign_paths(self.repo)
+        if foreign:
+            self.report({'ERROR'}, _foreign_staged_message(foreign))
             return {'CANCELLED'}
         git_submit("commit", repo=self.repo,
                    message=self.message.strip() or "Update node groups")

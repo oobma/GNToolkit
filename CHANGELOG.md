@@ -41,7 +41,8 @@ All notable changes to this project are documented in this file.
   `tests/test_node_identity_blender.py` (17) plus
   `tests/test_merge_graph_blender.py` (15), both on 5.1 and 5.2;
   `tests/test_merge_conflict.py` covers the graph apply and the
-  per-entity editor (41).
+  per-entity editor (41); `tests/test_git_commit_guard.py` (10) covers
+  the staged-index guard on 5.1 and 5.2.
 
 ### Changed
 
@@ -78,6 +79,12 @@ All notable changes to this project are documented in this file.
 - Adding a link to a multi-input socket no longer reports a false
   "more than one link would feed the same socket" conflict; adding
   different links from both sides still conflicts.
+- **Git commit refuses foreign staged files.** `git commit` commits the
+  whole index; if another Git client left files staged outside the
+  add-on's tracked JSON, the commit now cancels with an actionable
+  message instead of including them. The Git panel shows the index state
+  (`Index: clean` / `N staged`, with the foreign count in red) and
+  disables the commit button until those paths are unstaged.
 
 ## [0.4.2] - 2026-10-22
 
