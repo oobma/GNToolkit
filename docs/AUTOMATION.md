@@ -89,7 +89,10 @@ python gnt_check.py --merge HEAD~1 HEAD theirs --repo . --subdir NodeGroups
 ```
 
 `--diff` summarizes interface items, nodes added/removed (grouped by name
-prefix), value/property changes and re-linked connections. Layout-only
+prefix), value/property changes and re-linked connections. Node renames
+are matched with the same identity rules as the merge (UIDs first, then
+type/signature/topology) and reported as `old -> new`; their edits and
+links stay attached to the renamed node. Layout-only
 properties (position, sizes, selection) are ignored.
 
 `--merge` previews the semantic merge of the three sides without writing

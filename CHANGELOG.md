@@ -36,7 +36,8 @@ All notable changes to this project are documented in this file.
   rebuilds the chosen merge.
 - Tests: `pure-tests/test_node_identity.py` (8),
   `pure-tests/test_merge_graph.py` (54, including the identity property
-  over random graphs) and
+  over random graphs), `pure-tests/test_gnt_check_diff.py` (16, rename
+  presentation) and
   `tests/test_node_identity_blender.py` (17) plus
   `tests/test_merge_graph_blender.py` (15), both on 5.1 and 5.2;
   `tests/test_merge_conflict.py` covers the graph apply and the
@@ -47,6 +48,11 @@ All notable changes to this project are documented in this file.
 - The export/track/import paths assign node identities; JSON gains the
   additive `node_uids` map on the first export (canonical hashes and
   baselines do not move).
+- **Renames in human diffs and commit suggestions.** `gnt_check --diff`,
+  the history preview and the commit-message suggestion match nodes with
+  the same identity rules as the merge (UIDs first, then type/signature/
+  topology); a renamed node is reported as `old -> new` and its edits and
+  links stay attached to it instead of appearing as delete + add.
 
 ### Fixed
 

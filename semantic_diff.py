@@ -17,6 +17,7 @@ import json
 import os
 
 from .constants import HASH_EXCLUDE_NODE_PROPS
+from .merge import match_entry_nodes
 
 _DIFF_IO = ("NodeGroupInput", "NodeGroupOutput")
 _COSMETIC = frozenset(HASH_EXCLUDE_NODE_PROPS) | {"vector_dimensions"}
@@ -282,6 +283,54 @@ def canonical_hash_ignoring_reroutes(data: dict) -> str:
     return canonical_hash_from_json_data(_bypass_reroutes(data))
 
 
+def _node_renames(a: dict, b: dict) -> dict:
+    """Map base node names to their side names when the matcher pairs them.
+
+    UIDs are authoritative; nodes without them fall back to the same
+    name+type, signature and topology rules used by the merge.  A rename
+    into the name of a base node that stays put is skipped: the diff
+    keeps it as delete + add instead of merging two different nodes.
+    """
+    matched = match_entry_nodes(a, b, use_uids=True)
+    a_names = {n.get("name", "") for n in a.get("nodes", [])}
+    moved = {old for old, new in matched["matches"].items() if old != new}
+    renames = {}
+    for old, new in matched["matches"].items():
+        if old == new or not old or not new:
+            continue
+        if new in a_names and new not in moved:
+            continue
+        renames[old] = new
+    return renames
+
+
+def _apply_node_renames(data: dict, renames: dict) -> dict:
+    """Copy *data* with node names (and name references) remapped."""
+    if not renames:
+        return data
+    out = dict(data)
+    nodes = []
+    for node in data.get("nodes", []):
+        node = dict(node)
+        node["name"] = renames.get(node.get("name"), node.get("name"))
+        if node.get("parent") in renames:
+            node["parent"] = renames[node["parent"]]
+        if node.get("zone_paired_node") in renames:
+            node["zone_paired_node"] = renames[node["zone_paired_node"]]
+        nodes.append(node)
+    out["nodes"] = nodes
+    links = []
+    for link in data.get("links", []):
+        link = dict(link)
+        link["from_node"] = renames.get(link.get("from_node"),
+                                        link.get("from_node"))
+        link["to_node"] = renames.get(link.get("to_node"),
+                                      link.get("to_node"))
+        links.append(link)
+    out["links"] = links
+    return out
+
+
 def compare_groups(a: dict, b: dict) -> dict | None:
     """Structured semantic difference between two group versions.
 
@@ -290,14 +339,18 @@ def compare_groups(a: dict, b: dict) -> dict | None:
     """
     a = _bypass_reroutes(a)
     b = _bypass_reroutes(b)
+    renames = _node_renames(a, b)
+    renamed = sorted(renames.items())
+    a = _apply_node_renames(a, renames)
     interface = _diff_interface(a, b)
     added, removed, changed, moved = _diff_group_nodes(a, b)
     new_links, gone_links, relinked, internal = _diff_group_links(a, b)
-    if not (interface or added or removed or changed or new_links
+    if not (interface or renamed or added or removed or changed or new_links
             or gone_links or relinked or internal or moved):
         return None
     return {
         "interface": interface,
+        "renamed": renamed,
         "added": added,
         "removed": removed,
         "changed": changed,
@@ -321,6 +374,9 @@ def format_group_report(name: str, result: dict) -> list:
     if result["interface"]:
         lines.append("  Interface:")
         lines += ["    " + x for x in result["interface"]]
+    if result.get("renamed"):
+        lines.append("  Nodes renamed (%d):" % len(result["renamed"]))
+        lines += ["    %s -> %s" % pair for pair in result["renamed"]]
     if result["added"]:
         lines.append("  Nodes added (%d):" % len(result["added"]))
         lines += ["    " + x for x in _diff_node_lines(result["added"])]
@@ -358,6 +414,8 @@ def summarize_group(name: str, result: dict) -> str:
     parts = []
     if added or removed:
         parts.append("+%d/-%d nodes" % (added, removed))
+    if result.get("renamed"):
+        parts.append("%d node(s) renamed" % len(result["renamed"]))
     if links_added or links_removed:
         parts.append("+%d/-%d links" % (links_added, links_removed))
     if result["interface"]:

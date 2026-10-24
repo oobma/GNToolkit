@@ -144,6 +144,57 @@ code_mv, out_mv = run_diff(path_a, path_c)
 check("7: pure moves counted, not reported as changes",
       "only moved" in out_mv and "Nodes changed" not in out_mv, out_mv.strip())
 
+rename = copy.deepcopy(a)
+rename["nodes"][0]["name"] = "MathRenamed"
+for link in rename["links"]:
+    if link["from_node"] == "Math":
+        link["from_node"] = "MathRenamed"
+    if link["to_node"] == "Math":
+        link["to_node"] = "MathRenamed"
+path_rename = os.path.join(work, "rename.json")
+with open(path_rename, "w", encoding="utf-8") as f:
+    json.dump(rename, f)
+code_rn, out_rn = run_diff(path_a, path_rename)
+check("7b: node rename reported",
+      "Nodes renamed (1)" in out_rn
+      and "Math -> MathRenamed" in out_rn, out_rn)
+check("7c: rename is not add + remove",
+      "Nodes added" not in out_rn and "Nodes removed" not in out_rn,
+      out_rn)
+check("7d: rename keeps links quiet",
+      "Links added" not in out_rn and "Links removed" not in out_rn,
+      out_rn)
+
+rename_edit = copy.deepcopy(rename)
+rename_edit["nodes"][0]["inputs"][0]["default_value"] = 1.7
+path_re = os.path.join(work, "rename_edit.json")
+with open(path_re, "w", encoding="utf-8") as f:
+    json.dump(rename_edit, f)
+code_re, out_re = run_diff(path_a, path_re)
+check("7e: renamed node edits stay with the new name",
+      "MathRenamed: Value = 1 -> 1.7" in out_re, out_re)
+
+sd = gnt_check._load_semantic_diff()
+result = sd.compare_groups(a, rename_edit)
+summary = sd.summarize_group("G", result) if result else ""
+check("7f: rename reaches the commit summary",
+      "1 node(s) renamed" in summary
+      and "1 node(s) changed" in summary, summary)
+
+uid_a = copy.deepcopy(a)
+uid_a["node_uids"] = {"Math": "uid-1", "Math.001": "uid-2"}
+uid_r = copy.deepcopy(rename)
+uid_r["node_uids"] = {"MathRenamed": "uid-1", "Math.001": "uid-2"}
+path_uid_a = os.path.join(work, "uid_a.json")
+path_uid_r = os.path.join(work, "uid_r.json")
+for path, group in ((path_uid_a, uid_a), (path_uid_r, uid_r)):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(group, f)
+code_uid, out_uid = run_diff(path_uid_a, path_uid_r)
+check("7g: rename matched by UID",
+      "Nodes renamed (1)" in out_uid
+      and "Math -> MathRenamed" in out_uid, out_uid)
+
 if shutil.which("git") is None:
     print("[SKIP] git not available; revision mode not tested")
 else:

@@ -491,6 +491,8 @@ def _load_semantic_diff():
     """Load semantic_diff.py (pure) after the synthetic package exists."""
     if "gnt_core.hash_utils" not in sys.modules:
         _load_hash_utils()
+    if "gnt_core.merge" not in sys.modules:
+        _load_merge()
     if "gnt_core.semantic_diff" not in sys.modules:
         _load_pure("gnt_core.semantic_diff",
                    os.path.join(_ROOT, "semantic_diff.py"))
