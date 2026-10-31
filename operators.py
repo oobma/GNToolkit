@@ -690,32 +690,20 @@ def import_package(filepath: str, *, apply_modifiers: bool = True,
         if existing is not None and not overwrite_existing:
             skipped += 1
             continue
-        saved = None
-        if existing is not None:
-            saved = SyncManager._save_external_connections(name)
         try:
             tree = import_node_tree_recursive(
-                json_cache[name], json_cache, maps, context, tracker)
+                json_cache[name], json_cache, maps, context, tracker,
+                overwrite_existing=overwrite_existing)
         except Exception as exc:
             traceback.print_exc()
             tracker.record(f"Group '{name}': import failed: {exc}",
                            level="ERROR")
             failed.append(name)
-            if saved is not None:
-                try:
-                    SyncManager._restore_external_connections(name, saved)
-                except Exception:
-                    pass
             continue
         if tree is None:
             failed.append(name)
             continue
         imported += 1
-        if saved is not None:
-            try:
-                SyncManager._restore_external_connections(name, saved)
-            except Exception:
-                pass
 
     for item in embedded_entries:
         kind = item["kind"]

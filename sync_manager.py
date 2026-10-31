@@ -1475,9 +1475,13 @@ class SyncManager:
                 continue
 
             if entry["link_direction"] == "from_group":
-                ng.links.new(group_sock, other_sock)
+                from_sock, to_sock = group_sock, other_sock
             else:
-                ng.links.new(other_sock, group_sock)
+                from_sock, to_sock = other_sock, group_sock
+            if any(link.from_socket == from_sock and link.to_socket == to_sock
+                   for link in ng.links):
+                continue
+            ng.links.new(from_sock, to_sock)
 
     # --- Synchronization actions -------------------------------------------
 
@@ -1521,7 +1525,8 @@ class SyncManager:
         self._unlink_external_into(blend_name, unlink_parents)
 
         ng = import_node_tree_recursive(
-            tree_data, json_cache, group_interface_maps, context, tracker
+            tree_data, json_cache, group_interface_maps, context, tracker,
+            overwrite_existing=True,
         )
 
         if ng is not None:

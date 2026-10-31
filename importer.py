@@ -12,6 +12,7 @@ mutating a global counter.
 from __future__ import annotations
 
 import logging
+import warnings
 
 import bpy
 
@@ -2383,6 +2384,8 @@ def import_node_tree_recursive(
     context=None,
     tracker: ImportErrorTracker | None = None,
     _visiting: set | None = None,
+    *,
+    overwrite_existing: bool | None = None,
 ):
     """Reconstruct a node tree from its JSON representation.
 
@@ -2398,9 +2401,10 @@ def import_node_tree_recursive(
     json_cache : dict
         Cache of all serialized trees (name → data) for dependency resolution.
         Callers that import several groups in a loop MUST skip groups that
-        are already present (``if bpy.data.node_groups.get(name): continue``):
-        rebuilding an existing tree renumbers its interface identifiers and
-        would break the links already wired from the groups imported before.
+        are already present (``if bpy.data.node_groups.get(name): continue``)
+        unless they pass ``overwrite_existing=True``: rebuilding an existing
+        tree renumbers its interface identifiers and would break the links
+        already wired from the groups imported before.
     group_interface_maps : dict, optional
         Translation table shared by the WHOLE batch: group name ->
         ``{old_identifier: new_identifier}``.  For every tree it rebuilds
@@ -2421,6 +2425,24 @@ def import_node_tree_recursive(
     tracker : ImportErrorTracker, optional
         Error tracker for this import operation.  If *None*, a fresh one
         is created internally.
+    overwrite_existing : bool or None, optional (keyword-only)
+        Controls rebuilding a tree that already exists.  ``None`` (default)
+        keeps the historical behavior and emits a ``UserWarning``; ``True``
+        snapshots and restores the external connections of consumer groups
+        around the rebuild; ``False`` raises ``RuntimeError`` instead of
+        rebuilding.  The hard default (``False``) is planned for 0.5.0.
+
+    Raises
+    ------
+    RuntimeError
+        When the tree exists and *overwrite_existing* is ``False``.
+
+    Warns
+    -----
+    UserWarning
+        When the tree exists and *overwrite_existing* is ``None``: the
+        rebuild renumbers the interface and breaks links from consumer
+        groups that were not snapshotted.
 
     Notes
     -----
@@ -2432,12 +2454,43 @@ def import_node_tree_recursive(
     background branch of ``gn.import_batch_json`` uses it);
     ``scripts/import_all_json.py`` is the headless CLI on top of it.
     """
+    name = data.get("name")
+    existing = bpy.data.node_groups.get(name) if name else None
+    if existing is not None:
+        if overwrite_existing is False:
+            raise RuntimeError(
+                f"Group '{name}' already exists. Pass "
+                "overwrite_existing=True to rebuild it (external consumer "
+                "links are saved and restored), or skip it and sync it with "
+                "operators.import_package(..., overwrite_existing=True)."
+            )
+        if overwrite_existing is None:
+            warnings.warn(
+                f"Group '{name}' already exists: rebuilding it in place "
+                "renumbers its interface and can break links from consumer "
+                "groups. Pass overwrite_existing=True to snapshot/restore "
+                "them, or use operators.import_package(..., "
+                "overwrite_existing=True).",
+                UserWarning, stacklevel=2,
+            )
+    saved = None
+    if existing is not None and overwrite_existing:
+        from .sync_manager import SyncManager
+        saved = SyncManager._save_external_connections(name)
     holder: dict = {}
-    for _frac, _msg in _import_node_tree_gen(
-        data, json_cache, group_interface_maps, context, tracker, holder,
-        _visiting,
-    ):
-        pass
+    try:
+        for _frac, _msg in _import_node_tree_gen(
+            data, json_cache, group_interface_maps, context, tracker, holder,
+            _visiting,
+        ):
+            pass
+    finally:
+        if saved is not None:
+            try:
+                from .sync_manager import SyncManager
+                SyncManager._restore_external_connections(name, saved)
+            except Exception:
+                pass
     return holder.get("tree")
 
 

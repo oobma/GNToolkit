@@ -215,7 +215,11 @@ the same counts the modal reports.
 `bpy.ops.gn.import_batch_json(filepath=..., 'EXEC_DEFAULT')` uses it
 automatically when there is no window, so CI can import a package with the
 installed extension and no repository script. `import_node_tree_recursive`
-remains the low-level entry point for a single tree.
+remains the low-level entry point for a single tree: it rebuilds a group
+that already exists only with `overwrite_existing=True` (external consumer
+links are saved and restored), raises with `False`, and keeps the
+historical behavior with a `UserWarning` by default. Prefer
+`import_package` for whole packages.
 
 ### Migrating exports from older versions
 

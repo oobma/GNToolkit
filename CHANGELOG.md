@@ -43,7 +43,15 @@ All notable changes to this project are documented in this file.
   paths to the rebuilt socket identifiers so the animation keeps working.
   A socket removed by the update leaves the curve untouched and reports
   a warning. Curves are still not versioned.
+- **Existing-group guard in the import API.**
+  `import_node_tree_recursive` takes a keyword-only `overwrite_existing`:
+  `True` snapshots and restores the external links of consumer groups
+  around the rebuild, `False` raises, and the default (`None`) keeps the
+  historical behavior with a `UserWarning`. `import_package` and the Pull
+  pass `True`; the restore is idempotent, so a repeated overwrite does not
+  duplicate links. The hard default (`False`) is planned for 0.5.0.
 - Tests: `tests/test_headless_import.py` (10, both 5.1 and 5.2),
+  `tests/test_import_api_guard.py` (13, both 5.1 and 5.2),
   `tests/test_object_animation.py` (16, both 5.1 and 5.2),
   `tests/test_git_staging.py` (40, both engines on 5.1 and 5.2),
   `pure-tests/test_gnt_check_diff.py` (25).
