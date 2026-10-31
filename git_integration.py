@@ -612,6 +612,42 @@ def _job_commit(payload):
             "nothing": False}
 
 
+def _patch_stage_cache(repo, action, rel_paths):
+    """Optimistically update the panel cache after a stage/unstage.
+
+    The queued status job still replaces these values with the engine's
+    truth.  Keeping the cache populated (instead of clearing it) is what
+    stops the Git panel from collapsing to "Checking git state..." on
+    every click; the rows flip immediately, so staging several files in a
+    row feels continuous.
+    """
+    repos = _state_cache.get("repos") or {}
+    entry = repos.get(_repo_key(repo))
+    if not entry:
+        return
+    rels = set(rel_paths)
+    staged = set(entry.get("staged") or [])
+    staged_tracked = set(entry.get("staged_tracked") or [])
+    worktree = set(entry.get("worktree_files") or [])
+    index_files = set(entry.get("index_files") or [])
+    if action == "stage":
+        staged |= rels
+        staged_tracked |= rels
+        index_files |= rels
+        worktree -= rels
+    else:
+        staged -= rels
+        staged_tracked -= rels
+        index_files -= rels
+    entry["staged"] = sorted(staged)
+    entry["staged_tracked"] = sorted(staged_tracked)
+    entry["index_files"] = sorted(index_files)
+    entry["worktree_files"] = sorted(worktree)
+    entry["changed_tracked_unstaged"] = sorted(
+        set(entry.get("tracked_changed") or []) - staged_tracked)
+    entry["staged_tracked_dirty"] = sorted(staged_tracked & worktree)
+
+
 def _job_stage(payload):
     """Stage/unstage repo-relative paths in the real Git index."""
     repo = payload["repo"]
@@ -628,7 +664,7 @@ def _job_stage(payload):
                 "action": action}
     ok, detail = fn(repo, rel_paths)
     if ok:
-        invalidate_git_state()
+        _patch_stage_cache(repo, action, rel_paths)
         queue_status_refresh()
     return {"ok": ok, "detail": detail, "action": action,
             "count": len(rel_paths)}

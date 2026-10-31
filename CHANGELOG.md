@@ -36,7 +36,7 @@ All notable changes to this project are documented in this file.
   reference and a "Migrating exports from older versions" recipe
   (re-export, `--diff`, expect only content differences, re-stamp).
 - Tests: `tests/test_headless_import.py` (10, both 5.1 and 5.2),
-  `tests/test_git_staging.py` (38, both engines on 5.1 and 5.2),
+  `tests/test_git_staging.py` (40, both engines on 5.1 and 5.2),
   `pure-tests/test_gnt_check_diff.py` (25).
 
 ### Fixed
