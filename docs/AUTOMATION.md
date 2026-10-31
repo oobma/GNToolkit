@@ -117,7 +117,7 @@ files or git revisions (`--repo`/`--subdir`; BASE is typically
 exit `1`; any unreadable JSON in any side exits `2`. Group-tree merge
 covers Geometry Nodes, Shader and Compositor groups on the current
 development branch; other tree types are reported as notices
-(`--strict` turns them into a failure). The v0.4.3 checker covers
+(`--strict` turns them into a failure). Since v0.4.3 the checker covers
 Geometry Nodes, Shader and Compositor groups plus materials and worlds,
 including graph merge and `merge_version` 4. Older tags may cover less.
 Check the release notes for the tag you fetch. The decision core is
