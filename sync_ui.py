@@ -33,6 +33,7 @@ from .sync_metadata import (SYNC_UUID_PROP, find_uuid_for_tree, is_ignored,
                             resolve_json_path)
 from .sync_operators import _get_active_tree
 from .serializer import tree_has_animation
+from .modifier_utils import object_animation_paths
 from .graph_view import (GRAPH_TREE_NAME, _raw_name, clear_history_diff,
                          mark_history_diff)
 
@@ -263,7 +264,8 @@ def _draw_active_entry(layout, context):
             row.operator(op_id, text="Track", icon='LINKED')
 
     tree = entry["owner"] if entry["kind"] == "group" else None
-    if tree is not None and tree_has_animation(tree):
+    if tree is not None and (tree_has_animation(tree)
+                             or bool(object_animation_paths(tree))):
         layout.label(text="Animation (keyframes/drivers) is not versioned",
                      icon=_layout_icon('STATUS_WARNING', 'WARNING'))
     return entry

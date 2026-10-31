@@ -101,7 +101,9 @@ Declared limits (see the manual for details):
 
 - Texture node trees are never versioned.
 - Animation (keyframes/drivers/NLA) is not saved; animated entries are
-  flagged instead.
+  flagged instead. Object-level animation on a NODES modifier input is
+  reported as `object_animation` and its data paths are remapped on
+  import, so the curve keeps driving the right socket.
 - Third-party custom group nodes keep their per-instance inner tree
   embedded with the node; the inner tree is not a standalone tracked
   entry.

@@ -35,7 +35,16 @@ All notable changes to this project are documented in this file.
 - **Docs:** `docs/AUTOMATION.md` gains the interface-map/`import_package`
   reference and a "Migrating exports from older versions" recipe
   (re-export, `--diff`, expect only content differences, re-stamp).
+- **Object-level animation is protected.** Keyframes that drive a NODES
+  modifier input (Molecular Nodes style) live on the Object, not on the
+  tree. Exports now carry an informational `object_animation` map (object
+  -> data paths; the canonical hash ignores it), `gnt_check` and the
+  Changes list warn about it, and a Pull remaps the fcurve/driver data
+  paths to the rebuilt socket identifiers so the animation keeps working.
+  A socket removed by the update leaves the curve untouched and reports
+  a warning. Curves are still not versioned.
 - Tests: `tests/test_headless_import.py` (10, both 5.1 and 5.2),
+  `tests/test_object_animation.py` (16, both 5.1 and 5.2),
   `tests/test_git_staging.py` (40, both engines on 5.1 and 5.2),
   `pure-tests/test_gnt_check_diff.py` (25).
 

@@ -32,6 +32,7 @@ from .constants import (
 from .error_tracker import ImportErrorTracker
 from .modifier_utils import (
     build_identifier_remap,
+    remap_modifier_animation,
     restore_modifier_bakes,
     restore_modifier_inputs,
     snapshot_modifier_bakes,
@@ -3042,6 +3043,18 @@ def _import_node_tree_gen(
             tracker.record(
                 f"Restored {restored} modifier input(s) after rebuilding "
                 f"'{name}'", level="DEBUG",
+            )
+        changed, unmatched = remap_modifier_animation(mod_snapshots, remap)
+        if changed:
+            tracker.record(
+                f"Remapped {changed} modifier animation path(s) after "
+                f"rebuilding '{name}'", level="DEBUG",
+            )
+        for obj_name, path in unmatched:
+            tracker.record(
+                f"Animation on '{obj_name}' references a modifier input "
+                f"removed from '{name}' ({path}); the curve was left "
+                "untouched", level="WARN",
             )
 
     # --- Step 7b: Modifier bake metadata surviving the node rebuild ---

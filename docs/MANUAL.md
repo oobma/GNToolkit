@@ -386,7 +386,9 @@ GNToolkit versions node logic, not scene data:
 - Texture node trees are never versioned.
 - Animation (keyframes, drivers, NLA) is not saved; animated entries are
   flagged in the panel and by `gnt_check.py` instead of passing as
-  silently synced.
+  silently synced. That includes keyframes on a NODES modifier input
+  (Molecular Nodes style): they are reported as object-level animation
+  and a Pull remaps them to the rebuilt socket identifiers.
 - Third-party custom group nodes keep their per-instance inner tree
   embedded with the node; the node class itself must be installed for
   the node to work.

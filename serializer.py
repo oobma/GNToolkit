@@ -14,6 +14,7 @@ import uuid
 import bpy
 
 from .codec import clean_value
+from .modifier_utils import object_animation_paths
 from .constants import (
     BUILTIN_GROUP_BL_IDNAMES,
     MATERIAL_SETTINGS_PROPS,
@@ -495,6 +496,12 @@ def _serialize_node_tree_core(tree):
     # UI and gnt_check warnings.
     if tree_has_animation(tree):
         data["has_animation"] = True
+    # Object-level animation on NODES modifier inputs (Molecular Nodes and
+    # similar): informational, hash-excluded, drives the warning and the
+    # socket-identifier remap on Pull.
+    object_animation = object_animation_paths(tree)
+    if object_animation:
+        data["object_animation"] = object_animation
     # Scene owner references (compositor only, 5.0+): informational, not
     # part of the canonical hash.  A fresh import uses them to assign the
     # rebuilt group to the scenes that used it in the source file.

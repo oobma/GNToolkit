@@ -18,6 +18,7 @@ from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
                         is_graph_tree_name, is_group_node_bl_idname,
                         is_trackable_tree_type)
 from .serializer import serialize_node_tree, tree_has_animation
+from .modifier_utils import object_animation_by_tree
 from .socket_utils import custom_inner_tree_names
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
@@ -670,6 +671,7 @@ def _change_rows() -> dict:
     }
     rows = []
     ignored_rows = []
+    object_animated = object_animation_by_tree()
     for uid, status in statuses.items():
         if status == SyncStatus.SYNCED:
             continue
@@ -687,7 +689,9 @@ def _change_rows() -> dict:
             "discardable": status in discardable and not ignored,
             "mergeable": status == SyncStatus.CONFLICT and not ignored,
             "staged": sync_manager.is_staged(uid),
-            "animated": bool(tree is not None and tree_has_animation(tree)),
+            "animated": bool(tree is not None and (
+                tree_has_animation(tree)
+                or info.get("blend_name") in object_animated)),
         }
         if ignored:
             ignored_rows.append(row)

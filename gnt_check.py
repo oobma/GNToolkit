@@ -224,6 +224,7 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
     t0 = time.time()
     clean, changed, missing, unparseable = [], [], [], []
     animated = []
+    object_animated = {}
     seen = set()
     for fp in files:
         data = _read_json(fp)
@@ -236,6 +237,11 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
                 seen.add(name)
                 if isinstance(gdata, dict) and gdata.get("has_animation") is True:
                     animated.append(name)
+                if isinstance(gdata, dict):
+                    obj_anim = gdata.get("object_animation")
+                    if isinstance(obj_anim, dict) and obj_anim:
+                        animated.append(name)
+                        object_animated[name] = sorted(obj_anim)
                 h = hu.canonical_hash_from_json_data(gdata)
                 if name in baseline:
                     expected, _exp_fp = baseline[name]
@@ -255,6 +261,10 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
             seen.add(name)
             if data.get("has_animation") is True:
                 animated.append(name)
+            obj_anim = data.get("object_animation")
+            if isinstance(obj_anim, dict) and obj_anim:
+                animated.append(name)
+                object_animated[name] = sorted(obj_anim)
             h = hu.canonical_hash_from_json_data(data)
             if name in baseline:
                 expected, _exp_fp = baseline[name]
@@ -276,6 +286,8 @@ def check(folder_or_file: str, baseline_path: str | None, strict: bool):
         "changed": changed, "missing": missing,
         "unparseable": unparseable, "dt_seconds": dt,
         "animated": sorted(set(animated)),
+        "object_animated": {name: object_animated[name]
+                            for name in sorted(object_animated)},
     }
     return report, bool(changed) or bool(missing), bool(unparseable and strict)
 
@@ -1589,6 +1601,10 @@ def main(argv=None) -> int:
         for n in report.get("animated", []):
             print(f"[WARNING]  {n}  has animation (keyframes/drivers) that "
                   "is not versioned")
+        for n, objects in sorted((report.get("object_animated") or {}).items()):
+            print(f"[WARNING]  {n}  has object-level animation on "
+                  f"{', '.join(objects)} (NODES modifier inputs) that is not "
+                  "versioned; Pull remaps the socket identifiers")
         print(f"--- {report['groups']} groups, {len(report['clean'])} clean, "
               f"{len(report['changed'])} changed, {len(report['missing'])} missing, "
               f"{len(report['unparseable'])} unreadable in {report['dt_seconds']}s")

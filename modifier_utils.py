@@ -219,6 +219,190 @@ def restore_modifier_inputs(snapshots, remap) -> int:
     return restored
 
 
+def _action_fcurves(action):
+    """Yield the F-Curves of an action (layered 4.4+/5.x and legacy)."""
+    if action is None:
+        return
+    seen = set()
+    try:
+        for layer in action.layers:
+            for strip in layer.strips:
+                for slot in action.slots:
+                    bag = strip.channelbag(slot)
+                    if bag is None:
+                        continue
+                    for fcurve in bag.fcurves:
+                        key = (fcurve.data_path, fcurve.array_index)
+                        if key not in seen:
+                            seen.add(key)
+                            yield fcurve
+    except (AttributeError, TypeError, RuntimeError):
+        pass
+    try:
+        for fcurve in action.fcurves:
+            key = (fcurve.data_path, fcurve.array_index)
+            if key not in seen:
+                seen.add(key)
+                yield fcurve
+    except (AttributeError, TypeError, RuntimeError):
+        pass
+
+
+def iter_owner_fcurves(owner):
+    """Yield every F-Curve that can animate *owner*.
+
+    Covers the active action (including Blender 4.4+ layered actions),
+    actions inside NLA strips and drivers.  Used to detect animation that
+    lives on an Object (a NODES modifier input) instead of the node tree.
+    """
+    ad = getattr(owner, "animation_data", None)
+    if ad is None:
+        return
+    yield from _action_fcurves(getattr(ad, "action", None))
+    try:
+        for track in ad.nla_tracks:
+            for strip in track.strips:
+                yield from _action_fcurves(getattr(strip, "action", None))
+    except (AttributeError, TypeError, RuntimeError):
+        pass
+    try:
+        for fcurve in ad.drivers:
+            yield fcurve
+    except (AttributeError, TypeError, RuntimeError):
+        pass
+
+
+def object_animation_paths(tree) -> dict:
+    """{object_name: [data_paths]} animating *tree* through NODES modifiers.
+
+    Informational (never part of the canonical hash): the add-on does not
+    version curves, but it must warn about them and remap their socket
+    identifiers when a Pull rebuilds the interface.
+    """
+    if tree is None:
+        return {}
+    out = {}
+    for obj in bpy.data.objects:
+        names = []
+        for mod in obj.modifiers:
+            try:
+                if mod.type == 'NODES' and mod.node_group == tree:
+                    names.append(mod.name)
+            except (AttributeError, ReferenceError):
+                continue
+        if not names:
+            continue
+        prefixes = tuple('modifiers["%s"]' % name for name in names)
+        paths = sorted({fcurve.data_path for fcurve in iter_owner_fcurves(obj)
+                        if getattr(fcurve, "data_path", "").startswith(prefixes)})
+        if paths:
+            out[obj.name] = paths
+    return {name: out[name] for name in sorted(out)}
+
+
+def object_animation_by_tree() -> dict:
+    """{tree_name: {object_name: [data_paths]}} for the whole file.
+
+    The Changes list scans once per draw instead of once per row.
+    """
+    out = {}
+    for obj in bpy.data.objects:
+        mods = []
+        for mod in obj.modifiers:
+            try:
+                if mod.type == 'NODES' and mod.node_group is not None:
+                    mods.append((mod.node_group.name, mod.name))
+            except (AttributeError, ReferenceError):
+                continue
+        if not mods:
+            continue
+        fcurves = list(iter_owner_fcurves(obj))
+        for tree_name, mod_name in mods:
+            prefix = 'modifiers["%s"]' % mod_name
+            paths = sorted({fcurve.data_path for fcurve in fcurves
+                            if getattr(fcurve, "data_path", "").startswith(prefix)})
+            if paths:
+                out.setdefault(tree_name, {}).setdefault(obj.name, set()).update(paths)
+    return {tree_name: {name: sorted(paths) for name, paths in objects.items()}
+            for tree_name, objects in out.items()}
+
+
+def _split_animation_path(path, prefix):
+    """(identifier, head, tail) for a modifier fcurve data path, or None."""
+    tail = path[len(prefix):]
+    rna = ".properties.inputs."
+    if tail.startswith(rna):
+        rest = tail[len(rna):]
+        ident, sep, sub = rest.partition(".")
+        return ident, prefix + rna, sep + sub
+    legacy = '["'
+    if tail.startswith(legacy):
+        rest = tail[len(legacy):]
+        ident, close, sub = rest.partition('"]')
+        if close:
+            return ident, prefix + legacy, '"]' + sub
+    return None
+
+
+def _remap_animation_path(path, prefixes, remap, new_ids):
+    """(new_path, replaced, orphan) for one fcurve data path."""
+    for prefix in prefixes:
+        if not path.startswith(prefix):
+            continue
+        parsed = _split_animation_path(path, prefix)
+        if parsed is None:
+            return path, False, False
+        ident, head, tail = parsed
+        new_id = remap.get(ident)
+        if new_id and new_id != ident:
+            return head + new_id + tail, True, False
+        if ident in new_ids:
+            return path, False, False
+        return path, False, True
+    return path, False, False
+
+
+def remap_modifier_animation(snapshots, remap):
+    """Rewrite fcurve/driver data paths after a tree interface rebuild.
+
+    *snapshots* is the ``[(modifier, entries)]`` list captured by
+    :func:`snapshot_modifier_inputs`; *remap* is the identifier map built
+    by :func:`build_identifier_remap`.  Returns ``(changed, unmatched)``
+    where *unmatched* lists ``(object_name, data_path)`` for curves that
+    pointed at a socket the new interface no longer has (left untouched,
+    never deleted).
+    """
+    if not snapshots:
+        return 0, []
+    remap = remap or {}
+    new_ids = set(remap.values())
+    by_object = {}
+    for mod, _entries in snapshots:
+        obj = getattr(mod, "id_data", None)
+        if obj is None:
+            continue
+        by_object.setdefault(obj, set()).add(mod.name)
+    changed = 0
+    unmatched = []
+    for obj, names in by_object.items():
+        prefixes = tuple('modifiers["%s"]' % name for name in sorted(names))
+        for fcurve in iter_owner_fcurves(obj):
+            path = getattr(fcurve, "data_path", "")
+            if not path.startswith(prefixes):
+                continue
+            new_path, replaced, orphan = _remap_animation_path(
+                path, prefixes, remap, new_ids)
+            if orphan:
+                unmatched.append((obj.name, path))
+            elif replaced:
+                try:
+                    fcurve.data_path = new_path
+                    changed += 1
+                except (AttributeError, TypeError, RuntimeError):
+                    pass
+    return changed, unmatched
+
+
 _BAKE_ELEMENT_FIELDS = (
     "bake_mode", "bake_target", "use_custom_path", "directory",
     "use_custom_simulation_frame_range", "frame_start", "frame_end",
