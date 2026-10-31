@@ -193,6 +193,16 @@ def repos_for_tracked(metadata=None, blend_dir=None):
     return {root: sorted(paths) for root, paths in repos.items()}
 
 
+def _repo_key(repo_root):
+    """Key used by ``repos_for_tracked`` (no trailing separator).
+
+    Scripts often pass ``bpy.path.abspath("//")``, which ends with a
+    separator on Windows; without normalizing, the lookup misses and every
+    staged file looks "foreign".
+    """
+    return os.path.normpath(repo_root) if repo_root else repo_root
+
+
 def changed_tracked_paths(repo_root: str):
     """Tracked JSON paths changed in the working tree, as (rel, abs) pairs.
 
@@ -200,7 +210,7 @@ def changed_tracked_paths(repo_root: str):
     the JSON the commit is about to write, not the pending .blend edits.
     """
     try:
-        paths = repos_for_tracked().get(repo_root) or []
+        paths = repos_for_tracked().get(_repo_key(repo_root)) or []
         status = _backend().status(repo_root)
     except Exception:
         return []
@@ -223,7 +233,7 @@ def staged_foreign_paths(repo_root: str):
     refuses instead of touching somebody else's staged work.
     """
     try:
-        paths = repos_for_tracked().get(repo_root) or []
+        paths = repos_for_tracked().get(_repo_key(repo_root)) or []
         tracked = {os.path.relpath(p, repo_root).replace(os.sep, "/")
                    for p in paths}
         staged = {p.replace(os.sep, "/")
@@ -236,7 +246,7 @@ def staged_foreign_paths(repo_root: str):
 def staged_tracked_paths(repo_root: str):
     """Repo-relative tracked JSON paths staged for the next commit."""
     try:
-        paths = repos_for_tracked().get(repo_root) or []
+        paths = repos_for_tracked().get(_repo_key(repo_root)) or []
         tracked = {os.path.relpath(p, repo_root).replace(os.sep, "/")
                    for p in paths}
         staged = {p.replace(os.sep, "/")
@@ -309,7 +319,7 @@ def repo_status(repo_root, paths=None):
         return {"ok": False, "error": "No Git engine available"}
     if paths is None:
         try:
-            paths = repos_for_tracked().get(repo_root)
+            paths = repos_for_tracked().get(_repo_key(repo_root))
         except Exception:
             paths = None
     return backend.status(repo_root, paths)
@@ -566,7 +576,7 @@ def _job_commit(payload):
         return {"ok": False, "detail": "No Git engine available",
                 "committed": [], "nothing": False}
     paths = repos_for_tracked(payload.get("metadata"),
-                              payload.get("blend_dir")).get(repo, [])
+                              payload.get("blend_dir")).get(_repo_key(repo), [])
     tracked_rel = {os.path.relpath(p, repo).replace(os.sep, "/")
                    for p in paths}
     if payload.get("staged_only"):
@@ -702,7 +712,8 @@ def _merge_remote_changes(repo, payload, backend):
     committed as a real two-parent merge commit, then pushed.
     """
     tracked_paths = repos_for_tracked(payload.get("metadata"),
-                                      payload.get("blend_dir")).get(repo, [])
+                                      payload.get("blend_dir")).get(
+                                          _repo_key(repo), [])
     tracked_rels = {os.path.relpath(p, repo).replace(os.sep, "/")
                     for p in tracked_paths}
     tracked_norm = {os.path.normcase(rel): rel for rel in tracked_rels}
