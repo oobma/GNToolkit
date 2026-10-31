@@ -24,7 +24,8 @@ from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
                         is_trackable_tree_type)
 from .error_tracker import ImportErrorTracker
 from .file_utils import FilenameAllocator, sanitize_filename, write_json_file
-from .importer import _import_node_tree_gen, merge_derived_groups
+from .importer import (_import_node_tree_gen, import_node_tree_recursive,
+                       merge_derived_groups)
 from .modifier_utils import (
     apply_modifier_bake_meta,
     iter_modifier_sockets,
@@ -638,6 +639,119 @@ def dependency_ordered_names(json_cache: dict) -> list:
     return order
 
 
+def import_package(filepath: str, *, apply_modifiers: bool = True,
+                   overwrite_existing: bool = False, context=None,
+                   tracker: ImportErrorTracker | None = None,
+                   group_interface_maps: dict | None = None) -> dict:
+    """Import a package file or a folder export, synchronously.
+
+    This is the same recipe the batch-import modal runs, minus the UI:
+    children are rebuilt before their parents, existing groups are skipped
+    unless *overwrite_existing* is set, and ONE ``group_interface_maps``
+    dict is shared by the whole loop so parent links are translated to the
+    identifiers the rebuilt children received.  Embedded materials/worlds
+    are recreated and stored modifier tasks are applied in stack order.
+
+    Safe in ``--background`` (no window/context required); the operator
+    ``gn.import_batch_json`` uses it when there is no window.  Raises on
+    unreadable input; per-group failures are recorded in the tracker and
+    returned in ``failed`` instead of aborting the batch.
+
+    Returns a dict with ``ok``, ``groups``, ``imported``, ``skipped``,
+    ``failed``, ``embedded_imported``, ``embedded_skipped``,
+    ``modifiers``, ``errors`` and ``coercions``.
+    """
+    if not os.path.isdir(filepath):
+        parent = os.path.dirname(filepath)
+        if parent and os.path.isdir(os.path.join(parent, "NodeGroups")):
+            filepath = parent
+    json_cache, mod_data_list, embedded_entries = load_package_sources(filepath)
+    if not json_cache and not mod_data_list and not embedded_entries:
+        return {"ok": False, "error": "No data found.", "groups": 0,
+                "imported": 0, "skipped": 0, "failed": [],
+                "embedded_imported": 0, "embedded_skipped": 0,
+                "modifiers": 0, "errors": 0, "coercions": 0}
+
+    if tracker is None:
+        tracker = ImportErrorTracker()
+    reset_coercion_count()
+    maps = group_interface_maps if group_interface_maps is not None else {}
+    mod_tasks = list(mod_data_list) if apply_modifiers else []
+    imported = 0
+    skipped = 0
+    failed = []
+    embedded_imported = 0
+    embedded_skipped = 0
+
+    from .importer import import_embedded_entry
+
+    for name in dependency_ordered_names(json_cache):
+        existing = bpy.data.node_groups.get(name)
+        if existing is not None and not overwrite_existing:
+            skipped += 1
+            continue
+        saved = None
+        if existing is not None:
+            saved = SyncManager._save_external_connections(name)
+        try:
+            tree = import_node_tree_recursive(
+                json_cache[name], json_cache, maps, context, tracker)
+        except Exception as exc:
+            traceback.print_exc()
+            tracker.record(f"Group '{name}': import failed: {exc}",
+                           level="ERROR")
+            failed.append(name)
+            if saved is not None:
+                try:
+                    SyncManager._restore_external_connections(name, saved)
+                except Exception:
+                    pass
+            continue
+        if tree is None:
+            failed.append(name)
+            continue
+        imported += 1
+        if saved is not None:
+            try:
+                SyncManager._restore_external_connections(name, saved)
+            except Exception:
+                pass
+
+    for item in embedded_entries:
+        kind = item["kind"]
+        name = item["name"]
+        coll = bpy.data.materials if kind == "material" else bpy.data.worlds
+        owner = coll.get(name)
+        if (owner is not None and getattr(owner, "use_nodes", False)
+                and getattr(owner, "node_tree", None) is not None
+                and not overwrite_existing):
+            embedded_skipped += 1
+            continue
+        owner = import_embedded_entry(
+            item["data"], kind, json_cache, context, tracker,
+            group_interface_maps=maps)
+        if owner is not None:
+            embedded_imported += 1
+        else:
+            embedded_skipped += 1
+
+    if mod_tasks:
+        apply_modifier_tasks(mod_tasks, maps)
+
+    return {
+        "ok": True,
+        "groups": len(json_cache),
+        "imported": imported,
+        "skipped": skipped,
+        "failed": failed,
+        "embedded_imported": embedded_imported,
+        "embedded_skipped": embedded_skipped,
+        "modifiers": len(mod_tasks),
+        "errors": tracker.error_count,
+        "coercions": coercion_count(),
+    }
+
+
 class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
     bl_idname = "gn.import_batch_json"
     bl_label = "Import JSON Package"
@@ -695,7 +809,44 @@ class GN_OT_ImportBatchJSON(bpy.types.Operator, ImportHelper):
         context.workspace.status_text_set(None)
         context.window.cursor_modal_restore()
 
+    def _execute_synchronous(self, context):
+        """Import the whole package without the modal (headless/CI)."""
+        if not self.filepath:
+            self.report({'ERROR'}, "No file selected.")
+            return {'CANCELLED'}
+        self._tracker = ImportErrorTracker()
+        try:
+            result = import_package(
+                self.filepath,
+                apply_modifiers=self.apply_modifiers,
+                overwrite_existing=self.overwrite_existing,
+                context=context,
+                tracker=self._tracker,
+            )
+        except Exception as e:
+            traceback.print_exc()
+            self.report({'ERROR'}, f"Read error: {str(e)}")
+            return {'CANCELLED'}
+        if not result.get("ok"):
+            self.report({'ERROR'}, result.get("error", "No data found."))
+            return {'CANCELLED'}
+        counts = (f"{result['imported']} imported, "
+                  f"{result['skipped']} skipped (already exist)")
+        if result["embedded_imported"] or result["embedded_skipped"]:
+            counts += (f", {result['embedded_imported']} material/world "
+                       f"imported, {result['embedded_skipped']} skipped")
+        if result["failed"] or result["errors"]:
+            self.report({'WARNING'},
+                        f"Package import finished - {counts} - "
+                        f"{result['errors']} issue(s) (check the console).")
+        else:
+            self.report({'INFO'},
+                        f"Package import finished - {counts}.")
+        return {'FINISHED'}
+
     def execute(self, context):
+        if bpy.app.background or context.window is None:
+            return self._execute_synchronous(context)
         self._tracker = ImportErrorTracker()
         reset_coercion_count()
 

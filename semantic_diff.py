@@ -118,6 +118,33 @@ def _diff_node_lines(nodes: list) -> list:
     return lines
 
 
+def _diff_custom_props(a: dict, b: dict, where: str = "") -> list:
+    """Lines for custom-property changes between two serialized sections.
+
+    Addon bookkeeping (``gnt_*``) is never versioned, so it is ignored here
+    exactly like the serializer and the canonical hash do.
+    """
+    props_a = a.get("custom_properties")
+    props_b = b.get("custom_properties")
+    props_a = props_a if isinstance(props_a, dict) else {}
+    props_b = props_b if isinstance(props_b, dict) else {}
+    props_a = {k: v for k, v in props_a.items()
+               if not str(k).startswith("gnt_")}
+    props_b = {k: v for k, v in props_b.items()
+               if not str(k).startswith("gnt_")}
+    lines = []
+    for key in sorted(set(props_a) | set(props_b), key=str):
+        if key not in props_b:
+            lines.append("%s'%s' removed" % (where, key))
+        elif key not in props_a:
+            lines.append("%s'%s' added" % (where, key))
+        elif props_a[key] != props_b[key]:
+            lines.append("%s'%s' = %s -> %s" % (
+                where, key, _diff_short(props_a[key]),
+                _diff_short(props_b[key])))
+    return lines
+
+
 def _diff_group_nodes(a: dict, b: dict, cosmetic=_COSMETIC) -> tuple:
     na = {n.get("name"): n for n in a.get("nodes", [])}
     nb = {n.get("name"): n for n in b.get("nodes", [])}
@@ -168,6 +195,7 @@ def _diff_group_nodes(a: dict, b: dict, cosmetic=_COSMETIC) -> tuple:
         for field in ("zone_items", "menu_items_data", "zone_paired_node"):
             if x.get(field) != y.get(field):
                 changes.append("%s changed" % field)
+        changes += _diff_custom_props(x, y, "custom ")
         if changes:
             changed.append((y, changes))
         elif x.get("location") != y.get("location"):
@@ -345,8 +373,16 @@ def compare_groups(a: dict, b: dict) -> dict | None:
     interface = _diff_interface(a, b)
     added, removed, changed, moved = _diff_group_nodes(a, b)
     new_links, gone_links, relinked, internal = _diff_group_links(a, b)
+    custom = _diff_custom_props(a, b, "custom ")
+    settings_a = a.get("owner_settings")
+    settings_b = b.get("owner_settings")
+    if isinstance(settings_a, dict) and isinstance(settings_b, dict):
+        custom += _diff_custom_props(settings_a, settings_b, "owner custom ")
+    node_custom = sum(1 for _node, changes in changed
+                      for line in changes if line.startswith("custom "))
+    custom_count = len(custom) + node_custom
     if not (interface or renamed or added or removed or changed or new_links
-            or gone_links or relinked or internal or moved):
+            or gone_links or relinked or internal or moved or custom):
         return None
     return {
         "interface": interface,
@@ -359,6 +395,8 @@ def compare_groups(a: dict, b: dict) -> dict | None:
         "relinked": relinked,
         "internal": internal,
         "moved": moved,
+        "custom": custom,
+        "custom_count": custom_count,
         "nodes_a": len(a.get("nodes", [])),
         "nodes_b": len(b.get("nodes", [])),
         "links_a": len(a.get("links", [])),
@@ -374,6 +412,9 @@ def format_group_report(name: str, result: dict) -> list:
     if result["interface"]:
         lines.append("  Interface:")
         lines += ["    " + x for x in result["interface"]]
+    if result.get("custom"):
+        lines.append("  Custom properties (%d):" % len(result["custom"]))
+        lines += ["    " + x for x in result["custom"]]
     if result.get("renamed"):
         lines.append("  Nodes renamed (%d):" % len(result["renamed"]))
         lines += ["    %s -> %s" % pair for pair in result["renamed"]]
@@ -422,6 +463,8 @@ def summarize_group(name: str, result: dict) -> str:
         parts.append("%d interface change(s)" % len(result["interface"]))
     if result["changed"]:
         parts.append("%d node(s) changed" % len(result["changed"]))
+    if result.get("custom_count"):
+        parts.append("%d custom property change(s)" % result["custom_count"])
     if not parts:
         parts.append("%d node(s) moved" % result["moved"])
     return "%s: %s" % (name, ", ".join(parts))

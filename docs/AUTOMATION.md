@@ -92,8 +92,11 @@ python gnt_check.py --merge HEAD~1 HEAD theirs --repo . --subdir NodeGroups
 prefix), value/property changes and re-linked connections. Node renames
 are matched with the same identity rules as the merge (UIDs first, then
 type/signature/topology) and reported as `old -> new`; their edits and
-links stay attached to the renamed node. Layout-only
-properties (position, sizes, selection) are ignored.
+links stay attached to the renamed node. Custom properties of nodes,
+trees and embedded owners are reported too (the add-on's own `gnt_*`
+bookkeeping is ignored), so a version stamp written by another add-on
+shows up as an explained change instead of an unexplained hash churn.
+Layout-only properties (position, sizes, selection) are ignored.
 
 `--merge` previews the semantic merge of the three sides without writing
 anything: the **values** (socket defaults, node labels/properties, custom
@@ -198,6 +201,43 @@ file GNToolkit syncs against. Neither source file is modified.
 
 The scripts live in `scripts/` in this repository - fetch them at the
 same tag as your add-on. They are not part of the extension zip.
+
+### Importing a package from Python
+
+`operators.import_package(path, ...)` runs the same import as the modal,
+synchronously and safe in `--background`: it resolves a package file or a
+folder export, rebuilds children before parents, shares one interface map
+for the whole batch (that map translates the socket identifiers stored in
+parent-group links, so it must never be cleared between groups),
+recreates embedded materials/worlds and applies modifier tasks. It returns
+the same counts the modal reports.
+
+`bpy.ops.gn.import_batch_json(filepath=..., 'EXEC_DEFAULT')` uses it
+automatically when there is no window, so CI can import a package with the
+installed extension and no repository script. `import_node_tree_recursive`
+remains the low-level entry point for a single tree.
+
+### Migrating exports from older versions
+
+Exports written before 0.4.0 lack fields the current serializer records:
+node and interface `subtype`, `dimensions` on 2D sockets, ColorRamp and
+other struct properties, and custom properties. Those JSONs are not
+wrong, they are incomplete - rebuilding from them loses those values.
+
+Re-export the `.blend` with the current add-on and compare the two
+folders:
+
+```bash
+python gnt_check.py --diff old/NodeGroups new/NodeGroups
+```
+
+Only semantic differences are printed: schema-only additions are
+invisible, so a clean report means "nothing was cooked differently".
+Groups that do appear must be re-exported; they usually carry real data
+the old JSON never stored (a ColorRamp, a 2D default, a float that was
+rounded before 0.3.1). Re-stamp the sidecar afterwards: the version guard
+refuses to compare a baseline written by another hash-algorithm version,
+and CI needs the new one anyway.
 
 ## Build the release packages
 

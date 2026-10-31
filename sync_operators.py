@@ -181,27 +181,38 @@ def _foreign_staged_message(foreign):
             % shown)
 
 
-def _commit_suggestion_from_head(repo: str) -> str:
+def _nothing_staged_message():
+    return ("Nothing staged: stage the JSON files you want to commit first "
+            "(use Stage or Stage all in the Git panel).")
+
+
+def _commit_suggestion_from_head(repo: str, rel_paths=None) -> str:
     """Suggested message for the JSON changes a Git commit would write.
 
-    Reads the tracked JSON files that differ from HEAD and compares the
-    HEAD version with the working file.  This describes the commit content
-    in the right direction (HEAD -> working), unlike the save-time
-    suggestion cached by ``_collect_commit_suggestion`` (live .blend vs
-    JSON), which can be stale after a History restore or a Pull.
+    With *rel_paths* (the staged files) it compares the HEAD blob against
+    the INDEX blob - the commit content - so a file edited after staging
+    does not leak into the message.  Without it, it keeps the legacy
+    HEAD -> working-tree comparison for direct callers.
     """
     try:
         from . import semantic_diff
-        from .git_integration import changed_tracked_paths, read_blob_at
-        changed = changed_tracked_paths(repo)
-        if not changed:
+        from .git_integration import (changed_tracked_paths, read_blob_at,
+                                      read_index_blob)
+        if rel_paths is None:
+            entries = changed_tracked_paths(repo)
+        else:
+            entries = [(rel, os.path.join(repo, rel.replace("/", os.sep)))
+                       for rel in rel_paths]
+        if not entries:
             return ""
         old_groups = {}
         new_groups = {}
-        for rel, path in changed:
-            fallback = os.path.basename(path)[:-5]
+        for rel, path in entries:
+            fallback = os.path.basename(path)
+            if fallback.lower().endswith(".json"):
+                fallback = fallback[:-5]
             blob = read_blob_at(repo, "HEAD", rel)
-            if blob:
+            if blob is not None:
                 try:
                     old_data = json.loads(blob.decode("utf-8-sig"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
@@ -209,11 +220,19 @@ def _commit_suggestion_from_head(repo: str) -> str:
                 if isinstance(old_data, dict):
                     semantic_diff.add_group_data(old_groups, old_data,
                                                  fallback)
-            try:
-                with open(path, "r", encoding="utf-8-sig") as fh:
-                    new_data = json.load(fh)
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                new_data = None
+            if rel_paths is None:
+                try:
+                    with open(path, "r", encoding="utf-8-sig") as fh:
+                        new_data = json.load(fh)
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    new_data = None
+            else:
+                staged = read_index_blob(repo, rel)
+                try:
+                    new_data = (json.loads(staged.decode("utf-8-sig"))
+                                if staged is not None else None)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    new_data = None
             if isinstance(new_data, dict):
                 semantic_diff.add_group_data(new_groups, new_data, fallback)
         message = semantic_diff.summarize_commit_groups(old_groups,
@@ -1398,7 +1417,9 @@ def handle_git_job_done(kind, payload, result):
                 f"Git: committed {len(result['committed'])} file(s)")
         elif result.get("nothing"):
             _show_status_message(
-                "Git: nothing to commit — no tracked JSON changed")
+                "Git: nothing staged - stage the JSON files you want to commit"
+                if result.get("staged_only") else
+                "Git: nothing to commit - no tracked JSON changed")
         else:
             _show_status_message(
                 f"Git commit failed: {result.get('detail', 'unknown error')}",
@@ -1409,6 +1430,19 @@ def handle_git_job_done(kind, payload, result):
             _invalidate_git_log_cache()
         except Exception:
             pass
+        _tag_git_redraw()
+        return
+    if kind == "stage":
+        action = result.get("action", "stage")
+        if result.get("ok"):
+            _show_status_message(
+                f"Git: {result.get('count', 0)} file(s) "
+                f"{'staged' if action == 'stage' else 'unstaged'}")
+        else:
+            _show_status_message(
+                f"Git {action} failed: {result.get('detail', 'unknown error')}",
+                duration=10.0)
+        queue_status_refresh()
         _tag_git_redraw()
         return
     if kind == "sync":
@@ -1548,11 +1582,69 @@ class GN_OT_GitDiscardLayout(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _git_stage_submit(op, action: str) -> bool:
+    """Queue a stage/unstage job for one file or for every changed file."""
+    from .git_integration import changed_tracked_paths, staged_tracked_paths
+    repo = op.repo
+    if not repo or not os.path.isdir(repo):
+        op.report({'ERROR'}, "Repository not found")
+        return False
+    rels = [op.rel_path] if op.rel_path else []
+    if not rels:
+        if action == "stage":
+            rels = [rel for rel, _abs in changed_tracked_paths(repo)]
+        else:
+            rels = staged_tracked_paths(repo)
+    if not rels:
+        op.report({'INFO'}, "Nothing to stage" if action == "stage"
+                  else "Nothing to unstage")
+        return False
+    git_submit("stage", repo=repo, action=action, rel_paths=rels)
+    op.report({'INFO'}, "Git: %s %d file(s)..."
+              % ("staging" if action == "stage" else "unstaging", len(rels)))
+    return True
+
+
+class GN_OT_GitStage(bpy.types.Operator):
+    bl_idname = "gn.git_stage"
+    bl_label = "Stage JSON"
+    bl_description = ("Stage this JSON file for the next Git commit. Writes "
+                      "the real Git index; the working file is not changed")
+    bl_options = {'REGISTER'}
+
+    repo: StringProperty(name="Repository")
+    rel_path: StringProperty(
+        name="File",
+        description="Repo-relative JSON path (empty stages every changed file)")
+
+    def execute(self, context):
+        return ({'FINISHED'} if _git_stage_submit(self, "stage")
+                else {'CANCELLED'})
+
+
+class GN_OT_GitUnstage(bpy.types.Operator):
+    bl_idname = "gn.git_unstage"
+    bl_label = "Unstage JSON"
+    bl_description = ("Unstage this JSON file (the index entry goes back to "
+                      "HEAD; the working file keeps its changes)")
+    bl_options = {'REGISTER'}
+
+    repo: StringProperty(name="Repository")
+    rel_path: StringProperty(
+        name="File",
+        description="Repo-relative JSON path (empty unstages every staged file)")
+
+    def execute(self, context):
+        return ({'FINISHED'} if _git_stage_submit(self, "unstage")
+                else {'CANCELLED'})
+
+
 class GN_OT_GitCommit(bpy.types.Operator):
     bl_idname = "gn.git_commit"
     bl_label = "Git Commit"
-    bl_description = ("Commit the tracked JSON files that changed to the local git "
-                      "repository — only files managed by this addon are staged")
+    bl_description = ("Commit the tracked JSON files staged in the Git index "
+                      "to the local git repository - only files managed by "
+                      "this addon are committed")
     bl_options = {'REGISTER'}
 
     repo: StringProperty(name="Repository")
@@ -1566,12 +1658,16 @@ class GN_OT_GitCommit(bpy.types.Operator):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        from .git_integration import staged_foreign_paths
+        from .git_integration import staged_foreign_paths, staged_tracked_paths
         foreign = staged_foreign_paths(self.repo)
         if foreign:
             self.report({'ERROR'}, _foreign_staged_message(foreign))
             return {'CANCELLED'}
-        suggestion = _commit_suggestion_from_head(self.repo)
+        staged = staged_tracked_paths(self.repo)
+        if not staged:
+            self.report({'ERROR'}, _nothing_staged_message())
+            return {'CANCELLED'}
+        suggestion = _commit_suggestion_from_head(self.repo, staged)
         self.message = (suggestion or "Update node groups")[:300]
         return context.window_manager.invoke_props_dialog(self, width=520)
 
@@ -1579,13 +1675,17 @@ class GN_OT_GitCommit(bpy.types.Operator):
         if not self.repo or not os.path.isdir(self.repo):
             self.report({'ERROR'}, "Repository not found")
             return {'CANCELLED'}
-        from .git_integration import staged_foreign_paths
+        from .git_integration import staged_foreign_paths, staged_tracked_paths
         foreign = staged_foreign_paths(self.repo)
         if foreign:
             self.report({'ERROR'}, _foreign_staged_message(foreign))
             return {'CANCELLED'}
+        if not staged_tracked_paths(self.repo):
+            self.report({'ERROR'}, _nothing_staged_message())
+            return {'CANCELLED'}
         git_submit("commit", repo=self.repo,
-                   message=self.message.strip() or "Update node groups")
+                   message=self.message.strip() or "Update node groups",
+                   staged_only=True)
         self.report({'INFO'}, "Git commit started in background...")
         return {'FINISHED'}
 
@@ -3199,6 +3299,8 @@ classes = (
     GN_OT_SyncImportGroupClose,
     GN_OT_GitDiscardLayout,
     GN_OT_GitCommit,
+    GN_OT_GitStage,
+    GN_OT_GitUnstage,
     GN_OT_GitSync,
     GN_OT_RevealRepo,
     GN_OT_GitSaveCredentials,

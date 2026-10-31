@@ -136,15 +136,25 @@ remote support.
   `ahead`/`behind`, `Index: clean` / `N staged`, and
   `Working tree: clean` / `N tracked JSON changed`.
   The `.blend` and `.gntsync` stay outside Git by design. The buttons:
-  - **Git commit...** — opens a dialog for the commit message; stages
-    **only the tracked JSON files that changed** (never `git add -A`,
-    never the .blend) and commits locally. If the index already has
-    staged changes outside the tracked JSON, the commit is refused (the
-    panel disables the button and shows the foreign count): commit or
-    unstage them with your Git tooling first. The message is pre-filled
-    from the tracked JSON diff against HEAD (the actual commit), so a
-    History restore/revert is described in the right direction; edit it
-    freely.
+  - **JSON files (N changed, M staged)** — collapsible per-file staging
+    list. Each row stages or unstages one tracked JSON in the **real Git
+    index** (`Stage` writes `.git/index`; it does not touch the file) and
+    shows how many groups that JSON carries. A file edited after staging
+    is marked "(edited after staging)" and the commit keeps the staged
+    snapshot. In a package layout the file is the unit: the groups it
+    contains travel together, and no JSON is ever written in parts.
+    `Stage all` / `Unstage all` act on every changed/staged tracked file.
+  - **Commit staged (N)** — disabled while the index has no tracked JSON.
+    Opens a dialog for the commit message and commits **exactly what is
+    staged** (never `git add -A`, never the .blend). If the index already
+    has staged changes outside the tracked JSON, the commit is refused
+    (the panel disables the button and shows the foreign count): commit
+    or unstage them with your Git tooling first. The message is
+    pre-filled from the staged content against HEAD (the actual commit),
+    so a History restore/revert is described in the right direction and
+    a file edited after staging does not leak into it; edit it freely.
+    Staging is not a draft: **Git sync** asks you to commit or unstage
+    first, because a pull/merge needs a clean index.
   - **Git sync** — pull, then push. When the local
     branch is simply behind, the remote changes arrive; when local and
     remote **diverged**, the tracked JSON files are merged per item
@@ -196,7 +206,7 @@ remote support.
 - The on-open fetch and **Git sync** (pull/push) require Blender's
   *Allow Online Access* setting. Without it the operations report that
   online access is disabled instead of failing halfway.
-- The local `git status` refresh, **Git commit...** and the whole manual
+- The local `git status` refresh, **Commit staged** and the whole manual
   flow with your own git client work **offline**.
 
 ### Notes and limits
@@ -205,7 +215,7 @@ remote support.
   non-addon files, branches, rebases, PRs and conflict resolution happen
   in your client.
 - The .blend is never committed or pushed by the addon.
-- `Git commit...` commits to the **local** repository; sharing happens
+- **Commit staged** commits to the **local** repository; sharing happens
   with **Git sync** (push) or your client.
 
 ## Merging conflicted groups (Changes list)

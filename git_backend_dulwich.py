@@ -184,16 +184,22 @@ def status(repo_root, tracked_paths=None):
                                       optional_locks=False)
             branch, upstream, ahead, behind = _branch_info(repo)
         changed = set()
+        index_files = set()
+        worktree_files = set()
         for paths in result.staged.values():
             for path in paths:
+                index_files.add(_fs_rel(path))
                 changed.add(_fs_rel(path))
         for path in result.unstaged:
+            worktree_files.add(_fs_rel(path))
             changed.add(_fs_rel(path))
         for path in result.untracked:
             changed.add(_fs_rel(path))
         entry = {"ok": True, "branch": branch, "upstream": upstream,
                  "ahead": ahead, "behind": behind,
-                 "changed": sorted(changed)}
+                 "changed": sorted(changed),
+                 "index_files": sorted(index_files),
+                 "worktree_files": sorted(worktree_files)}
     except Exception as exc:
         entry = {"ok": False, "error": _friendly_error(exc)}
     _status_cache[repo_root] = (signature, entry)
@@ -492,6 +498,124 @@ def staged_names(repo_root):
                           for path in paths)
     except Exception:
         return []
+
+
+def _rel_paths(repo_root, paths):
+    """Repo-relative POSIX paths from relative or absolute inputs."""
+    out = []
+    for path in paths:
+        text = str(path)
+        if os.path.isabs(text):
+            text = os.path.relpath(text, repo_root)
+        out.append(text.replace(os.sep, "/"))
+    return out
+
+
+def stage_paths(repo_root, rel_paths):
+    """Stage ONLY *rel_paths* into the index. Returns (ok, detail)."""
+    if not available():
+        return False, "Embedded Git engine unavailable"
+    rel = _rel_paths(repo_root, rel_paths)
+    if not rel:
+        return True, ""
+    try:
+        _porcelain().add(repo_root, rel)
+    except Exception as exc:
+        return False, _friendly_error(exc)
+    invalidate(repo_root)
+    return True, ""
+
+
+def unstage_paths(repo_root, rel_paths):
+    """Restore *rel_paths* in the index from HEAD (working tree untouched).
+
+    Dulwich's ``porcelain.reset`` only resets whole trees, so the index
+    entry is restored directly from the HEAD tree (removing it when the
+    path is not in HEAD, e.g. a newly added file or a repo with no commits
+    yet).
+    """
+    if not available():
+        return False, "Embedded Git engine unavailable"
+    rel = _rel_paths(repo_root, rel_paths)
+    if not rel:
+        return True, ""
+    from dulwich.index import index_entry_from_tree_entry
+    try:
+        with _repo(repo_root) as repo:
+            index = repo.open_index()
+            tree = None
+            try:
+                tree = repo.object_store[repo[repo.head()].tree]
+            except KeyError:
+                tree = None
+            for path in rel:
+                key = path.encode("utf-8")
+                mode = sha = None
+                if tree is not None:
+                    try:
+                        mode, sha = tree.lookup_path(
+                            repo.object_store.__getitem__, key)
+                    except KeyError:
+                        mode = sha = None
+                if mode is None:
+                    if key in index:
+                        del index[key]
+                else:
+                    index[key] = index_entry_from_tree_entry(mode, sha)
+            index.write()
+    except Exception as exc:
+        return False, _friendly_error(exc)
+    invalidate(repo_root)
+    return True, ""
+
+
+def read_index_blob(repo_root, rel_path):
+    """Bytes of the staged (index) version of *rel_path*, or None."""
+    if not available():
+        return None
+    try:
+        with _repo(repo_root) as repo:
+            index = repo.open_index()
+            entry = index[rel_path.encode("utf-8")]
+            return repo.object_store[entry.sha].data
+    except Exception:
+        return None
+
+
+def commit_staged(repo_root, message):
+    """Commit whatever is in the index (never stages anything)."""
+    if not available():
+        return False, "Embedded Git engine unavailable"
+    porcelain = _porcelain()
+    try:
+        with _repo(repo_root) as repo:
+            try:
+                old_head = repo.head().decode()
+            except KeyError:
+                old_head = ""
+            identity = _identity(repo)
+            try:
+                sha = porcelain.commit(repo, message=message.encode("utf-8"),
+                                       author=identity, committer=identity,
+                                       no_verify=True)
+            except Exception as exc:
+                try:
+                    new_head = repo.head().decode()
+                except KeyError:
+                    new_head = ""
+                if not new_head or new_head == old_head:
+                    return False, _friendly_error(exc)
+                sha = new_head.encode()
+            try:
+                branch = porcelain.active_branch(repo).decode("utf-8",
+                                                              "replace")
+            except Exception:
+                branch = "detached"
+    except Exception as exc:
+        return False, _friendly_error(exc)
+    invalidate(repo_root)
+    subject = message.strip().splitlines()[0] if message.strip() else ""
+    return True, f"[{branch} {sha.decode()[:7]}] {subject}"
 
 
 def commit_merge(repo_root, message, rel_paths, second_parent):

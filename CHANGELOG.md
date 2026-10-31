@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-file Git staging (VS Code model).** The Git panel lists the
+  changed tracked JSON files with a Stage/Unstage button each, plus
+  Stage all/Unstage all. Stage writes the real Git index, so the state
+  survives restarts and other Git tools see it; the panel marks files
+  edited after staging. `Git commit...` now commits exactly the staged
+  files (the button shows the count and is disabled while the index is
+  empty); a file staged by another tool still blocks the commit. In a
+  package layout the file is the unit: the row shows how many groups it
+  carries, and no JSON is ever written in parts. Both engines implement
+  `stage_paths`/`unstage_paths` (the embedded engine restores index
+  entries from HEAD directly, including repositories with no commits).
+- **Headless package import.** `operators.import_package(path, ...)`
+  runs the batch import synchronously (children first, one accumulated
+  interface map, embedded materials/worlds, modifier tasks) and
+  `gn.import_batch_json` uses it automatically in `--background`, so CI
+  can import a package with the installed extension and no window. The
+  interface-map contract (one dict for the whole batch, never cleared
+  between groups) is now documented on
+  `import_node_tree_recursive`; clearing it silently misroutes parent
+  links (22/41 groups vs 41/41 measured).
+- **Custom properties in the semantic diff.** `gnt_check --diff` and the
+  commit-message suggestion now report node, tree and embedded-owner
+  custom-property changes (`custom 'sp_version' = "0.10.3" ->
+  "0.10.4"`), while the add-on's own `gnt_*` bookkeeping stays invisible.
+  A version stamp written by another add-on is explained instead of
+  showing up as unexplained modified groups. No hash change.
+- **Docs:** `docs/AUTOMATION.md` gains the interface-map/`import_package`
+  reference and a "Migrating exports from older versions" recipe
+  (re-export, `--diff`, expect only content differences, re-stamp).
+- Tests: `tests/test_headless_import.py` (10, both 5.1 and 5.2),
+  `tests/test_git_staging.py` (34, both engines on 5.1 and 5.2),
+  `pure-tests/test_gnt_check_diff.py` (25).
+
 ## [0.4.3] - 2026-10-24
 
 ### Added

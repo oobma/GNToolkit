@@ -209,6 +209,50 @@ check("7k: commit summary ignores identical groups",
       sd.summarize_commit_groups({"G": a}, {"G": copy.deepcopy(a)}) == "",
       sd.summarize_commit_groups({"G": a}, {"G": copy.deepcopy(a)}))
 
+# --- custom properties (informative; never part of the layout noise) ------
+tree_old = copy.deepcopy(a)
+tree_old["custom_properties"] = {"sp_version": "0.10.3"}
+tree_new = copy.deepcopy(a)
+tree_new["custom_properties"] = {"sp_version": "0.10.4"}
+result_tree = sd.compare_groups(tree_old, tree_new)
+report_tree = "\n".join(sd.format_group_report("G", result_tree)) \
+    if result_tree else ""
+check("10a: tree custom property change reported",
+      result_tree is not None
+      and "Custom properties (1)" in report_tree
+      and "'sp_version' = \"0.10.3\" -> \"0.10.4\"" in report_tree,
+      report_tree)
+summary_tree = sd.summarize_group("G", result_tree) if result_tree else ""
+check("10b: custom property change reaches the commit summary",
+      "1 custom property change(s)" in summary_tree, summary_tree)
+
+gnt_old = copy.deepcopy(a)
+gnt_old["custom_properties"] = {"gnt_uid": "one"}
+gnt_new = copy.deepcopy(a)
+gnt_new["custom_properties"] = {"gnt_uid": "two"}
+check("10c: gnt_* bookkeeping stays invisible",
+      sd.compare_groups(gnt_old, gnt_new) is None,
+      str(sd.compare_groups(gnt_old, gnt_new)))
+
+node_old = copy.deepcopy(a)
+node_old["nodes"][0]["custom_properties"] = {"tag": 1}
+node_new = copy.deepcopy(a)
+node_new["nodes"][0]["custom_properties"] = {"tag": 2}
+report_node = "\n".join(
+    sd.format_group_report("G", sd.compare_groups(node_old, node_new)))
+check("10d: node custom property change reported",
+      "Math: custom 'tag' = 1 -> 2" in report_node, report_node)
+
+owner_old = copy.deepcopy(a)
+owner_old["owner_settings"] = {"custom_properties": {"sp_version": "1"}}
+owner_new = copy.deepcopy(a)
+owner_new["owner_settings"] = {"custom_properties": {"sp_version": "2"}}
+report_owner = "\n".join(
+    sd.format_group_report("G", sd.compare_groups(owner_old, owner_new)))
+check("10e: embedded owner custom property change reported",
+      "owner custom 'sp_version' = \"1\" -> \"2\"" in report_owner,
+      report_owner)
+
 if shutil.which("git") is None:
     print("[SKIP] git not available; revision mode not tested")
 else:

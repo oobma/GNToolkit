@@ -2401,12 +2401,35 @@ def import_node_tree_recursive(
         rebuilding an existing tree renumbers its interface identifiers and
         would break the links already wired from the groups imported before.
     group_interface_maps : dict, optional
-        Maps group names to their identifier remapping dicts.
+        Translation table shared by the WHOLE batch: group name ->
+        ``{old_identifier: new_identifier}``.  For every tree it rebuilds
+        the importer records the identifiers it assigned (old JSON
+        identifier -> Blender identifier), and parent groups use those maps
+        to translate the identifiers stored in their own links.  Callers
+        must pass ONE dict and keep it for the entire batch; clearing it
+        between groups (``maps[name] = {}``) makes later parents wire their
+        links to identifiers that no longer exist, silently losing or
+        misrouting connections (measured: 22/41 groups rebuild correctly
+        with a cleared map, 41/41 with the accumulated one).  When a
+        referenced group has no entry, the importer falls back to
+        positional socket matching, which is only safe when that tree kept
+        its serialized identifiers (typically because it already existed
+        and was skipped).
     context : Blender context, optional
         Used for status bar updates.
     tracker : ImportErrorTracker, optional
         Error tracker for this import operation.  If *None*, a fresh one
         is created internally.
+
+    Notes
+    -----
+    Importing a package (several JSONs) needs three things this low-level
+    function cannot enforce on its own: children before parents
+    (``operators.dependency_ordered_names``), skipping trees that already
+    exist, and one accumulated ``group_interface_maps`` for the whole
+    loop.  ``operators.import_package`` implements that recipe (and the
+    background branch of ``gn.import_batch_json`` uses it);
+    ``scripts/import_all_json.py`` is the headless CLI on top of it.
     """
     holder: dict = {}
     for _frac, _msg in _import_node_tree_gen(

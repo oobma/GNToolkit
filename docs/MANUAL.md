@@ -355,9 +355,11 @@ warnings only and never blocks; each issue offers **Go to node**.
 
 The **Git** panel shows the repository behind the tracked JSONs, its
 state, commit and sync actions, cosmetic-only discard and repository
-history. **Git commit...** stages only the tracked JSONs; **Git sync**
-pulls, pushes and, on a diverged branch, merges the tracked JSON files
-per item.
+history. The **JSON files** list stages individual JSONs in the real Git
+index (one row per file, with the number of groups it carries; `Stage
+all` / `Unstage all` for the whole set); **Commit staged (N)** commits
+exactly those files. **Git sync** pulls, pushes and, on a diverged
+branch, merges the tracked JSON files per item.
 
 Full guide, including the two engines, credentials and SSH limits:
 [GIT_COLLAB.md](GIT_COLLAB.md).

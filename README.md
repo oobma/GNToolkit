@@ -110,10 +110,11 @@ saved automatically with the project.
   with per-entry status, save, pull, conflict and merge; curated owner
   settings and custom properties travel with the tree. Object material
   slots are not versioned.
-- **Git collaboration inside Blender.** Commit only the tracked JSONs,
-  sync with the built-in Git panel, and let a diverged branch merge the
-  tracked files per item into a real two-parent merge commit. Credentials
-  and engine details: [GIT_COLLAB.md](docs/GIT_COLLAB.md).
+- **Git collaboration inside Blender.** Stage the tracked JSONs one file
+  at a time (real Git index), commit exactly what is staged, sync with
+  the built-in Git panel, and let a diverged branch merge the tracked
+  files per item into a real two-parent merge commit. Credentials and
+  engine details: [GIT_COLLAB.md](docs/GIT_COLLAB.md).
 - **Automation-ready.** The JSON side runs without Blender:
   `gnt_check.py` checks status, diffs and merge previews in CI or a hook.
   See [Automation and CI](#automation-and-ci).
@@ -168,9 +169,13 @@ python gnt_check.py NodeGroups/ --strict
 `gnt_check.py` and `scripts/` are repository tools, not part of the
 extension package; fetch them at the same tag as the add-on. The full
 command reference (audits, cross-project, cross-version, diff, merge
-preview, render, headless export/import, build and the public test
-suite) is in [docs/AUTOMATION.md](docs/AUTOMATION.md). The copyable CI
-recipe is in [docs/CI_TEMPLATE.md](docs/CI_TEMPLATE.md).
+preview, render, headless export/import, migrating older exports, build
+and the public test suite) is in [docs/AUTOMATION.md](docs/AUTOMATION.md).
+Inside Blender, `operators.import_package(...)` and
+`bpy.ops.gn.import_batch_json(filepath=..., 'EXEC_DEFAULT')` import a
+package without the modal, so a headless CI job needs only the installed
+extension. The copyable CI recipe is in
+[docs/CI_TEMPLATE.md](docs/CI_TEMPLATE.md).
 
 ## Contributing
 

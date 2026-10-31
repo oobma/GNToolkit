@@ -1901,6 +1901,86 @@ def _addon_prefs(context):
         return None
 
 
+def _git_file_groups(root: str) -> dict:
+    """Repo-relative JSON path -> tracked entry names (panel labels)."""
+    from .sync_metadata import resolve_json_path
+
+    out = {}
+    try:
+        blend_dir = sync_manager._blend_dir()
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+    except Exception:
+        return out
+    for info in tracked.values():
+        json_path = info.get("json_path", "")
+        if not json_path:
+            continue
+        abs_path = resolve_json_path(json_path, blend_dir)
+        if not abs_path:
+            continue
+        rel = os.path.relpath(abs_path, root).replace(os.sep, "/")
+        out.setdefault(rel, []).append(info.get("blend_name") or "?")
+    return out
+
+
+def _draw_git_files(box, prefs, root: str, st: dict) -> None:
+    """Collapsible per-file staging list (the real Git index)."""
+    staged = set(st.get("staged_tracked") or [])
+    dirty = set(st.get("staged_tracked_dirty") or [])
+    unstaged = set(st.get("changed_tracked_unstaged") or [])
+    files = sorted(staged | unstaged)
+    if not files:
+        return
+    head = box.row(align=True)
+    head.prop(prefs, "expand_git_files", text="", emboss=False,
+              icon='DISCLOSURE_TRI_DOWN' if prefs.expand_git_files
+              else 'DISCLOSURE_TRI_RIGHT')
+    head.label(text=f"JSON files ({len(unstaged)} changed, "
+                    f"{len(staged)} staged)", icon='FILE')
+    if not prefs.expand_git_files:
+        return
+
+    tools = box.row(align=True)
+    tools.label(text="Stage = goes into the next commit", icon='INFO')
+    right = tools.row(align=True)
+    right.alignment = 'RIGHT'
+    op = right.operator("gn.git_stage", text="Stage all", icon='CHECKMARK')
+    op.repo = root
+    op = right.operator("gn.git_unstage", text="Unstage all", icon='X')
+    op.repo = root
+
+    names = _git_file_groups(root)
+    limit = len(files) if prefs.show_all_git_files else 50
+    for rel in files[:limit]:
+        row = box.row(align=True)
+        is_staged = rel in staged
+        if is_staged and rel in dirty:
+            label = os.path.basename(rel) + " (edited after staging)"
+            icon = 'CHECKMARK'
+        elif is_staged:
+            label = os.path.basename(rel)
+            icon = 'CHECKMARK'
+        else:
+            label = os.path.basename(rel)
+            icon = 'FILE_REFRESH'
+        row.label(text=label, icon=icon)
+        entries = names.get(rel) or []
+        if entries:
+            shown = ", ".join(entries[:3])
+            if len(entries) > 3:
+                shown += ", ..."
+            row.label(text=f"{len(entries)} "
+                           f"{'group' if len(entries) == 1 else 'groups'}: "
+                           f"{shown}")
+        op = row.operator("gn.git_unstage" if is_staged else "gn.git_stage",
+                          text="", icon='REMOVE' if is_staged else 'CHECKMARK')
+        op.repo = root
+        op.rel_path = rel
+    if len(files) > limit:
+        box.label(text=f"... and {len(files) - limit} more", icon='INFO')
+        box.prop(prefs, "show_all_git_files", text="Show all", toggle=True)
+
+
 class GN_PT_CollaborationPanel(bpy.types.Panel):
     """Git transport for the tracked JSON files."""
 
@@ -2023,8 +2103,14 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             actions = box.row(align=True)
             actions.enabled = (not busy
                                and not st.get("staged_foreign"))
-            commit_op = actions.operator("gn.git_commit", text="Git commit...",
-                                         icon='EXPORT')
+            staged_n = len(st.get("staged_tracked") or [])
+            commit_slot = actions.row(align=True)
+            commit_slot.enabled = bool(staged_n)
+            commit_op = commit_slot.operator(
+                "gn.git_commit",
+                text=(f"Commit staged ({staged_n})" if staged_n
+                      else "Git commit..."),
+                icon='EXPORT')
             commit_op.repo = root
             sync_op = actions.operator("gn.git_sync", text="Git sync",
                                        icon='FILE_REFRESH')
@@ -2032,6 +2118,11 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             reveal_op = actions.operator("gn.git_reveal_repo", text="",
                                          icon='FOLDER_REDIRECT')
             reveal_op.repo = root
+
+            _draw_git_files(box, prefs, root, st)
+            if not staged_n and st.get("tracked_changed"):
+                box.label(text="Stage the JSON files that go into the next "
+                               "commit", icon='INFO')
 
         if busy:
             layout.label(text="Git operation in progress…", icon='TIME')
@@ -2249,6 +2340,17 @@ class GN_SyncPrefs(bpy.types.PropertyGroup):
     show_all_changes: bpy.props.BoolProperty(
         name="Show all changes",
         description="List every out-of-sync group instead of the first 50",
+        default=False,
+    )
+    expand_git_files: bpy.props.BoolProperty(
+        name="Show JSON files",
+        description="List the changed tracked JSON files with their Stage/"
+                    "Unstage buttons (the staging list for the next commit)",
+        default=False,
+    )
+    show_all_git_files: bpy.props.BoolProperty(
+        name="Show all JSON files",
+        description="List every changed/staged JSON file instead of the first 50",
         default=False,
     )
 

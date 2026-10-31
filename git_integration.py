@@ -233,6 +233,58 @@ def staged_foreign_paths(repo_root: str):
     return sorted(staged - tracked)
 
 
+def staged_tracked_paths(repo_root: str):
+    """Repo-relative tracked JSON paths staged for the next commit."""
+    try:
+        paths = repos_for_tracked().get(repo_root) or []
+        tracked = {os.path.relpath(p, repo_root).replace(os.sep, "/")
+                   for p in paths}
+        staged = {p.replace(os.sep, "/")
+                  for p in _backend().staged_names(repo_root)}
+    except Exception:
+        return []
+    return sorted(staged & tracked)
+
+
+def stage_paths(repo_root, rel_paths):
+    """Stage the given repo-relative paths (real Git index)."""
+    backend = _backend()
+    fn = getattr(backend, "stage_paths", None) if backend is not None else None
+    if fn is None:
+        return False, "The Git engine does not support staging"
+    return fn(repo_root, rel_paths)
+
+
+def unstage_paths(repo_root, rel_paths):
+    """Restore the given paths in the index from HEAD."""
+    backend = _backend()
+    fn = (getattr(backend, "unstage_paths", None)
+          if backend is not None else None)
+    if fn is None:
+        return False, "The Git engine does not support staging"
+    return fn(repo_root, rel_paths)
+
+
+def read_index_blob(repo_root, rel_path):
+    """Bytes of the staged (index) version of *rel_path*, or None."""
+    backend = _backend()
+    fn = (getattr(backend, "read_index_blob", None)
+          if backend is not None else None)
+    if fn is None:
+        return None
+    return fn(repo_root, rel_path)
+
+
+def commit_staged(repo_root, message):
+    """Commit exactly what is in the index (never stages anything)."""
+    backend = _backend()
+    fn = (getattr(backend, "commit_staged", None)
+          if backend is not None else None)
+    if fn is None:
+        return False, "The Git engine does not support staged commits"
+    return fn(repo_root, message)
+
+
 def detect_conflict_markers(paths):
     """Absolute paths whose content carries git merge-conflict markers."""
     hits = []
@@ -441,6 +493,8 @@ def _build_repo_entry(root, paths, st):
     st.setdefault("staged", [])
     st.setdefault("staged_tracked", [])
     st.setdefault("staged_foreign", [])
+    st.setdefault("index_files", [])
+    st.setdefault("worktree_files", [])
     tracked_rel = {os.path.relpath(p, root).replace(os.sep, "/")
                    for p in paths}
     if st.get("ok"):
@@ -459,6 +513,12 @@ def _build_repo_entry(root, paths, st):
         st["staged"] = sorted(staged)
         st["staged_tracked"] = sorted(staged & tracked_rel)
         st["staged_foreign"] = sorted(staged - tracked_rel)
+        worktree_rel = {p.replace(os.sep, "/")
+                        for p in (st.get("worktree_files") or [])}
+        st["changed_tracked_unstaged"] = sorted(
+            set(st["tracked_changed"]) - set(st["staged_tracked"]))
+        st["staged_tracked_dirty"] = sorted(
+            set(st["staged_tracked"]) & worktree_rel)
     return st
 
 
@@ -499,7 +559,7 @@ def _job_status(payload):
 
 
 def _job_commit(payload):
-    """Stage ONLY the tracked JSONs that changed and commit them."""
+    """Commit the index; the legacy path stages the changed tracked JSONs."""
     repo = payload["repo"]
     backend = _backend()
     if backend is None:
@@ -507,6 +567,24 @@ def _job_commit(payload):
                 "committed": [], "nothing": False}
     paths = repos_for_tracked(payload.get("metadata"),
                               payload.get("blend_dir")).get(repo, [])
+    tracked_rel = {os.path.relpath(p, repo).replace(os.sep, "/")
+                   for p in paths}
+    if payload.get("staged_only"):
+        try:
+            staged = {p.replace(os.sep, "/")
+                      for p in backend.staged_names(repo)}
+        except Exception:
+            staged = set()
+        staged_tracked = sorted(staged & tracked_rel)
+        if not staged_tracked:
+            return {"ok": False, "detail": "nothing staged",
+                    "committed": [], "nothing": True,
+                    "staged_only": True}
+        ok, detail = backend.commit_staged(repo, payload["message"])
+        committed = [os.path.join(repo, rel.replace("/", os.sep))
+                     for rel in staged_tracked]
+        return {"ok": ok, "detail": detail, "committed": committed,
+                "nothing": False, "staged_only": True}
     st = backend.status(repo, paths)
     if not st.get("ok"):
         return {"ok": False, "detail": st.get("error", "status failed"),
@@ -522,6 +600,28 @@ def _job_commit(payload):
     ok, detail = backend.commit(repo, payload["message"], changed)
     return {"ok": ok, "detail": detail, "committed": changed,
             "nothing": False}
+
+
+def _job_stage(payload):
+    """Stage/unstage repo-relative paths in the real Git index."""
+    repo = payload["repo"]
+    action = payload.get("action", "stage")
+    rel_paths = list(payload.get("rel_paths") or [])
+    backend = _backend()
+    if backend is None:
+        return {"ok": False, "detail": "No Git engine available",
+                "action": action}
+    fn = getattr(backend, action + "_paths", None)
+    if fn is None:
+        return {"ok": False,
+                "detail": "The Git engine does not support staging",
+                "action": action}
+    ok, detail = fn(repo, rel_paths)
+    if ok:
+        invalidate_git_state()
+        queue_status_refresh()
+    return {"ok": ok, "detail": detail, "action": action,
+            "count": len(rel_paths)}
 
 
 def _job_sync(payload):
@@ -850,6 +950,8 @@ def _run_job(kind, payload):
         return _job_status(payload)
     if kind == "commit":
         return _job_commit(payload)
+    if kind == "stage":
+        return _job_stage(payload)
     if kind == "sync":
         return _job_sync(payload)
     return {"ok": False, "detail": f"unknown job kind: {kind}",

@@ -124,11 +124,17 @@ def _parse_status(out):
                     except (ValueError, IndexError):
                         behind = 0
     changed = []
+    index_files = []
+    worktree_files = []
     index = 1 if (lines and lines[0].startswith("## ")) else 0
     while index < len(lines):
         entry = lines[index]
         if len(entry) >= 4:
             changed.append(entry[3:])
+            if entry[0] not in (" ", "?", "!"):
+                index_files.append(entry[3:])
+            if entry[1] not in (" ", "?", "!"):
+                worktree_files.append(entry[3:])
             if entry[0] in ("R", "C"):
                 # Rename/copy: the next NUL field holds the source path.
                 index += 1
@@ -140,6 +146,8 @@ def _parse_status(out):
         "ahead": ahead,
         "behind": behind,
         "changed": changed,
+        "index_files": index_files,
+        "worktree_files": worktree_files,
     }
 
 
@@ -225,8 +233,79 @@ def staged_names(repo_root):
     rc, out, err = _git(["diff", "--cached", "--name-only", "-z"],
                         repo_root)
     if rc != 0:
-        return []
+        # No commits yet: every index entry is part of the next commit.
+        rc, out, err = _git(["ls-files", "--cached", "-z"], repo_root)
+        if rc != 0:
+            return []
     return [name for name in out.split("\x00") if name]
+
+
+def _rel_paths(repo_root, paths):
+    """Repo-relative POSIX paths from relative or absolute inputs."""
+    out = []
+    for path in paths:
+        text = str(path)
+        if os.path.isabs(text):
+            text = os.path.relpath(text, repo_root)
+        out.append(text.replace(os.sep, "/"))
+    return out
+
+
+def stage_paths(repo_root, rel_paths):
+    """Stage ONLY *rel_paths* into the index. Returns (ok, detail)."""
+    if not available():
+        return False, ("Git not found - install Git only for Collaboration, "
+                       "then restart Blender")
+    rel = _rel_paths(repo_root, rel_paths)
+    if not rel:
+        return True, ""
+    rc, out, err = _git(["add", "--"] + rel, repo_root)
+    invalidate(repo_root)
+    if rc != 0:
+        return False, (err or out).strip() or "git add failed"
+    return True, ""
+
+
+def unstage_paths(repo_root, rel_paths):
+    """Restore *rel_paths* in the index from HEAD (working tree untouched)."""
+    if not available():
+        return False, ("Git not found - install Git only for Collaboration, "
+                       "then restart Blender")
+    rel = _rel_paths(repo_root, rel_paths)
+    if not rel:
+        return True, ""
+    rc, out, err = _git(["reset", "-q", "HEAD", "--"] + rel, repo_root)
+    if rc != 0:
+        # A repo with no commits has no HEAD to reset from; removing the
+        # entries from the index leaves the same (empty) state.
+        rc2, out2, err2 = _git(["rm", "--cached", "-q", "--"] + rel,
+                               repo_root)
+        if rc2 != 0:
+            return False, ((err or out).strip()
+                           or (err2 or out2).strip()
+                           or "git reset failed")
+    invalidate(repo_root)
+    return True, ""
+
+
+def read_index_blob(repo_root, rel_path):
+    """Bytes of the staged (index) version of *rel_path*, or None."""
+    if not available():
+        return None
+    rc, out, err = _git_bytes(["show", ":" + rel_path], repo_root)
+    return out if rc == 0 else None
+
+
+def commit_staged(repo_root, message):
+    """Commit whatever is in the index (never stages anything)."""
+    if not available():
+        return False, ("Git not found - install Git only for Collaboration, "
+                       "then restart Blender")
+    rc, out, err = _git(["commit", "-m", message], repo_root)
+    if rc != 0:
+        return False, (err or out).strip() or "git commit failed"
+    invalidate(repo_root)
+    return True, (out or err).strip()
 
 
 def commit_merge(repo_root, message, rel_paths, second_parent):
