@@ -110,13 +110,16 @@ def _refresh_after_sync_change(context=None):
     """Recalculate statuses and git state after tracking/commit operations.
 
     The panels draw from caches; without this the user sees stale numbers
-    until pressing Refresh Status manually.
+    until pressing Refresh Status manually.  The Git cache is refreshed by
+    a status job instead of being cleared, so the Git panel keeps drawing
+    its last state (no collapse to "Checking git state...").
     """
     sync_manager.invalidate_cache()
     sync_manager.check_all_statuses()
     try:
-        from .git_integration import invalidate_git_state
-        invalidate_git_state()
+        from .git_integration import queue_status_refresh
+        queue_status_refresh()
+        ensure_git_pump()
     except Exception:
         pass
     if context is not None:
