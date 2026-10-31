@@ -44,6 +44,11 @@ All notable changes to this project are documented in this file.
 - Git helpers normalize the repository root, so a script passing
   `bpy.path.abspath("//")` (a trailing separator on Windows) no longer
   sees every staged JSON as "staged outside the tracked JSON".
+- Stage/unstage keeps the Git panel rendered (the cached repo entry is
+  patched instead of cleared), so consecutive clicks no longer collapse
+  the panel to "Checking git state...".
+- The Git panel's "Working tree" row counts only unstaged changes: a fully
+  staged file no longer appears as both staged and changed.
 
 ## [0.4.3] - 2026-10-24
 

@@ -1923,11 +1923,17 @@ def _git_file_groups(root: str) -> dict:
     return out
 
 
+def _git_worktree_changed(st: dict) -> list:
+    """Tracked JSON with unstaged changes (staged-and-edited counts too)."""
+    return sorted(set(st.get("changed_tracked_unstaged") or [])
+                  | set(st.get("staged_tracked_dirty") or []))
+
+
 def _draw_git_files(box, prefs, root: str, st: dict) -> None:
     """Collapsible per-file staging list (the real Git index)."""
     staged = set(st.get("staged_tracked") or [])
     dirty = set(st.get("staged_tracked_dirty") or [])
-    unstaged = set(st.get("changed_tracked_unstaged") or [])
+    unstaged = set(_git_worktree_changed(st))
     files = sorted(staged | unstaged)
     if not files:
         return
@@ -2082,8 +2088,9 @@ class GN_PT_CollaborationPanel(bpy.types.Panel):
             else:
                 box.label(text="Index: clean", icon='CHECKMARK')
 
-            if st["tracked_changed"]:
-                working = (f"{len(st['tracked_changed'])} tracked JSON "
+            worktree_changed = _git_worktree_changed(st)
+            if worktree_changed:
+                working = (f"{len(worktree_changed)} tracked JSON "
                            "changed")
                 working_icon = 'FILE_REFRESH'
             else:
