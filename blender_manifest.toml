@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "gn_toolkit"
 name = "GNToolkit"
-version = "0.4.3"
+version = "0.4.4"
 tagline = "Version control with semantics for Blender node trees"
 maintainer = "oobma <ambooart@gmail.com>"
 
@@ -22,7 +22,7 @@ copyright = [
 ]
 
 website = "https://github.com/oobma/GNToolkit"
-tags = ["Geometry Nodes", "Pipeline", "Node"]
+tags = ["Geometry Nodes", "Pipeline", "Node", "Material", "Compositing"]
 
 wheels = [
     "./wheels/backports.tarfile-1.2.0-py3-none-any.whl",

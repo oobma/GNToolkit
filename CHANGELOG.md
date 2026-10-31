@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-31
+
 ### Added
 
 - **Per-file Git staging (VS Code model).** The Git panel lists the
