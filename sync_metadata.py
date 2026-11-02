@@ -14,7 +14,9 @@ import uuid as _uuid
 
 import bpy
 
-from .constants import SIDECAR_EXTENSION, SIDECAR_TEXT_BLOCK_NAME, ADDON_VERSION, HASH_VERSION
+from .constants import (ADDON_VERSION, DERIVED_POLICY_VERSION,
+                        HASH_VERSION, SIDECAR_EXTENSION,
+                        SIDECAR_TEXT_BLOCK_NAME)
 from .file_utils import write_json_file
 
 
@@ -261,6 +263,7 @@ def add_tracked_group(
     depends_on: list[str] | None = None,
     layout: str = "",
     kind: str = "group",
+    derived_policy: str = "",
 ) -> None:
     """Add a new tracked entry to the metadata dict (in-place).
 
@@ -272,6 +275,11 @@ def add_tracked_group(
     *kind* is ``"group"`` (standalone node-group datablock; the key is
     omitted for backward-compatible sidecars), ``"material"`` or
     ``"world"`` (embedded trees owned by that datablock).
+
+    *derived_policy* is ``"reference"`` (dependency content stays
+    external) or ``"embed"`` (untracked dependencies are copied into the
+    entry).  Empty leaves it unset for legacy sidecars; the sync layer
+    infers and stores it on load.
     """
     if "tracked_groups" not in metadata:
         metadata["tracked_groups"] = {}
@@ -287,6 +295,8 @@ def add_tracked_group(
     }
     if kind and kind != "group":
         entry["kind"] = kind
+    if derived_policy:
+        entry["derived_policy"] = derived_policy
     metadata["tracked_groups"][sync_uuid] = entry
 
 
@@ -298,7 +308,8 @@ def update_tracked_group(metadata: dict, sync_uuid: str, **kwargs) -> None:
     for key, value in kwargs.items():
         if key in ("blend_name", "json_path", "last_blend_hash",
                     "last_json_hash", "last_json_mtime", "last_sync_time",
-                    "depends_on", "ignored", "layout", "kind"):
+                    "depends_on", "ignored", "layout", "kind",
+                    "derived_policy"):
             info[key] = value
 
 
@@ -371,6 +382,7 @@ def _empty_metadata() -> dict:
     return {
         "version": ADDON_VERSION,
         "hash_version": HASH_VERSION,
+        "policy_version": DERIVED_POLICY_VERSION,
         "tracked_groups": {},
     }
 

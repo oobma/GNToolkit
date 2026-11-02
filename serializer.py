@@ -17,6 +17,7 @@ from .codec import clean_value
 from .modifier_utils import object_animation_paths
 from .constants import (
     BUILTIN_GROUP_BL_IDNAMES,
+    DERIVED_POLICY_REFERENCE,
     MATERIAL_SETTINGS_PROPS,
     NODE_PROPS_TO_SKIP,
     NODE_UID_PROP,
@@ -777,6 +778,19 @@ def collect_derived_untracked(tree) -> dict:
     return derived
 
 
+def entry_derived(tree, policy):
+    """Explicit ``derived`` argument for an entry's serialization/hash.
+
+    ``reference`` never embeds dependency content; ``embed`` serializes
+    the current local untracked dependency set.  Passing the set
+    explicitly (instead of relying on the ambient tracked-state default)
+    keeps tracking, status, export and pull measuring the same thing.
+    """
+    if policy == DERIVED_POLICY_REFERENCE:
+        return False
+    return collect_derived_untracked(tree) or False
+
+
 def node_uid_map(tree) -> dict:
     """Current name -> stable UID map of a tree (only nodes that have one)."""
     return {node.name: node.get(NODE_UID_PROP, "")
@@ -923,7 +937,13 @@ def serialize_embedded_entry(owner, kind: str, derived=None,
     return data
 
 
-def canonical_hash_from_embedded(owner, kind: str) -> str:
-    """Canonical hash of an embedded entry (tree + owner settings)."""
+def canonical_hash_from_embedded(owner, kind: str, derived=None) -> str:
+    """Canonical hash of an embedded entry (tree + owner settings).
+
+    ``derived`` follows ``serialize_embedded_entry``: ``False`` measures
+    the owner tree alone (reference policy), ``None`` the historical
+    untracked-dependency embedding, a dict an explicit dependency set.
+    """
     from .hash_utils import canonical_hash_from_json_data
-    return canonical_hash_from_json_data(serialize_embedded_entry(owner, kind))
+    return canonical_hash_from_json_data(
+        serialize_embedded_entry(owner, kind, derived=derived))

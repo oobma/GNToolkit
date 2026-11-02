@@ -26,6 +26,7 @@ CASES = [
     ("audit", "test_audit.py"),
     ("cross-project identity", "test_cross_project.py"),
     ("sync status rules", "test_sync_status_rules.py"),
+    ("derived policy", "test_derived_policy.py"),
     ("merge values", "test_merge_values.py"),
     ("merge package", "test_merge_package.py"),
     ("merge overrides", "test_merge_overrides.py"),

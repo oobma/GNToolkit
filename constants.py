@@ -47,6 +47,44 @@ def is_group_node_bl_idname(bl_idname) -> bool:
     return bool(bl_idname) and str(bl_idname).endswith("NodeGroup")
 
 
+# External-dependency policy of a tracked entry.
+#
+# ``reference``: the entry stores only the name-based group references
+# (``node_tree_reference``); dependency content lives in its own tree or
+# entry and is not versioned by this entry.  ``embed``: the entry also
+# carries a serialized copy of every local, untracked dependency under
+# ``derived_node_groups`` so it stays self-contained for cloning.
+DERIVED_POLICY_REFERENCE = "reference"
+DERIVED_POLICY_EMBED = "embed"
+DERIVED_POLICIES: tuple[str, ...] = (DERIVED_POLICY_REFERENCE,
+                                     DERIVED_POLICY_EMBED)
+
+# Sidecar-only migration version for the policy field.  Independent of
+# HASH_VERSION: the canonical content of an entry does not change, only
+# which side of the comparison includes its untracked dependencies.
+DERIVED_POLICY_VERSION: int = 1
+
+
+def resolve_derived_policy(info, entry=None) -> str:
+    """Policy for a tracked entry: explicit first, inferred otherwise.
+
+    An explicit ``derived_policy`` always wins.  Legacy sidecars have no
+    field: an entry whose JSON already carries ``derived_node_groups``
+    keeps ``embed`` (no silent retraction); a per-group folder entry is
+    ``reference``; anything else defaults to ``embed`` (historical A8
+    behavior).
+    """
+    info = info or {}
+    explicit = info.get("derived_policy")
+    if explicit in DERIVED_POLICIES:
+        return explicit
+    if isinstance(entry, dict) and entry.get("derived_node_groups"):
+        return DERIVED_POLICY_EMBED
+    if info.get("layout") == "folder":
+        return DERIVED_POLICY_REFERENCE
+    return DERIVED_POLICY_EMBED
+
+
 # Native (built-in) group-node bl_idnames.  These reference shared,
 # first-class node-tree datablocks and travel as a name-based
 # ``node_tree_reference``.  Any OTHER node that owns a ``node_tree`` is a
