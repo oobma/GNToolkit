@@ -224,13 +224,35 @@ A folder export is a full sync participant:
 
 ## Dependencies
 
-References between groups are stored **by name**; a package never embeds
-the referenced group's content. **Save to JSON** writes only the selected
-entry; **Track to JSON...** and **Track all groups...** include the
-group's untracked dependencies. If a tracked group references a group
-that is not in the package, a clone creates the group node without an
-assigned tree and the import picker reports the unconnected reference;
-add and track the missing group.
+References between groups are stored **by name** (`node_tree_reference`).
+Whether the entry also carries a copy of its external dependencies is an
+explicit per-entry policy:
+
+- **Reference** (default for **Track from folder** and for existing
+  reference-style JSON): the entry stores only the names. The dependency
+  keeps its own JSON and status; editing it does not move the parent's
+  hash or inflate its file. A clone needs the dependency present (or
+  imported first); a missing one leaves the group node without a tree and
+  the import report lists the unconnected reference.
+- **Embed** (default for entries created by **Track Group** / **Track all
+  groups**): local dependencies that are not tracked are written as a
+  serialized copy under `derived_node_groups`, so a clone is
+  self-contained. Editing the untracked dependency moves the parent's
+  hash; once the dependency is tracked on its own, the next save retracts
+  the copy.
+
+Switch an entry from the **Active** row or the Changes row menu
+(**Reference External Dependencies** / **Embed External Dependencies**).
+The JSON is not rewritten when you switch: the next Save applies the new
+shape. **Save to JSON**, **Save All**, **Save Modified**, Refresh and Pull
+all measure the entry with its recorded policy.
+
+A branch over an external group library uses reference entries: export
+and track the branch's groups from their folder, install the external
+library separately, and keep its version pinned outside GNToolkit (for
+example with a lock file in your build). Sidecars from older versions are
+migrated once: an entry whose JSON already carries copies stays **embed**;
+a per-group folder entry becomes **reference**.
 
 ## Conflicts
 

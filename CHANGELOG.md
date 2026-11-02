@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Folder-tracked entries stay by reference.** A group tracked from a
+  per-group folder whose JSON carries no dependency copies is measured
+  without its external dependencies. Tracking, status, Save, Save All,
+  Save Modified and Pull now share one rule, so the first Refresh no
+  longer reports a false "Changed in JSON" and a Save no longer embeds
+  the whole dependency set into the entry. Track from folder also records
+  the hash-algorithm version in the sidecar again: a missing field made
+  the next status pass re-measure with the embed default and store a
+  poisoned baseline (and also left both sides marked "changed").
+- **Untracked dependency warnings are policy-aware.** Dependencies of a
+  reference entry are reported as external references instead of groups
+  that were "NOT saved".
+
+### Added
+
+- **Explicit external-dependency policy per entry.** The sidecar records
+  `reference` (the entry stores name references only) or `embed` (local
+  untracked dependencies travel as a serialized copy under
+  `derived_node_groups`). Legacy sidecars migrate once through
+  `policy_version` - no canonical hash change. Switch an entry from the
+  Active row or the Changes menu; the JSON is only rewritten by the next
+  Save, which either retracts or adds the copies. Embedded materials and
+  worlds follow the same policy.
+- **Docs:** the user guide and JSON format describe the reference/embed
+  policies and the branch-over-an-external-library workflow.
+
 ## [0.4.4] - 2026-10-31
 
 ### Added

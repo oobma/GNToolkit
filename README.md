@@ -89,6 +89,12 @@ saved automatically with the project.
 - **One Changes list, VS Code style.** Mark entries, save exactly the
   marked subset, filter by status, discard local edits, pull, open
   history or ignore. Untracked dependencies get their own **Track** row.
+- **External dependencies: reference or copy.** A per-entry policy decides
+  whether an entry names its untracked dependencies or carries a
+  serialized copy. Folder tracking stays by reference (small, reviewable
+  JSON); package tracking can embed for self-contained clones. Toggle it
+  from the Active row or the Changes menu; the next Save applies it.
+  Pull and Save measure the entry with the same policy.
 - **Conflict resolution per item.** Keep one side, or merge values with
   an Ours / Base / JSON choice. With node identities (current exports),
   disjoint structural edits also merge per node/link, and a real

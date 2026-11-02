@@ -57,8 +57,14 @@ to fully reconstruct the group.
   `compositor_scenes` list (the scenes that use the group). It is not
   part of the canonical hash and drives non-destructive scene assignment
   on import.
-- References between groups are stored by name (`node_tree_reference`);
-  a package never embeds the referenced group's content.
+- References between groups are stored by name (`node_tree_reference`).
+  An entry may also carry `derived_node_groups`, a flat map
+  (name -> serialized tree) with a copy of every local dependency that is
+  not tracked on its own. Entries without it are **by reference** and
+  need the dependency present (or imported first); entries with it are
+  self-contained for cloning. The per-entry policy decides which shape a
+  save writes, and `derived_node_groups` participates in the canonical
+  hash when present.
 - Entries may carry a `node_uids` map (node name -> stable id). It is
   additive, outside the canonical hash, and ignored by older readers;
   the id survives renames because it also lives on the node as the
