@@ -22,12 +22,14 @@ import bpy
 _log = logging.getLogger("GNToolkit.sync")
 
 
-from .constants import (ADDON_VERSION, EMBEDDED_KINDS, HASH_VERSION,
+from .constants import (ADDON_VERSION, DERIVED_POLICY_EMBED,
+                        DERIVED_POLICY_REFERENCE, DERIVED_POLICY_VERSION,
+                        EMBEDDED_KINDS, HASH_VERSION,
                         LOCK_TIMEOUT_SECONDS, PACKAGE_EXPORT_METHOD,
                         READ_TIMEOUT_SECONDS, SyncStatus,
                         classify_sync_status, hashes_differ,
                         is_graph_tree_name, is_group_node_bl_idname,
-                        is_trackable_tree_type)
+                        is_trackable_tree_type, resolve_derived_policy)
 from .error_tracker import ImportErrorTracker
 from .file_utils import (sanitize_filename, snapshot_files, write_file_bytes,
                          write_json_file)
@@ -44,7 +46,7 @@ from .importer import (import_node_tree_recursive, import_embedded_entry,
                        merge_derived_groups)
 from .merge import merge_group_entries
 from .serializer import (serialize_node_tree, serialize_embedded_entry,
-                         canonical_hash_from_embedded)
+                         canonical_hash_from_embedded, entry_derived)
 from .socket_utils import custom_inner_tree_names, get_tree_dependencies
 from .sync_metadata import (
     SYNC_UUID_PROP,
@@ -147,17 +149,29 @@ def resolve_entry_tree(uid: str, info):
 
 
 def entry_blend_hash(uid: str, info) -> str | None:
-    """Canonical hash of the .blend side of an entry (None if orphan)."""
+    """Canonical hash of the .blend side of an entry (None if orphan).
+
+    The measurement follows the entry's external-dependency policy:
+    ``reference`` hashes the tree alone; ``embed`` includes the current
+    local untracked dependency set.  Status, export and pull all go
+    through this function so the two sides of the comparison always
+    cover the same content.
+    """
     kind = entry_kind(info)
     name = (info or {}).get("blend_name", "")
+    policy = resolve_derived_policy(info)
     if kind == "group":
         tree = find_tree_by_uuid(name, uid)
-        return canonical_hash_from_tree(tree) if tree is not None else None
+        if tree is None:
+            return None
+        return canonical_hash_from_tree(
+            tree, derived=entry_derived(tree, policy))
     owner = resolve_owner(kind, name, uid)
     if (owner is None or not getattr(owner, "use_nodes", False)
             or getattr(owner, "node_tree", None) is None):
         return None
-    return canonical_hash_from_embedded(owner, kind)
+    return canonical_hash_from_embedded(
+        owner, kind, derived=entry_derived(owner.node_tree, policy))
 
 
 def entry_json_hash(json_path: str, info) -> str | None:
@@ -504,18 +518,28 @@ class SyncManager:
         return changed
 
     def _ensure_hash_version(self) -> None:
-        """Silently re-stamp tracking baselines when the hash algorithm changed.
+        """Backward-compatible alias for the metadata migration."""
+        self._ensure_metadata_current()
 
-        After an addon update that bumps HASH_VERSION, stored baselines were
-        computed with an older algorithm and any comparison would report a
-        spurious "everything changed". Re-computes every baseline with the
-        current algorithm, preserving REAL divergence: groups whose JSON
-        entry matches the .blend become SYNCED; groups that genuinely differ
-        stay visible as JSON_MODIFIED (blend hash stored as the baseline,
-        same rule as Track from Existing JSON). No-op when the version
-        matches.
+    def _ensure_metadata_current(self) -> None:
+        """Re-stamp tracking baselines when the hash or policy changed.
+
+        Two independent markers live in the sidecar: ``hash_version``
+        (the canonical algorithm) and ``policy_version`` (how external
+        dependencies are measured).  Either being stale invalidates the
+        stored baselines.  Every entry is re-stamped with its own policy
+        (``reference`` = tree alone, ``embed`` = tree + local untracked
+        dependencies), preserving REAL divergence: an entry whose JSON
+        matches its .blend becomes SYNCED; one that genuinely differs
+        stays visible as JSON_MODIFIED (blend hash stored as the
+        baseline, ``mtime`` forced off — same rule Track from Existing
+        JSON uses).  Embedded trees (materials/worlds) take the same
+        path.  No-op when both versions match.
         """
-        if self.metadata.get("hash_version") == HASH_VERSION:
+        policy_stale = (self.metadata.get("policy_version")
+                        != DERIVED_POLICY_VERSION)
+        hash_stale = self.metadata.get("hash_version") != HASH_VERSION
+        if not policy_stale and not hash_stale:
             return
         tracked = self.metadata.get("tracked_groups", {})
         if tracked:
@@ -528,24 +552,26 @@ class SyncManager:
                 if json_path and os.path.isfile(json_path):
                     json_data_cache[jp] = read_json_tolerant(json_path)
             for uid, info in tracked.items():
-                blend_name = info.get("blend_name", "")
-                tree = bpy.data.node_groups.get(blend_name)
-                if tree is None:
-                    continue
+                # Legacy sidecars may predate the layout field; the file
+                # shape is the tie-breaker for the policy fallback.
+                if not info.get("layout"):
+                    info["layout"] = self._group_layout(info)
                 data = json_data_cache.get(info.get("json_path", ""))
-                entry = None
-                if isinstance(data, dict):
-                    if data.get("type") == "GN_UNIFIED_PACKAGE":
-                        entry = data.get("node_groups", {}).get(blend_name)
-                    elif "nodes" in data:
-                        entry = data
-                if entry is None:
+                entry = (package_entry(data, info)
+                         if isinstance(data, dict) else None)
+                policy = resolve_derived_policy(info, entry)
+                info["derived_policy"] = policy
+                tree = resolve_entry_tree(uid, info)
+                if tree is None or entry is None:
                     continue
-                blend_hash = canonical_hash_from_tree(tree)
+                blend_hash = entry_blend_hash(uid, info)
+                if blend_hash is None:
+                    continue
                 json_hash = canonical_hash_from_json_data(entry)
                 mtime = 0.0
                 if json_hash == blend_hash:
-                    json_path = resolve_json_path(info.get("json_path", ""), self._blend_dir())
+                    json_path = resolve_json_path(
+                        info.get("json_path", ""), self._blend_dir())
                     if json_path and os.path.isfile(json_path):
                         mtime = os.path.getmtime(json_path)
                 else:
@@ -555,8 +581,10 @@ class SyncManager:
                     last_blend_hash=blend_hash,
                     last_json_hash=json_hash,
                     last_json_mtime=mtime,
+                    derived_policy=policy,
                 )
         self.metadata["hash_version"] = HASH_VERSION
+        self.metadata["policy_version"] = DERIVED_POLICY_VERSION
         self._dirty = True
         self.save()
 
@@ -1026,14 +1054,17 @@ class SyncManager:
         # Normalize standalone single-group exports to package shape
         master_data = _ensure_package_shape(master_data)
 
-        # Serialize ONLY the primary tree (no full dependency chain)
+        # Serialize ONLY the primary tree (no full dependency chain).
+        # Track Group creates a package entry with the embed policy, but
+        # the initial write is measured without copies: every local
+        # dependency is auto-linked below, so the embed set is empty.
         master_data["node_groups"][tree.name] = serialize_node_tree(
-            tree, assign_uids=True)
+            tree, derived=False, assign_uids=True)
 
         write_json_file(abs_path, master_data)
 
         # Per-group hash for the primary group
-        blend_hash = canonical_hash_from_tree(tree)
+        blend_hash = canonical_hash_from_tree(tree, derived=False)
         json_hash = canonical_hash_from_json_group(abs_path, tree.name)
         if json_hash is None:
             json_hash = canonical_hash_from_json_path(abs_path)
@@ -1058,6 +1089,7 @@ class SyncManager:
             self.metadata, sync_uuid, tree.name, stored_path,
             blend_hash, json_hash, json_mtime,
             depends_on=dep_uuids, layout="package",
+            derived_policy=DERIVED_POLICY_EMBED,
         )
 
         # Auto-link dependency groups that share the same JSON file
@@ -1098,7 +1130,7 @@ class SyncManager:
                     dep_uuid = generate_uuid()
                     store_uuid_on_tree(dep_tree, dep_uuid)
                     
-                    dep_blend_hash = canonical_hash_from_tree(dep_tree)
+                    dep_blend_hash = canonical_hash_from_tree(dep_tree, derived=False)
                     dep_json_hash = canonical_hash_from_json_group(abs_path, dep_tree.name)
                     if dep_json_hash is None:
                         dep_json_hash = canonical_hash_from_json_path(abs_path)
@@ -1108,6 +1140,7 @@ class SyncManager:
                         self.metadata, dep_uuid, dep_tree.name, stored_path,
                         dep_blend_hash, dep_json_hash, dep_mtime,
                         depends_on=[], layout="package",
+                        derived_policy=DERIVED_POLICY_EMBED,
                     )
                     new_uuids.append(dep_uuid)
                     
@@ -1159,11 +1192,13 @@ class SyncManager:
         master_data = _ensure_package_shape(master_data)
 
         info = {"kind": kind, "blend_name": owner.name}
+        derived = entry_derived(owner.node_tree, DERIVED_POLICY_EMBED)
         package_put(master_data, info, serialize_embedded_entry(
-            owner, kind, assign_uids=True))
+            owner, kind, derived=derived, assign_uids=True))
         write_json_file(abs_path, master_data)
 
-        blend_hash = canonical_hash_from_embedded(owner, kind)
+        blend_hash = canonical_hash_from_embedded(owner, kind,
+                                                  derived=derived)
         json_hash = canonical_hash_from_json_embedded(abs_path, kind, owner.name)
         if json_hash is None:
             json_hash = canonical_hash_from_json_path(abs_path)
@@ -1181,6 +1216,7 @@ class SyncManager:
             self.metadata, sync_uuid, owner.name, stored_path,
             blend_hash, json_hash, json_mtime,
             depends_on=dep_uuids, layout="package", kind=kind,
+            derived_policy=DERIVED_POLICY_EMBED,
         )
         self._auto_link_dependencies(owner.node_tree, abs_path, stored_path,
                                      sync_uuid)
@@ -1652,11 +1688,11 @@ class SyncManager:
             p_uid, p_info, _p_jp = tracked_by_name.get(pname, (None, None, None))
             if p_uid is None:
                 continue
-            p_tree = bpy.data.node_groups.get(pname)
-            if p_tree is not None:
+            p_hash = entry_blend_hash(p_uid, p_info)
+            if p_hash is not None:
                 update_tracked_group(
                     self.metadata, p_uid,
-                    last_blend_hash=canonical_hash_from_tree(p_tree),
+                    last_blend_hash=p_hash,
                 )
 
         # Verification: rebuilt groups that still differ from the JSON keep
@@ -1672,8 +1708,8 @@ class SyncManager:
             jh = json_group_hashes.get(r_jp, {}).get(name)
             if jh is None:
                 continue
-            th = canonical_hash_from_tree(tree)
-            if th != jh:
+            th = entry_blend_hash(uid, r_info)
+            if th is not None and th != jh:
                 still_divergent.append(name)
 
         # Honest re-stamp: matching rebuilt groups -> SYNCED; groups the
@@ -1810,7 +1846,11 @@ class SyncManager:
             dep_uuid = generate_uuid()
             store_uuid_on_tree(tree, dep_uuid)
 
-            dep_blend_hash = canonical_hash_from_tree(tree)
+            entry = json_cache.get(group_name)
+            layout = "package" if len(json_cache) > 1 else "folder"
+            policy, derived = self.derived_for_entry(
+                tree, {"layout": layout}, entry)
+            dep_blend_hash = canonical_hash_from_tree(tree, derived=derived)
             dep_json_hash = canonical_hash_from_json_group(json_path_abs, group_name)
             if dep_json_hash is None:
                 dep_json_hash = canonical_hash_from_json_path(json_path_abs)
@@ -1832,7 +1872,8 @@ class SyncManager:
                 self.metadata, dep_uuid, group_name, json_path_stored,
                 dep_blend_hash, dep_json_hash, dep_mtime,
                 depends_on=dep_dep_uuids,
-                layout="package" if len(json_cache) > 1 else "folder",
+                layout=layout,
+                derived_policy=policy,
             )
             self._dirty = True
 
@@ -1855,6 +1896,26 @@ class SyncManager:
                 and len(data["node_groups"]) > 1):
             return "package"
         return "folder"
+
+    def derived_for_entry(self, tree, info, entry):
+        """Policy and explicit ``derived`` set for an entry being adopted.
+
+        When the JSON entry already carries ``derived_node_groups`` the
+        exact dependency names are used (so the initial baseline matches
+        the file); otherwise an embed entry measures its current local,
+        untracked dependencies and a reference entry measures nothing.
+        """
+        policy = resolve_derived_policy(info, entry)
+        if policy == DERIVED_POLICY_REFERENCE:
+            return policy, False
+        names = (entry or {}).get("derived_node_groups")
+        if isinstance(names, dict) and names:
+            explicit = {name: bpy.data.node_groups[name]
+                        for name in names
+                        if name in bpy.data.node_groups}
+            if explicit:
+                return policy, explicit
+        return policy, entry_derived(tree, policy)
 
     @staticmethod
     def _file_holds_group(data, name: str) -> bool:
@@ -1903,19 +1964,23 @@ class SyncManager:
         self._untracked_deps_cache = list(found.values())
         return list(self._untracked_deps_cache)
 
-    def _place_dependency_json(self, child, parent_json: str, layout: str):
+    def _place_dependency_json(self, child, parent_json: str, layout: str,
+                               policy: str) -> tuple[str, str]:
         """Write (or locate) the JSON file for a new dependency group.
 
         Returns ``(path, action)`` with action one of
-        ``added-to-package``, ``created`` or ``tracked-existing``.
+        ``added-to-package``, ``created`` or ``tracked-existing``.  The
+        written entry follows *policy* (reference = no copies; embed =
+        the child's current untracked dependency set).
         """
+        derived = entry_derived(child, policy)
         if layout == "package" and os.path.isfile(parent_json):
             data = read_json_tolerant(parent_json)
             if data is None:
                 raise ValueError(f"Cannot read {parent_json}")
             data = _ensure_package_shape(data)
             data.setdefault("node_groups", {})[child.name] = serialize_node_tree(
-                child, assign_uids=True)
+                child, derived=derived, assign_uids=True)
             write_json_file(parent_json, data)
             return parent_json, "added-to-package"
 
@@ -1932,7 +1997,7 @@ class SyncManager:
                 raise ValueError(f"No free filename for '{child.name}' in {directory}")
         if not os.path.isfile(candidate):
             write_json_file(candidate, serialize_node_tree(
-                child, assign_uids=True))
+                child, derived=derived, assign_uids=True))
             return candidate, "created"
         return candidate, "tracked-existing"
 
@@ -1964,9 +2029,11 @@ class SyncManager:
                 continue
             parent_json = resolve_json_path(
                 parent_info.get("json_path", ""), self._blend_dir())
+            policy = (DERIVED_POLICY_EMBED if dep["layout"] == "package"
+                      else DERIVED_POLICY_REFERENCE)
             try:
                 target_path, action = self._place_dependency_json(
-                    child, parent_json, dep["layout"])
+                    child, parent_json, dep["layout"], policy)
             except (PermissionError, OSError, ValueError) as exc:
                 _log.warning("[Track deps] %s: %s", child_name, exc)
                 errors += 1
@@ -1974,7 +2041,8 @@ class SyncManager:
 
             uid = generate_uuid()
             store_uuid_on_tree(child, uid)
-            blend_hash = canonical_hash_from_tree(child)
+            blend_hash = canonical_hash_from_tree(
+                child, derived=entry_derived(child, policy))
             json_hash = canonical_hash_from_json_group(target_path, child_name)
             if json_hash is None:
                 json_hash = canonical_hash_from_json_path(target_path)
@@ -1983,6 +2051,7 @@ class SyncManager:
             add_tracked_group(
                 self.metadata, uid, child_name, stored_path,
                 blend_hash, json_hash, mtime, layout=dep["layout"],
+                derived_policy=policy,
             )
             new_uuids[child_name] = uid
             entries.append({"name": child_name, "path": target_path, "action": action})
@@ -2061,8 +2130,11 @@ class SyncManager:
         except Exception:
             pass
 
+        policy, derived = self.derived_for_entry(
+            owner.node_tree, info, entry)
         entry_hash = canonical_hash_from_json_data(entry)
-        blend_hash = canonical_hash_from_embedded(owner, kind)
+        blend_hash = canonical_hash_from_embedded(owner, kind,
+                                                  derived=derived)
         divergent = blend_hash != entry_hash
         if divergent:
             tracker.record(
@@ -2077,6 +2149,7 @@ class SyncManager:
             last_json_hash=blend_hash if divergent else entry_hash,
             last_json_mtime=0.0 if divergent else os.path.getmtime(json_path),
             last_sync_time=time.time(),
+            derived_policy=policy,
         )
         self._status_cache.pop(sync_uuid, None)
         self._dirty = True
@@ -2152,14 +2225,20 @@ class SyncManager:
             # Normalize standalone single-group exports to package shape
             master_data = _ensure_package_shape(master_data)
 
-            # Serialize ONLY the modified entry (no dependency chain)
+            # Serialize ONLY the modified entry (no dependency chain).
+            # The external-dependency policy decides whether the entry
+            # carries copies of its untracked dependencies.
+            policy = resolve_derived_policy(info)
             if kind == "group":
                 master_data["node_groups"][blend_name] = serialize_node_tree(
-                    tree, assign_uids=True)
+                    tree, derived=entry_derived(tree, policy),
+                    assign_uids=True)
             else:
                 package_put(master_data, info,
                             serialize_embedded_entry(
-                                owner, kind, assign_uids=True))
+                                owner, kind,
+                                derived=entry_derived(tree, policy),
+                                assign_uids=True))
             serialized_dict = {blend_name: package_entry(master_data, info)}
 
             write_json_file(json_path, master_data)
@@ -2217,6 +2296,28 @@ class SyncManager:
         set_ignored(self.metadata, sync_uuid, False)
         self._status_cache.pop(sync_uuid, None)
         self._dirty = True
+
+    def set_derived_policy(self, sync_uuid: str, policy: str) -> bool:
+        """Switch an entry between the reference and embed policies.
+
+        Metadata only: the JSON is not written here.  The next Save
+        applies the new shape (retracts or adds the embedded dependency
+        copies), and the status refresh shows the pending difference.
+        """
+        info = get_tracked_group(self.metadata, sync_uuid)
+        if info is None:
+            return False
+        if policy not in (DERIVED_POLICY_REFERENCE, DERIVED_POLICY_EMBED):
+            return False
+        if resolve_entry_tree(sync_uuid, info) is None:
+            return False
+        update_tracked_group(self.metadata, sync_uuid,
+                             derived_policy=policy)
+        self._status_cache.pop(sync_uuid, None)
+        self._mark_board_stale()
+        self._dirty = True
+        self.save()
+        return True
 
     def resolve_conflict(self, sync_uuid: str, keep: str):
         """Resolve a conflict by keeping one side.
@@ -2288,9 +2389,13 @@ class SyncManager:
                     "conflicts": [], "applied": []}
 
         def _serialize_ours():
+            policy = resolve_derived_policy(info)
+            derived = entry_derived(tree, policy)
             if kind == "group":
-                return serialize_node_tree(tree, assign_uids=True)
-            return serialize_embedded_entry(owner, kind, assign_uids=True)
+                return serialize_node_tree(tree, derived=derived,
+                                           assign_uids=True)
+            return serialize_embedded_entry(owner, kind, derived=derived,
+                                            assign_uids=True)
 
         json_path = resolve_json_path(info.get("json_path", ""),
                                       self._blend_dir())
@@ -2795,7 +2900,7 @@ class SyncManager:
         done = 0
         for name, tree in all_groups.items():
             master_data["node_groups"][name] = serialize_node_tree(
-                tree, assign_uids=True)
+                tree, derived=False, assign_uids=True)
             done += 1
             if done % 50 == 0 or done == total:
                 _log.info("[Link All] serialized %d/%d groups", done, total)
@@ -2837,9 +2942,13 @@ class SyncManager:
             group_hashes[gname] = {"json": canonical_hash_from_json_data(gdata)}
 
         # Pre-compute all blend hashes directly from Blender trees
-        # (ensures consistency with check_status which uses canonical_hash_from_tree)
+        # (ensures consistency with check_status which uses entry_blend_hash)
+        # Track All writes a package entry without copies first; every
+        # local dependency becomes tracked in the same pass, so the
+        # embed set is empty for the baseline.
         for name, tree in all_groups.items():
-            group_hashes[name]["blend"] = canonical_hash_from_tree(tree)
+            group_hashes[name]["blend"] = canonical_hash_from_tree(
+                tree, derived=False)
 
         # Step 2: create tracking entries for each group
         linked = 0
@@ -2905,6 +3014,7 @@ class SyncManager:
                 self.metadata, sync_uuid, name, stored_path,
                 blend_hash, json_hash, json_mtime,
                 depends_on=dep_uuids, layout="package",
+                derived_policy=DERIVED_POLICY_EMBED,
             )
 
             if done % 50 == 0 or done == total:
@@ -2968,8 +3078,11 @@ class SyncManager:
         for owner in owners:
             info = {"kind": "material", "blend_name": owner.name}
             package_put(master_data, info,
-                        serialize_embedded_entry(owner, "material",
-                                                 assign_uids=True))
+                        serialize_embedded_entry(
+                            owner, "material",
+                            derived=entry_derived(owner.node_tree,
+                                                  DERIVED_POLICY_EMBED),
+                            assign_uids=True))
         write_json_file(abs_path, master_data)
         json_mtime = os.path.getmtime(abs_path)
         stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
@@ -2980,7 +3093,10 @@ class SyncManager:
         synced_uids = []
         for owner in owners:
             try:
-                blend_hash = canonical_hash_from_embedded(owner, "material")
+                blend_hash = canonical_hash_from_embedded(
+                    owner, "material",
+                    derived=entry_derived(owner.node_tree,
+                                          DERIVED_POLICY_EMBED))
                 json_hash = canonical_hash_from_json_embedded(
                     abs_path, "material", owner.name)
                 if json_hash is None:
@@ -3003,6 +3119,7 @@ class SyncManager:
                         last_json_hash=json_hash,
                         last_json_mtime=json_mtime,
                         json_path=stored_path,
+                        derived_policy=DERIVED_POLICY_EMBED,
                     )
                     synced_uids.append(existing_uid)
                     skipped += 1
@@ -3018,6 +3135,7 @@ class SyncManager:
                     self.metadata, sync_uuid, owner.name, stored_path,
                     blend_hash, json_hash, json_mtime,
                     depends_on=[], layout="package", kind="material",
+                    derived_policy=DERIVED_POLICY_EMBED,
                 )
                 synced_uids.append(sync_uuid)
                 linked += 1
@@ -3067,8 +3185,11 @@ class SyncManager:
         for owner in owners:
             info = {"kind": "world", "blend_name": owner.name}
             package_put(master_data, info,
-                        serialize_embedded_entry(owner, "world",
-                                                 assign_uids=True))
+                        serialize_embedded_entry(
+                            owner, "world",
+                            derived=entry_derived(owner.node_tree,
+                                                  DERIVED_POLICY_EMBED),
+                            assign_uids=True))
         write_json_file(abs_path, master_data)
         json_mtime = os.path.getmtime(abs_path)
         stored_path = make_json_path_relative(abs_path, self._saved_blend_dir())
@@ -3079,7 +3200,10 @@ class SyncManager:
         synced_uids = []
         for owner in owners:
             try:
-                blend_hash = canonical_hash_from_embedded(owner, "world")
+                blend_hash = canonical_hash_from_embedded(
+                    owner, "world",
+                    derived=entry_derived(owner.node_tree,
+                                          DERIVED_POLICY_EMBED))
                 json_hash = canonical_hash_from_json_embedded(
                     abs_path, "world", owner.name)
                 if json_hash is None:
@@ -3102,6 +3226,7 @@ class SyncManager:
                         last_json_hash=json_hash,
                         last_json_mtime=json_mtime,
                         json_path=stored_path,
+                        derived_policy=DERIVED_POLICY_EMBED,
                     )
                     synced_uids.append(existing_uid)
                     skipped += 1
@@ -3117,6 +3242,7 @@ class SyncManager:
                     self.metadata, sync_uuid, owner.name, stored_path,
                     blend_hash, json_hash, json_mtime,
                     depends_on=[], layout="package", kind="world",
+                    derived_policy=DERIVED_POLICY_EMBED,
                 )
                 synced_uids.append(sync_uuid)
                 linked += 1
@@ -3245,14 +3371,17 @@ class SyncManager:
                 for info_e, tree_e, owner_e in entries_to_export:
                     kind_e = entry_kind(info_e)
                     name_e = info_e.get("blend_name", "")
+                    policy_e = resolve_derived_policy(info_e)
+                    derived_e = entry_derived(tree_e, policy_e)
                     if kind_e == "group":
                         master_data["node_groups"][name_e] = serialize_node_tree(
-                            tree_e, assign_uids=True)
+                            tree_e, derived=derived_e, assign_uids=True)
                         serialized_dict[name_e] = master_data["node_groups"][name_e]
                     else:
                         package_put(master_data, info_e,
                                     serialize_embedded_entry(
-                                        owner_e, kind_e, assign_uids=True))
+                                        owner_e, kind_e, derived=derived_e,
+                                        assign_uids=True))
                         serialized_dict[name_e] = package_entry(master_data, info_e)
 
                 write_json_file(json_path, master_data)
@@ -3388,14 +3517,17 @@ class SyncManager:
                 for info_e, tree_e, owner_e in entries_to_serialize:
                     kind_e = entry_kind(info_e)
                     name_e = info_e.get("blend_name", "")
+                    policy_e = resolve_derived_policy(info_e)
+                    derived_e = entry_derived(tree_e, policy_e)
                     if kind_e == "group":
                         master_data["node_groups"][name_e] = serialize_node_tree(
-                            tree_e, assign_uids=True)
+                            tree_e, derived=derived_e, assign_uids=True)
                         serialized_dict[name_e] = master_data["node_groups"][name_e]
                     else:
                         package_put(master_data, info_e,
                                     serialize_embedded_entry(
-                                        owner_e, kind_e, assign_uids=True))
+                                        owner_e, kind_e, derived=derived_e,
+                                        assign_uids=True))
                         serialized_dict[name_e] = package_entry(master_data, info_e)
 
                 write_json_file(json_path, master_data)
@@ -3681,8 +3813,11 @@ class SyncManager:
 
                 # JSON hash from cached data
                 dep_json_hash = canonical_hash_from_json_data(json_groups.get(blend_name, {}))
-                # Blend hash from actual tree
-                dep_blend_hash = canonical_hash_from_tree(tree)
+                # Blend hash from the actual tree, measured with the
+                # entry's external-dependency policy.
+                dep_blend_hash = entry_blend_hash(uid, ig)
+                if dep_blend_hash is None:
+                    continue
 
                 if dep_blend_hash != dep_json_hash:
                     # Rebuild did not reproduce the JSON content: keep the
@@ -3923,11 +4058,11 @@ class SyncManager:
                 p_uid, p_info, _p_jp = tracked_by_name.get(pname, (None, None, None))
                 if p_uid is None:
                     continue
-                p_tree = bpy.data.node_groups.get(pname)
-                if p_tree is not None:
+                p_hash = entry_blend_hash(p_uid, p_info)
+                if p_hash is not None:
                     update_tracked_group(
                         self.metadata, p_uid,
-                        last_blend_hash=canonical_hash_from_tree(p_tree),
+                        last_blend_hash=p_hash,
                     )
 
             # Verification: rebuilt groups whose tree still differs from the
@@ -3942,8 +4077,8 @@ class SyncManager:
                 jh = json_group_hashes.get(jp, {}).get(name)
                 if jh is None:
                     continue
-                th = canonical_hash_from_tree(tree)
-                if th != jh:
+                th = entry_blend_hash(uid, info)
+                if th is not None and th != jh:
                     still_divergent.add(name)
 
             if still_divergent:
