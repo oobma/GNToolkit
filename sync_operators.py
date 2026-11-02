@@ -14,18 +14,21 @@ import os
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .constants import (ADDON_VERSION, EMBEDDED_KINDS,
+from .constants import (ADDON_VERSION, DERIVED_POLICY_EMBED,
+                        DERIVED_POLICY_REFERENCE, EMBEDDED_KINDS,
                         is_graph_tree_name, is_group_node_bl_idname,
-                        is_trackable_tree_type)
-from .serializer import serialize_node_tree, tree_has_animation
+                        is_trackable_tree_type, resolve_derived_policy)
+from .serializer import (collect_derived_untracked, entry_derived,
+                         serialize_node_tree, tree_has_animation)
 from .modifier_utils import object_animation_by_tree
 from .socket_utils import custom_inner_tree_names
 from .sync_manager import (
     read_json_tolerant, json_read_failure_reason, sync_manager, SyncStatus,
-    group_library_path, resolve_json_path, resolve_entry_tree,
+    group_library_path, package_entry, resolve_json_path, resolve_entry_tree,
 )
 from .sync_metadata import (SYNC_UUID_PROP, find_tree_by_uuid,
-                            find_uuid_for_tree, get_uuid_from_tree)
+                            find_uuid_for_tree, get_uuid_from_tree,
+                            _empty_metadata)
 
 
 # ---------------------------------------------------------------------------
@@ -95,9 +98,18 @@ def _get_active_world(context):
 
 
 def _untracked_deps_note() -> str:
-    """Report suffix for saves that leave untracked dependencies behind."""
+    """Report suffix for saves that leave embed-policy dependencies behind.
+
+    Reference-policy entries keep their dependencies external on purpose
+    (their JSON never carries copies), so those do not produce a warning.
+    """
     try:
-        count = len(sync_manager.find_untracked_dependencies())
+        deps = sync_manager.find_untracked_dependencies()
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+        count = sum(
+            1 for dep in deps
+            if resolve_derived_policy(
+                tracked.get(dep.get("parent_uid"), {})) == DERIVED_POLICY_EMBED)
     except Exception:
         return ""
     if not count:
@@ -164,8 +176,12 @@ def _collect_commit_suggestion():
             if entry is None:
                 new_groups.append((blend_name, len(tree.nodes)))
                 continue
-            result = semantic_diff.compare_groups(entry,
-                                                  serialize_node_tree(tree))
+            result = semantic_diff.compare_groups(
+                entry,
+                serialize_node_tree(
+                    tree,
+                    derived=entry_derived(
+                        tree, resolve_derived_policy(info))))
             if result is not None:
                 changed.append(semantic_diff.summarize_group(blend_name,
                                                              result))
@@ -704,7 +720,10 @@ def _change_rows() -> dict:
     rows.sort(key=sort_key)
     ignored_rows.sort(key=sort_key)
     sync_manager.prune_staged(r["uid"] for r in rows if r["saveable"])
-    deps = [{"name": d["child_name"], "parent": d["parent_name"]}
+    deps = [{"name": d["child_name"], "parent": d["parent_name"],
+             "external": resolve_derived_policy(
+                 sync_manager.metadata.get("tracked_groups", {}).get(
+                     d.get("parent_uid"), {})) == DERIVED_POLICY_REFERENCE}
             for d in sync_manager.find_untracked_dependencies()]
     return {"rows": rows, "ignored_rows": ignored_rows, "deps": deps,
             "ignored": len(ignored_rows)}
@@ -2129,10 +2148,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
             return {'CANCELLED'}
 
         if not sync_manager.metadata.get("tracked_groups"):
-            sync_manager.metadata = {
-                "version": ADDON_VERSION,
-                "tracked_groups": {},
-            }
+            sync_manager.metadata = _empty_metadata()
 
         # First pass: tracking entries for every group with a matching tree
         linked_by_name: dict[str, str] = {}
@@ -2178,7 +2194,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                     continue
 
                 uid = generate_uuid()
-                blend_hash = canonical_hash_from_tree(tree)
+                blend_hash = canonical_hash_from_tree(tree, derived=False)
                 json_hash = canonical_hash_from_json_group(fp, gname)
                 if json_hash is None:
                     json_hash = canonical_hash_from_json_path(fp)
@@ -2187,6 +2203,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                 add_tracked_group(
                     sync_manager.metadata, uid, gname, stored_path,
                     blend_hash, json_hash, mtime, layout="folder",
+                    derived_policy=DERIVED_POLICY_REFERENCE,
                 )
                 store_uuid_on_tree(tree, uid)
                 linked_by_name[gname] = uid
@@ -2242,7 +2259,8 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                         skipped += 1
                         continue
                     uid = generate_uuid()
-                    blend_hash = canonical_hash_from_embedded(owner, kind)
+                    blend_hash = canonical_hash_from_embedded(owner, kind,
+                                                              derived=False)
                     json_hash = canonical_hash_from_json_embedded(fp, kind,
                                                                   ename)
                     if json_hash is None:
@@ -2254,6 +2272,7 @@ class GN_OT_SyncLinkFolder(bpy.types.Operator, ImportHelper):
                         sync_manager.metadata, uid, ename, stored_path,
                         blend_hash, json_hash, mtime, layout="folder",
                         kind=kind,
+                        derived_policy=DERIVED_POLICY_REFERENCE,
                     )
                     owner[SYNC_UUID_PROP] = uid
                     try:
@@ -2597,10 +2616,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
 
         # Initialize sync manager if needed
         if not sync_manager.metadata.get("tracked_groups"):
-            sync_manager.metadata = {
-                "version": ADDON_VERSION,
-                "tracked_groups": {},
-            }
+            sync_manager.metadata = _empty_metadata()
 
         linked = 0
         skipped = 0
@@ -2627,10 +2643,17 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
                     skipped += 1
                     continue
 
-            # Create tracking entry with current hashes
+            # Create tracking entry with current hashes.  The policy
+            # mirrors the JSON entry (a file that already carries
+            # dependency copies stays embed; a reference-style export
+            # stays reference), and the initial baseline is measured
+            # with that same policy.
             uid = generate_uuid()
-            blend_hash = canonical_hash_from_tree(tree)
-            json_hash = canonical_hash_from_json_data(groups[gname])
+            entry = groups[gname]
+            policy, derived = sync_manager.derived_for_entry(
+                tree, {"layout": file_layout}, entry)
+            blend_hash = canonical_hash_from_tree(tree, derived=derived)
+            json_hash = canonical_hash_from_json_data(entry)
             mtime = os.path.getmtime(json_path)
 
             # When the existing JSON already differs from the .blend, the
@@ -2646,6 +2669,7 @@ class GN_OT_SyncInitialize(bpy.types.Operator, ImportHelper):
             add_tracked_group(
                 sync_manager.metadata, uid, gname, json_path,
                 blend_hash, json_hash, mtime, layout=file_layout,
+                derived_policy=policy,
             )
             store_uuid_on_tree(tree, uid)
             linked += 1
@@ -2947,7 +2971,12 @@ def _compute_embedded_plan(package, kind: str, name: str) -> dict | None:
     try:
         from .hash_utils import canonical_hash_from_json_data
         from .serializer import canonical_hash_from_embedded
-        if (canonical_hash_from_embedded(owner, kind)
+        # Absent copies mean a reference-style export (the manual export
+        # path writes derived=False); the hint avoids measuring with the
+        # embed default for an entry that is not tracked yet.
+        policy, derived = sync_manager.derived_for_entry(
+            owner.node_tree, {"layout": "folder"}, entry)
+        if (canonical_hash_from_embedded(owner, kind, derived=derived)
                 != canonical_hash_from_json_data(entry)):
             divergent.append(name)
     except Exception:
@@ -3262,6 +3291,77 @@ class GN_OT_SyncImportGroupTrack(bpy.types.Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class GN_OT_SyncSetDerivedPolicy(bpy.types.Operator):
+    """Choose how an entry treats its external dependencies.
+
+    ``reference`` keeps dependency content external (the entry stores
+    name references only); ``embed`` copies every local, untracked
+    dependency into the entry on the next Save.  The JSON is not
+    written here: the change becomes visible as a pending save and the
+    normal Save/Keep workflow applies it.
+    """
+
+    bl_idname = "gn.sync_set_derived_policy"
+    bl_label = "Set External Dependency Policy"
+    bl_options = {'REGISTER'}
+
+    sync_uuid: StringProperty()
+    policy: EnumProperty(
+        name="Policy",
+        items=(
+            ("reference", "Reference",
+             "Keep dependency content external: the entry only names it"),
+            ("embed", "Embed",
+             "Copy every local untracked dependency into the entry on the next Save"),
+        ),
+    )
+
+    def execute(self, context):
+        info = sync_manager.metadata.get("tracked_groups", {}).get(
+            self.sync_uuid)
+        if info is None:
+            self.report({'ERROR'}, "The entry is not tracked")
+            return {'CANCELLED'}
+        if self.policy not in (DERIVED_POLICY_REFERENCE,
+                               DERIVED_POLICY_EMBED):
+            return {'CANCELLED'}
+        tree = resolve_entry_tree(self.sync_uuid, info)
+        if tree is None:
+            self.report({'ERROR'},
+                        "The entry has no node tree in the .blend")
+            return {'CANCELLED'}
+
+        if not sync_manager.set_derived_policy(self.sync_uuid, self.policy):
+            self.report({'ERROR'}, "Could not change the dependency policy")
+            return {'CANCELLED'}
+        _refresh_after_sync_change(context)
+
+        untracked = collect_derived_untracked(tree)
+        if self.policy == DERIVED_POLICY_REFERENCE:
+            copies = 0
+            json_path = resolve_json_path(info.get("json_path", ""),
+                                          sync_manager._blend_dir())
+            if json_path and os.path.isfile(json_path):
+                data = read_json_tolerant(json_path)
+                entry = (package_entry(data, info)
+                         if isinstance(data, dict) else None)
+                copies = len((entry or {}).get("derived_node_groups") or {})
+            if copies:
+                msg = (f"Reference policy: {copies} embedded dependency "
+                       f"tree(s) will be retracted on the next Save")
+            else:
+                msg = ("Reference policy set: dependency content stays "
+                       "external")
+        else:
+            if untracked:
+                msg = (f"Embed policy: {len(untracked)} untracked dependency "
+                       f"tree(s) will be copied on the next Save")
+            else:
+                msg = "Embed policy set: no untracked dependencies right now"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
 classes = (
     GN_ImportItem,
     GN_ImportState,
@@ -3286,6 +3386,7 @@ classes = (
     GN_OT_SyncDiscardLocal,
     GN_OT_SyncIgnore,
     GN_OT_SyncUnignore,
+    GN_OT_SyncSetDerivedPolicy,
     GN_OT_SyncCheck,
     GN_OT_CancelSyncCheck,
     GN_OT_SyncTrackDeps,

@@ -24,7 +24,9 @@ from .geometry_validator import (
     ValidationIssue,
     validate_tracked_tree,
 )
-from .constants import is_graph_tree_name, is_trackable_tree_type
+from .constants import (DERIVED_POLICY_EMBED, DERIVED_POLICY_REFERENCE,
+                        is_graph_tree_name, is_trackable_tree_type,
+                        resolve_derived_policy)
 from .sync_manager import (sync_manager, SyncStatus, entry_kind,
                            group_library_path, package_entry,
                            read_json_tolerant, resolve_entry_tree)
@@ -250,6 +252,19 @@ def _draw_active_entry(layout, context):
         reveal_op = file_row.operator("gn.sync_reveal_json_path", text="",
                                       icon='FOLDER_REDIRECT')
         reveal_op.json_path = entry["json_path"]
+        policy = resolve_derived_policy(entry["info"])
+        policy_row = layout.row(align=True)
+        if policy == DERIVED_POLICY_REFERENCE:
+            policy_row.label(text="Dependencies: reference", icon='LINKED')
+            toggle = policy_row.operator("gn.sync_set_derived_policy",
+                                         text="Embed", icon='DUPLICATE')
+            toggle.policy = DERIVED_POLICY_EMBED
+        else:
+            policy_row.label(text="Dependencies: embed", icon='DUPLICATE')
+            toggle = policy_row.operator("gn.sync_set_derived_policy",
+                                         text="Reference", icon='LINKED')
+            toggle.policy = DERIVED_POLICY_REFERENCE
+        toggle.sync_uuid = entry["uid"]
     elif entry["library"]:
         row.label(text=f"Active: {entry['name']} - library-linked", icon=icon)
         row.label(text="Make it local to track", icon='INFO')
@@ -632,8 +647,14 @@ def _draw_changes_list(layout, context) -> None:
 
     for d in deps:
         row = box.row(align=True)
-        row.label(text=f"New dependency: {d['name']} (used by {d['parent']})",
-                  icon='NODETREE')
+        if d.get("external"):
+            row.label(
+                text=f"External reference: {d['name']} (used by {d['parent']})",
+                icon='LINK_BLEND')
+        else:
+            row.label(
+                text=f"New dependency: {d['name']} (used by {d['parent']})",
+                icon='NODETREE')
         op = row.operator("gn.sync_track_deps", text="Track", icon='LINKED')
         op.group_name = d["name"]
 
@@ -1058,9 +1079,20 @@ class GN_PT_IssuesPanel(bpy.types.Panel):
             audit_box.label(text=f"... and {extra} more", icon='INFO')
 
         deps = sync_manager.find_untracked_dependencies()
-        if deps:
-            layout.label(text=f"{_count_label(len(deps), 'untracked dependency')}"
+        tracked = sync_manager.metadata.get("tracked_groups", {})
+        external = sum(
+            1 for dep in deps
+            if resolve_derived_policy(
+                tracked.get(dep.get("parent_uid"), {}))
+            == DERIVED_POLICY_REFERENCE)
+        pending = len(deps) - external
+        if pending:
+            layout.label(text=f"{_count_label(pending, 'untracked dependency')}"
                               " - see Changes", icon='PLUS')
+        elif external:
+            layout.label(
+                text=f"{_count_label(external, 'external dependency reference')}",
+                icon='LINK_BLEND')
         else:
             layout.label(text="No untracked dependencies", icon='CHECKMARK')
 
@@ -2804,6 +2836,18 @@ class GN_OT_ChangeMenu(bpy.types.Operator):
         op.sync_uuid = uid
         op = layout.operator("gn.sync_history_open", text="History",
                              icon='TIME')
+        op.sync_uuid = uid
+        policy = resolve_derived_policy(info)
+        if policy == DERIVED_POLICY_EMBED:
+            op = layout.operator("gn.sync_set_derived_policy",
+                                 text="Reference External Dependencies",
+                                 icon='LINKED')
+            op.policy = DERIVED_POLICY_REFERENCE
+        else:
+            op = layout.operator("gn.sync_set_derived_policy",
+                                 text="Embed External Dependencies",
+                                 icon='DUPLICATE')
+            op.policy = DERIVED_POLICY_EMBED
         op.sync_uuid = uid
         layout.separator()
 
